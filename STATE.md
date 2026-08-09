@@ -1,5 +1,5 @@
 === STATE BLOCK — GOALS, ACHIEVEMENTS, BLIND SPOTS ===
-Date: 2026-08-07
+Date: 2026-08-08
 Status: Working prototype, git repo (github.com/jens-goes-mad/
         DIY-KORG-KRONOS-EDITOR, `main` branch) with a public Hugo/GitHub
         Pages docs site (jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR)
@@ -14,7 +14,12 @@ Status: Working prototype, git repo (github.com/jens-goes-mad/
         loaded dataset actually has, since a real backup can apparently be
         saved with only a subset of data included; surfaced a significant
         pre-existing gap while being built -- see Format Blind Spot #9)
-        -- browse/filter/swap/copy Set Lists, editable
+        -- browse/filter Set Lists with drag-and-drop copy-over/insert-with-
+        shift reordering (real byte-level writes to both a slot's SBK1
+        params and its separate SDB1 name record, same-Set-List only for
+        now; ctrl/cmd+click marks rows for a future bulk action, no action
+        wired up yet -- see "Setlist reorder/copy-over + multi-select
+        groundwork" under "ARCHITECTURE" below), editable
         Comment/Color/Volume fields (all three writing straight into a
         loaded file's own raw bytes, independently open per row, safely
         blocked from being opened on the same slot in both panes at once
@@ -1162,6 +1167,225 @@ full rationale):
       we already have" (this round's fixes included) before taking on
       anything more complex, matching this project's existing "small
       iterations, no guessing" discipline rather than a scope change.
+  - **Setlist reorder/copy-over + multi-select groundwork (2026-08-08, built)**:
+    the "reordering/swapping entries" work flagged as deliberately deferred just
+    above is now built, following an explicit RFC (agreed in full): dropping one
+    Setlist row directly ON another is "copy over" (target becomes an exact copy
+    of source -- name + params -- source unchanged, a genuine behavior CHANGE
+    from the old swap-based `moveEntry()`); dropping BETWEEN two rows (or before
+    the first / after the last) is "insert with shift" -- a pure rotation of the
+    same 128 slots, safe by construction since nothing is added or removed.
+    - `src/kronos/PcgFile.h`/`.cpp`: new `nameRecordBytes()`/`putNameRecordBytes()`
+      (the 28-byte SDB1 name record -- confirmed to live in a completely separate
+      chunk/stride from a slot's SBK1 params, so any relocate/copy must move both
+      together or the result mismatches a slot's displayed name against its
+      actual content) and `reorderSong()` (relocates one slot's name AND params
+      together within one Set List, shifting the intervening range by one -- one
+      native call, not N bridge round-trips, matching this project's two-tier
+      data-flow model for bulk operations). `moveEntry()` (the old same-Setlist
+      swap, in-memory-struct-only, predating the real byte-level write path) is
+      deleted, fully superseded.
+    - `src/bridge/EditorBridge.h`/`.cpp`, `src/main.cpp`: `getNameRecordBytes()`/
+      `putNameRecordBytes()`/`reorderSongEntry()` bound the same way as the
+      existing Song-record pair; `copyEntry()` kept, now documented as cross-
+      Set-List-only (same-Set-List dragging no longer uses it).
+    - `frontend/pane.js`: `dropZoneForEvent()` reads a row's cursor Y-position
+      (top/bottom 30% = insert before/after, middle = copy over) and drag
+      handlers toggle `.drop-target` (the "copy over" full-row highlight,
+      `background`/`outline` in `frontend/style.css`) for "on".
+    - **Bug found during manual testing (2026-08-08), same day this landed**:
+      the insert before/after gesture's visual feedback never actually
+      rendered -- only "copy over" did. Root cause: the insert indicator was
+      originally a `box-shadow` on the target `<tr>` itself
+      (`.drop-target-before`/`.drop-target-after`), and Bulma's `.table` sets
+      `border-collapse: collapse`, under which no current browser paints a
+      `box-shadow` on a table row at all -- a real table-rendering
+      limitation, not a specificity or z-index bug (confirmed by the "on"
+      gesture working fine, since `background`/`outline` don't have this
+      limitation). Fixed by replacing the `<tr>` box-shadow entirely with one
+      floating `<div class="drop-indicator">` per Setlist panel, absolutely
+      positioned against `.entries-scroll` (now `position: relative`) and
+      moved via `showDropIndicator(tr, zone)`/`hideDropIndicator()` to
+      straddle the boundary above/below the current insert target -- scrolls
+      naturally with the table since it's a sibling inside the same
+      scrolling element, and sidesteps table-layout quirks entirely rather
+      than fighting them. `.multi-selected` (added the same day, see below)
+      had the identical latent bug -- its own box-shadow was moved from the
+      `<tr>` onto `tr.multi-selected > td:first-child` instead, since
+      box-shadow on a `<td>` *does* render correctly under border-collapse
+      (the standard workaround for this class of bug).
+    - Ctrl/Cmd+click toggles a row into a `multiSelected` Set independent of
+      `openPanels` (which rows have an editor open) -- styled via a new
+      `.multi-selected` class (a left-edge inset box-shadow using a new
+      `--multiselect-accent` token, deliberately additive rather than
+      fighting `.is-selected`'s background or `.drop-target`'s outline for
+      the same CSS property, since a row can carry any combination of the
+      three states at once). Per direct agreement, multi-select has no
+      further action wired to it yet ("2.X no further action right now" in
+      the RFC) -- purely visual groundwork for a future bulk action.
+    - `frontend/app.js`: `onDropEntry()` rewritten to dispatch on `zone`/
+      `sameList` -- insert uses the one native `reorderSongEntry()` call; copy-
+      over reads+writes both the params and name records (`Promise.all()` pairs)
+      since they're separate SBK1/SDB1 records; cross-dataset stays blocked
+      (unchanged reasoning, see the function's own doc comment) and cross-
+      Set-List-same-dataset stays on the older in-memory-only `copyEntry()` --
+      true cross-Set-List insert would have to evict something from an already-
+      full 128-slot destination to make room, a real data-loss question still
+      deliberately not tackled.
+    - `frontend/mock_bridge.js`: `moveEntry()` fake removed; `reorderSongEntry()`
+      fake mirrors the real splice-and-reindex semantics; `getNameRecordBytes()`/
+      `putNameRecordBytes()` fakes synthesize/parse a 28-byte buffer from a mock
+      entry's `label` field (mirroring the existing `makeFakeSlotBytes()` pattern
+      for the 542-byte params record).
+    - Backend verified: full `cmake --build build` clean, `ctest` clean
+      (`PcgFile.cpp`'s `reorderSong()`/name-record methods have their own
+      deliberate-break-then-restore coverage in `tests/pcg_file_test.cpp`).
+      Frontend verified: `node --check` on every touched file, CSS brace-balance
+      checked, and confirmed working in the real app (2026-08-08, manual test
+      against a real backup) -- copy-over and insert both write real bytes, as
+      intended (see EditorBridge.h's own class doc comment for the one
+      exception: cross-Set-List dragging still uses the older in-memory-only
+      `copyEntry()`, and nothing is written to disk until an explicit
+      `saveFileAs()` call).
+  - **"Copy all to opposite" + swap-panes button (2026-08-08, built)**: further
+    UI polish requested the same day, once the reorder/copy-over gestures above
+    were confirmed working end to end.
+    - `src/kronos/PcgFile.h`/`.cpp`: new `copySetlist(srcSetlistIndex,
+      dstSetlistIndex)` -- overwrites every one of a destination Set List's 128
+      slots (both name and params records) with a source Set List's, reusing
+      `nameRecordBytes()`/`songRecordBytes()`/`putNameRecordBytes()`/
+      `putSongRecordBytes()` internally (same pattern as `reorderSong()`), one
+      native call rather than 256 bridge round-trips. Same-file only (both
+      indices are Set Lists within the one already-open `PcgFile`); leaves the
+      destination Set List's own name (`Setlist::name`) untouched, only the
+      song slots move. `src/bridge/EditorBridge.h`/`.cpp`, `src/main.cpp`:
+      `copySetlistEntries(datasetId, srcSetlistIndex, dstSetlistIndex)` bound
+      the same way as the other Setlist bridge methods.
+    - `tests/pcg_file_test.cpp`: the synthetic fixture gained a SECOND Set
+      List ("Gig Setlist", one pre-existing song "Old Song") specifically so
+      `copySetlist()`'s test can tell a real overwrite apart from a no-op --
+      deliberately broken (skipped the params write) then restored, confirming
+      the new test genuinely catches a regression, not just checking the happy
+      path.
+    - `frontend/pane.js`: the Setlist panel's "Showing ..." row (`.setlist-
+      info-row`, `style.css`) gained a "Copy all to opposite" button, enabled
+      only when this pane and the opposite pane share one dataset with two
+      different Set Lists selected. Reading the OPPOSITE pane's current
+      dataset/Set List needed a small addition: `datasets.js` gained
+      `notifyPaneSelectionChanged()`/`onPaneSelectionChanged()`, a plain
+      broadcast (deliberately no stored state of its own, unlike the datasets-
+      list cache above it in the same file) that tells a pane WHEN to re-read
+      its sibling's already-authoritative state (`getCurrentDatasetId()`, and
+      a new `getCurrentSetlistIndex()` exposed the same way) -- fired whenever
+      any pane's own dataset/Set List selection changes, whether or not that
+      pane owns the button being recomputed.
+    - `frontend/app.js`: `onCopySetlist(source, target)` (mirrors
+      `onDropEntry`'s shape) calls the new bridge method and refreshes
+      whichever pane(s) show the destination dataset. A new `swapPanes()`
+      physically reorders the two `<section class="pane">` DOM elements
+      inside `.panes` -- deliberately NOT a data/state swap, since a pane's
+      `paneId` ("A"/"B") is only ever used as a label (status log prefixes,
+      the cross-pane slot-edit lock), never to decide which side is which, so
+      moving the element is sufficient.
+    - `frontend/style.css`: the swap button is `position: absolute` against
+      `.panes` (now `position: relative`), floating over the 1px seam between
+      the two panes rather than being a real third flex item -- keeps both
+      panes' widths exactly as Bulma's `.columns` grid already computes them.
+    - `frontend/mock_bridge.js`: `copySetlistEntries()` fake added, same
+      "overwrite dst's slots while keeping dst's own position/index" contract
+      as the real bridge method.
+  - **Drag-and-drop insert indicator bug found during the SAME manual test
+    session (2026-08-08)**: copy-over (drop directly on a row) visibly
+    worked; insert (drop between two rows) showed no feedback at all. Root
+    cause: the insert indicator was a `box-shadow` on the target `<tr>`
+    itself (`.drop-target-before`/`.drop-target-after`), and Bulma's
+    `.table` sets `border-collapse: collapse` -- no current browser paints a
+    `box-shadow` on a table row under `border-collapse` at all, a genuine
+    table-rendering limitation, not a specificity or z-index bug (confirmed
+    by copy-over working fine, since its `.drop-target` uses
+    `background`/`outline` instead, neither of which has this limitation).
+    Fixed by replacing the `<tr>` box-shadow entirely with one floating
+    `<div class="drop-indicator">` per Setlist panel, absolutely positioned
+    against `.entries-scroll` (now `position: relative`) and moved via
+    `showDropIndicator(tr, zone)`/`hideDropIndicator()` (`frontend/pane.js`)
+    to straddle the boundary above/below the current insert target --
+    scrolls naturally with the table since it's a sibling inside the same
+    scrolling element, sidestepping the table-layout limitation entirely
+    rather than fighting it. The `.multi-selected` marker (added the same
+    day) had the identical latent bug -- moved from the `<tr>` onto
+    `tr.multi-selected > td:first-child` instead, since box-shadow on a
+    `<td>` *does* render correctly under `border-collapse` (the standard
+    workaround for this class of bug).
+  - **Drag-and-drop code reuse assessed, not (yet) refactored (2026-08-08)**:
+    asked whether the Setlist drag-and-drop code (`pane.js`) is shared with
+    or reusable by Programs' own drag-and-drop (`library.js`, copy-a-Program-
+    onto-another-slot). It isn't -- the two are independently hand-written,
+    each with its own `dragstart`/`dragend`/`dragover`/`dragleave`/`drop`
+    listener set, own `dataTransfer` JSON payload shape, and own accept/
+    reject rules (Setlist's is genuinely more complex: 3 drop zones via
+    `dropZoneForEvent()` plus the floating indicator above; Programs' is a
+    single zone, engine-type-gated). A shared `frontend/dragdrop.js` helper
+    extracting just the common listener-wiring boilerplate (JSON
+    serialize/parse, `drop-target` class toggling, the `preventDefault`/
+    `dropEffect` dance) is a real, low-risk option if this need comes up a
+    third time -- explicitly not built now, per this project's "don't build
+    for hypothetical future needs" rule: two call sites don't yet justify the
+    abstraction, and the domain-specific parts (zone detection, accept
+    rules, indicator positioning) would stay per-caller regardless, so the
+    win is real but modest.
+  - **A-Z/Z-A sort buttons (2026-08-09, built)**: two buttons beside the filter
+    input, `frontend/pane.js`, toggle-style (`.is-link`, same "click again to
+    undo" idiom as the bank-filter buttons) -- sort the visible rows by name
+    ascending/descending, or back to physical slot order if the active one is
+    clicked again. Deliberately display-only, exactly like the existing
+    filter: a new `sortOrder` (`null`/`"asc"`/`"desc"`) is applied in
+    `renderRows()` on top of the filtered list, right before rendering --
+    never touches `entries`/any entry's own `.index` (the real Kronos slot
+    number), so drag-and-drop keeps acting on physical slot position exactly
+    as before regardless of what order the table is currently *shown* in.
+    Reset alongside the filter (both are view state) on every Set List/
+    dataset switch, and disabled/enabled together with the filter input too.
+    `frontend/style.css`: a `.filter-row` flex wrapper (filter input flexes,
+    Bulma's `.buttons.has-addons` group stays its own natural width) --
+    same pattern as `.setlist-info-row` right above it.
+  - **Slot-position-IS-order confirmed directly against `docs/external/
+    KORG/SetList.txt` (2026-08-09)**: Korg's own SysEx documentation lays
+    out Slot 0 at a fixed record offset and states Slots 1-127 simply
+    follow at the same stride, "and the IDX is assigned to 1 ~ 127" -- no
+    separate order/pointer field exists anywhere in the structure. Added to
+    `docs/README.md`/`docs/content/format/index.md` §3.2 as confirmed
+    ground truth: a slot's number IS its physical record position, nothing
+    else stores or could store it. Directly answers why the A-Z/Z-A sort
+    buttons above are necessarily display-only -- there's no lighter-weight
+    "order" field they could instead write to; only physically moving the
+    28+542-byte records (`reorderSong()`/`copySetlist()`) changes what a
+    real Kronos will actually play back.
+  - **"Save As..." button (2026-08-09, built)**: the concrete follow-up to
+    the above -- since sorting itself can't be tested on real hardware
+    (it's display-only by necessity), the project owner asked to actually
+    save a dataset's current bytes to disk so a REAL reorder (drag-and-drop
+    insert/copy-over, which does write real bytes) can be tested by loading
+    the result onto a physical Kronos and scrolling through it. The
+    underlying write path (`PcgFile::save()`, `EditorBridge::saveFileAs()`)
+    already existed from earlier real-hardware validation work, but was
+    only reachable via a devtools console script -- no UI. Added
+    `EditorBridge::saveFileDialog(datasetId)` (`src/bridge/EditorBridge.h`/
+    `.cpp`, bound in `src/main.cpp`): shows a native Save dialog
+    (`NativeFileDialog.h`'s `showSaveFileDialog()`, already existed but was
+    unused until now) pre-filled with the dataset's own filename, then
+    writes to wherever the user picks via the same `PcgFile::save()`
+    `saveFileAs()` already uses -- `saveFileAs()` itself is untouched, kept
+    as the lower-level path-supplied building block. `frontend/pane.js`: a
+    "Save As..." button next to each pane's own dataset selector (per-pane,
+    not global, since each pane already knows exactly which dataset it's
+    showing -- no ambiguity about which dataset to save the way a single
+    global button would have). `frontend/mock_bridge.js`: a
+    `window.saveFileDialog()` fake mirroring `openFileDialog()`'s existing
+    `window.prompt()` stand-in pattern, since mock/browser mode can't write
+    a real file either. Full `cmake --build build` clean, `ctest` clean
+    (no C++ test added specifically for this -- it's a thin dialog/path
+    wrapper around the already-tested `PcgFile::save()`/`saveFileAs()`);
+    `node --check` clean on both touched frontend files.
   - **Explicitly not committed to being final**: both the project owner and this
     assistant agreed to revisit/rethink this shape as each piece (Program decoder now
     done; chunk-based component wiring next) proves itself against real tests and the

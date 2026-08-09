@@ -289,27 +289,6 @@ choc::value::Value EditorBridge::getEntries(const choc::value::ValueView& args) 
     return result;
 }
 
-choc::value::Value EditorBridge::moveEntry(const choc::value::ValueView& args) {
-    const int datasetId = intArg(args, 0);
-    const int setlistIndex = intArg(args, 1);
-    const int fromIndex = intArg(args, 2);
-    const int toIndex = intArg(args, 3);
-
-    auto* setlist = setlistOf(datasetId, setlistIndex);
-    if (setlist == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no such Set List loaded");
-
-    const int count = static_cast<int>(setlist->songs.size());
-    if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count) {
-        return makeError("Entry index out of range");
-    }
-
-    std::swap(setlist->songs[fromIndex], setlist->songs[toIndex]);
-    // Swapping moved the .index fields along with the songs -- put them back
-    // so song.index always reflects the slot's current position, not its origin.
-    std::swap(setlist->songs[fromIndex].index, setlist->songs[toIndex].index);
-    return makeOk();
-}
-
 choc::value::Value EditorBridge::copyEntry(const choc::value::ValueView& args) {
     const int srcDatasetId = intArg(args, 0);
     const int srcSetlistIndex = intArg(args, 1);
@@ -385,6 +364,66 @@ choc::value::Value EditorBridge::putSongRecordBytes(const choc::value::ValueView
     return makeOk();
 }
 
+choc::value::Value EditorBridge::getNameRecordBytes(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+    const int songIndex = intArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto bytes = file->nameRecordBytes(setlistIndex, songIndex);
+    if (!bytes.has_value()) return makeError("No SDB1 record for that Set List slot");
+
+    auto result = makeOk();
+    result.setMember("bytes", bytesToValue(*bytes));
+    return result;
+}
+
+choc::value::Value EditorBridge::putNameRecordBytes(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+    const int songIndex = intArg(args, 2);
+    const std::vector<uint8_t> bytes = bytesArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!file->putNameRecordBytes(setlistIndex, songIndex, bytes)) {
+        return makeError("Couldn't write that Set List slot's name record (wrong size, or index out of range)");
+    }
+    return makeOk();
+}
+
+choc::value::Value EditorBridge::reorderSongEntry(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+    const int fromIndex = intArg(args, 2);
+    const int toIndex = intArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!file->reorderSong(setlistIndex, fromIndex, toIndex)) {
+        return makeError("Couldn't reorder that Set List slot (index out of range, or no SBK1/SDB1 data)");
+    }
+    return makeOk();
+}
+
+choc::value::Value EditorBridge::copySetlistEntries(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int srcSetlistIndex = intArg(args, 1);
+    const int dstSetlistIndex = intArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!file->copySetlist(srcSetlistIndex, dstSetlistIndex)) {
+        return makeError("Couldn't copy that Set List (index out of range)");
+    }
+    return makeOk();
+}
+
 choc::value::Value EditorBridge::saveFileAs(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     const std::string path = stringArg(args, 1);
@@ -395,6 +434,39 @@ choc::value::Value EditorBridge::saveFileAs(const choc::value::ValueView& args) 
     std::string error;
     if (!file->save(path, error)) return makeError(error);
     return makeOk();
+}
+
+choc::value::Value EditorBridge::saveFileDialog(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!kronos::isNativeFileDialogSupported()) {
+        return makeError("Native file dialogs aren't supported on this platform yet.");
+    }
+
+    // Pre-fill the dialog with the dataset's own filename (not its full
+    // path -- the dialog's own starting directory covers that part), so
+    // "Save As..." defaults to overwriting the file this dataset was
+    // opened from unless the user picks somewhere else.
+    std::string suggestedName;
+    auto it = m_datasets.find(datasetId);
+    if (it != m_datasets.end()) {
+        const std::string& displayName = it->second.displayName;
+        auto slash = displayName.find_last_of("/\\");
+        suggestedName = slash == std::string::npos ? displayName : displayName.substr(slash + 1);
+    }
+
+    auto path = kronos::showSaveFileDialog("Save Korg Kronos .PCG/.SNG backup as", suggestedName);
+    if (!path) return makeCancelled();
+
+    std::string error;
+    if (!file->save(*path, error)) return makeError(error);
+
+    auto result = makeOk();
+    result.setMember("path", *path);
+    return result;
 }
 
 choc::value::Value EditorBridge::listPrograms(const choc::value::ValueView& args) {

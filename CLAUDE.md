@@ -47,6 +47,18 @@ against the raw file) against real bytes -- not just by reasoning about hex dump
   harnesses, in C++ smoke tests) should be real bytes extracted from an actual backup
   file where possible, not invented data -- see `frontend/components/kronos/
   setlist-comment.test.html`'s fixture for the pattern.
+- **Flag duplicate code for discussion, don't silently refactor OR silently leave it.**
+  Whenever a building block is finished and it turns out to duplicate/closely parallel
+  something already in the codebase, raise it explicitly rather than either unilaterally
+  extracting a shared abstraction or just moving on. Bring a concrete recommendation
+  (what's duplicated, a rough shape for a shared version, the cost/benefit), but let the
+  project owner decide -- matches "don't build for hypothetical future needs" above: two
+  similar call sites don't automatically justify an abstraction, but they're always worth
+  a deliberate look. See STATE.md's "Drag-and-drop code reuse assessed, not (yet)
+  refactored" entry (2026-08-08) for the pattern this follows: `pane.js`'s Setlist drag-
+  and-drop and `library.js`'s Programs drag-and-drop were found to be independently
+  hand-written near-duplicates, discussed, and deliberately left unmerged for now with
+  the reasoning written down.
 
 ## Current architecture direction (as of 2026-08-01)
 

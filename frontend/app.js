@@ -73,6 +73,15 @@ const panes = {};
 // This is the CMB/PRG physical-bank-position problem from the
 // explore/sqlite-patch-datastore branch (see STATE.md's "EXPLORATION"
 // section) -- revisit once that's solved, not before.
+// `target.zone` (pane.js's dropZoneForEvent()) is one of "on" (dropped
+// mid-row -- copy over), "before"/"after" (dropped near a row's top/bottom
+// edge -- insert, shifting the intervening range). Same-Set-List only for
+// insert: relocating an entry is a pure rearrangement of the same 128
+// slots, safe by construction (nothing added or removed, see STATE.md's
+// RFC). Cross-Set-List stays on the older copyEntry() path regardless of
+// zone -- inserting into a *different*, already-full 128-slot Set List
+// would have to evict something at its far end to make room, a real
+// data-loss question deliberately not tackled yet.
 async function onDropEntry(source, target) {
   if (source.datasetId !== target.datasetId) {
     setStatus(
@@ -83,16 +92,45 @@ async function onDropEntry(source, target) {
   }
 
   const sameList = source.setlistIndex === target.setlistIndex;
-
   let result;
-  if (sameList) {
-    if (source.index === target.index) return;
-    result = await window.moveEntry(target.datasetId, target.setlistIndex, source.index, target.index);
+
+  if (sameList && target.zone !== "on") {
+    // Insert: relocate source to just before/after target, shifting the
+    // intervening range -- one native call (EditorBridge::reorderSongEntry),
+    // not one bridge round-trip per shifted slot.
+    let toIndex = target.zone === "before" ? target.index : target.index + 1;
+    toIndex = Math.min(toIndex, SETLIST_SONG_COUNT - 1);
+    if (toIndex === source.index) return;  // no real move
+    result = await window.reorderSongEntry(target.datasetId, target.setlistIndex, source.index, toIndex);
     if (!result.ok) {
-      setStatus(`Swap failed: ${result.error}`);
+      setStatus(`Move failed: ${result.error}`);
       return;
     }
-    setStatus(`Swapped slots ${kronosNumber(source.index)} and ${kronosNumber(target.index)}.`);
+    setStatus(`Moved slot ${kronosNumber(source.index)} to position ${kronosNumber(toIndex)}.`);
+  } else if (sameList) {
+    // Copy over: target becomes an exact copy of source (name + params);
+    // source stays unchanged. Real byte-level writes (getSongRecordBytes/
+    // getNameRecordBytes/putSongRecordBytes/putNameRecordBytes) -- both
+    // halves of a slot's data, since they live in separate SBK1/SDB1
+    // records, see PcgFile.h's own doc comment on nameRecordBytes().
+    if (source.index === target.index) return;
+    const [srcParams, srcName] = await Promise.all([
+      window.getSongRecordBytes(target.datasetId, source.setlistIndex, source.index),
+      window.getNameRecordBytes(target.datasetId, source.setlistIndex, source.index),
+    ]);
+    if (!srcParams.ok || !srcName.ok) {
+      setStatus(`Copy failed: ${srcParams.ok ? srcName.error : srcParams.error}`);
+      return;
+    }
+    const [putParams, putName] = await Promise.all([
+      window.putSongRecordBytes(target.datasetId, target.setlistIndex, target.index, srcParams.bytes),
+      window.putNameRecordBytes(target.datasetId, target.setlistIndex, target.index, srcName.bytes),
+    ]);
+    if (!putParams.ok || !putName.ok) {
+      setStatus(`Copy failed: ${putParams.ok ? putName.error : putParams.error}`);
+      return;
+    }
+    setStatus(`Copied slot ${kronosNumber(source.index)} -> slot ${kronosNumber(target.index)}.`);
   } else {
     result = await window.copyEntry(
       source.datasetId, source.setlistIndex, source.index,
@@ -149,10 +187,65 @@ async function onDropProgram(source, target) {
   }
 }
 
+// "Copy all to opposite" (the Setlist panel's setlist-info row, pane.js) --
+// overwrites every one of the opposite pane's current Set List's 128 slots
+// with this pane's current Set List's content, in one native call
+// (EditorBridge::copySetlistEntries -> PcgFile::copySetlist()). Only
+// reachable when both panes already show the same dataset with two
+// different Set Lists selected (pane.js's updateCopyButtonState() gates the
+// button itself), so unlike onDropEntry above there's no cross-dataset case
+// to reject here -- source.datasetId === target.datasetId always holds by
+// construction.
+async function onCopySetlist(source, target) {
+  const result = await window.copySetlistEntries(source.datasetId, source.setlistIndex, target.setlistIndex);
+  if (!result.ok) {
+    setStatus(`Copy Set List failed: ${result.error}`);
+    return;
+  }
+  setStatus(`Copied Set List ${kronosNumber(source.setlistIndex)} onto Set List ${kronosNumber(target.setlistIndex)}.`);
+
+  // Only the destination Set List's content changed -- refresh every pane
+  // currently showing it (could be both, if a third pane existed; today
+  // that's just "the opposite pane", but this mirrors onDropEntry's own
+  // affected-panes refresh rather than assuming exactly one other pane).
+  for (const pane of Object.values(panes)) {
+    if (pane.getCurrentDatasetId() === target.datasetId) await pane.refreshEntries();
+  }
+}
+
 document.querySelectorAll(".pane").forEach((root) => {
   const paneId = root.dataset.pane;
-  panes[paneId] = createPane(paneId, root, { onDropEntry, onDropProgram, log: setStatus, showToast });
+  panes[paneId] = createPane(paneId, root, {
+    onDropEntry,
+    onDropProgram,
+    onCopySetlist,
+    // Lazy on purpose -- at THIS point in the forEach loop, the opposite
+    // pane may not exist in `panes` yet (both panes are created in the same
+    // loop). Evaluated only when actually called (pane.js's
+    // updateCopyButtonState()/copySetlistButton click), by which point both
+    // panes are always present.
+    getOpposite: () => panes[paneId === "A" ? "B" : "A"],
+    log: setStatus,
+    showToast,
+  });
 });
+
+// "Swap panes" (topbar) -- purely a DOM reorder: physically swaps the two
+// <section class="pane"> elements' positions in .panes, which is all Bulma's
+// flex-based .columns grid needs to visually flip which side shows what.
+// Deliberately NOT a data/state swap -- each pane's `paneId` ("A"/"B") stays
+// attached to the same element and is only ever used as a label (status log
+// prefixes, the cross-pane slot-edit lock in pane.js), never to decide
+// left/right, so moving the element is enough and there's no hidden state
+// anywhere else that would need to follow along.
+function swapPanes() {
+  const panesEl = document.querySelector(".panes");
+  const sections = panesEl.querySelectorAll(".pane");
+  if (sections.length !== 2) return;
+  panesEl.insertBefore(sections[1], sections[0]);
+}
+
+document.querySelector(".swap-panes-button").addEventListener("click", swapPanes);
 
 refreshDatasets();  // so every pane's selectors have data as soon as the bridge is ready
 

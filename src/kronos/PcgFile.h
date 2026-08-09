@@ -414,6 +414,53 @@ public:
     // are out of range.
     bool putSongRecordBytes(int setlistIndex, int songIndex, const std::vector<uint8_t>& bytes);
 
+    // A Set List slot's raw 28-byte NAME record (4-byte marker + 24-byte
+    // ASCII name) from SDB1 -- a completely separate chunk, at a different
+    // byte offset and stride, from this same slot's SBK1 params
+    // (songRecordBytes() above). A slot's displayed name and its
+    // bank/number/comment/etc. are NOT stored together, so any operation
+    // that relocates or duplicates a slot (see reorderSong() below, and
+    // the drag-and-drop "copy over" gesture) must move/copy both records
+    // together or the result mismatches a slot's name against its actual
+    // content. Returns nullopt if the indices are out of range or this
+    // file's SDB1 data wasn't parseable at load.
+    std::optional<std::vector<uint8_t>> nameRecordBytes(int setlistIndex, int songIndex) const;
+
+    // Writes `bytes` (must be exactly 28 bytes) straight into data_ for the
+    // given slot's SDB1 name record, then re-derives
+    // setlists()[setlistIndex].songs[songIndex].name from it -- same
+    // "never leave a cached field stale after a direct data_ write"
+    // discipline as putSongRecordBytes(). Returns false (writes nothing)
+    // if `bytes` isn't exactly 28 bytes, or the indices are out of range.
+    bool putNameRecordBytes(int setlistIndex, int songIndex, const std::vector<uint8_t>& bytes);
+
+    // Relocates the song at `fromIndex` to `toIndex` within one Set List --
+    // both its SDB1 name record and its SBK1 params record -- shifting the
+    // intervening range by one position to fill the gap left behind (e.g.
+    // fromIndex=10,toIndex=3 shifts slots [3..9] to [4..10], then places
+    // slot 10's original content at 3). A pure rearrangement of the same
+    // 128 slots -- nothing added or removed -- done as a single call so a
+    // caller never has to issue one bridge round-trip per shifted slot.
+    // Returns false (writes nothing) if either index is out of range or
+    // this Set List has no SBK1/SDB1 data; a no-op (returns true, writes
+    // nothing) if fromIndex == toIndex.
+    bool reorderSong(int setlistIndex, int fromIndex, int toIndex);
+
+    // Overwrites every song slot (0..127, both its SDB1 name record and its
+    // SBK1 params record) in `dstSetlistIndex` with the corresponding slot's
+    // content from `srcSetlistIndex` -- "copy all to opposite" (frontend/
+    // pane.js), for copying a whole prepared Set List into a gig's slot and
+    // then tweaking a few entries in place, rather than rebuilding it from
+    // scratch. Same file only (both indices are within this one PcgFile) --
+    // the two-panes-must-share-one-dataset requirement is enforced by the
+    // caller (EditorBridge::copySetlistEntries()), not here. Does NOT touch
+    // either Set List's own name (Setlist::name, e.g. "Preload Set List") --
+    // only the 128 song slots. One native call rather than 128 bridge round-
+    // trips, same reasoning as reorderSong() above. Returns false (writes
+    // nothing) if either index is out of range; a no-op (returns true) if
+    // srcSetlistIndex == dstSetlistIndex.
+    bool copySetlist(int srcSetlistIndex, int dstSetlistIndex);
+
 private:
     // Where one PRG1 sub-bank's (MBK1 or PBK1) records live within data_
     // -- retained so decodeProgram() can locate and re-decode a specific
@@ -450,6 +497,13 @@ private:
     // SBK1 data for this Set List" (SBK1 missing/malformed, or a
     // non-matching chunk among multiple SBK1 chunks -- see loadFromMemory()).
     std::vector<size_t> sbkSongsStart_;
+
+    // data_ offset of setlists_[i]'s first song NAME record within SDB1
+    // (i.e. right after that Set List's own name record, record 0) -- the
+    // same idea as sbkSongsStart_ above, but for the separate SDB1 chunk;
+    // see nameRecordBytes()/putNameRecordBytes()'s own doc comments.
+    // SIZE_MAX means "no SDB1 data for this Set List".
+    std::vector<size_t> sdbSongsStart_;
 };
 
 }  // namespace kronos

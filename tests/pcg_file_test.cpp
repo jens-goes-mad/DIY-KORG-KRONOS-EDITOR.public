@@ -158,23 +158,35 @@ std::vector<uint8_t> buildSyntheticPcgFile() {
     constexpr size_t kSbkRecordSize = 542;
     constexpr size_t kBankRecordSize = 32;  // PBK1 record stride for this test (real files use ~4960)
 
-    // SDB1: one Set List, "Test Setlist", with song 0/1 named. Header is
-    // 2 u32be fields (numSetlists, bytesPerSetlist) -- NOT 3; there is no
-    // separate leading "count" field, see PcgFile.cpp's own note on this
-    // (confirmed against a real 36MB backup, 2026-08-08).
+    // SDB1: two Set Lists. Setlist 0 ("Test Setlist") has song 0/1 named --
+    // the original fixture content, still exercised by every test below
+    // that references setlists()[0]. Setlist 1 ("Gig Setlist") exists
+    // purely for copySetlist()'s own test: one pre-existing song ("Old
+    // Song") that a copy from setlist 0 must overwrite, proving the
+    // operation actually writes into the destination rather than just
+    // reading the source. Header is 2 u32be fields (numSetlists,
+    // bytesPerSetlist) -- NOT 3; there is no separate leading "count"
+    // field, see PcgFile.cpp's own note on this (confirmed against a real
+    // 36MB backup, 2026-08-08).
     std::vector<uint8_t> sdb1;
-    pushU32BE(sdb1, 1);                                     // numSetlists
+    pushU32BE(sdb1, 2);                                     // numSetlists
     pushU32BE(sdb1, (kSongsPerSetlist + 1) * kRecordSize);  // bytesPerSetlist
     pushNameRecord(sdb1, "Test Setlist", kRecordSize);
     pushNameRecord(sdb1, "Song Zero", kRecordSize);
     pushNameRecord(sdb1, "Song One", kRecordSize);
     for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+    pushNameRecord(sdb1, "Gig Setlist", kRecordSize);
+    pushNameRecord(sdb1, "Old Song", kRecordSize);
+    for (uint32_t k = 1; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
 
-    // SBK1: same one Set List's slot params. Song 0 -> Program bank1/number0,
-    // Font size L (3), transpose -5. Song 1 -> same Program (bank1/number0,
-    // to exercise a 2-usage count), Font size XS (1), transpose +20.
+    // SBK1: same two Set Lists' slot params. Setlist 0, song 0 -> Program
+    // bank1/number0, Font size L (3), transpose -5. Song 1 -> same Program
+    // (bank1/number0, to exercise a 2-usage count), Font size XS (1),
+    // transpose +20. Setlist 1, song 0 -> a different Program
+    // (bank1/number1), distinct Comment -- copySetlist()'s test overwrites
+    // this with setlist 0's song 0 and confirms the old content is gone.
     std::vector<uint8_t> sbk1;
-    pushU32BE(sbk1, 1);  // numSetlists
+    pushU32BE(sbk1, 2);  // numSetlists
     pushU32BE(sbk1, static_cast<uint32_t>(kSbkHeaderSize + kSongsPerSetlist * kSbkRecordSize));  // bytesPerSetlist
     pushZeros(sbk1, kSbkHeaderSize);
     auto song0 = makeSbkSongRecord(/*isProgram=*/true, /*bank=*/1, /*number=*/0, /*color=*/1, /*holdTime=*/4,
@@ -186,6 +198,12 @@ std::vector<uint8_t> buildSyntheticPcgFile() {
     sbk1.insert(sbk1.end(), song0.begin(), song0.end());
     sbk1.insert(sbk1.end(), song1.begin(), song1.end());
     for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+    pushZeros(sbk1, kSbkHeaderSize);
+    auto gigSong0 = makeSbkSongRecord(/*isProgram=*/true, /*bank=*/1, /*number=*/1, /*color=*/2, /*holdTime=*/2,
+                                       /*volume=*/60, /*fontSizeValue=*/0, /*transpose=*/0,
+                                       /*garbageLow4=*/0x00, "should be overwritten");
+    sbk1.insert(sbk1.end(), gigSong0.begin(), gigSong0.end());
+    for (uint32_t k = 1; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
 
     // PBK1 bank 0: records 0 and 1 byte-identical (a duplicate pair), record
     // 2 unique -- exercises findDuplicatePrograms(). Records 3 and 4 are
@@ -368,11 +386,19 @@ void testPcgFileEndToEnd() {
         return;
     }
 
-    CHECK_EQ(pcg.setlists().size(), static_cast<size_t>(1), "one synthetic Set List loaded");
+    CHECK_EQ(pcg.setlists().size(), static_cast<size_t>(2), "two synthetic Set Lists loaded");
     const auto& setlist = pcg.setlists()[0];
     CHECK_EQ(setlist.name, std::string("Test Setlist"), "Set List name read from SDB1");
     CHECK_EQ(setlist.songs.size(), static_cast<size_t>(128), "every Set List has 128 song slots");
     CHECK_EQ(setlist.songs[0].name, std::string("Song Zero"), "song 0 name read from SDB1");
+
+    // Setlist 1 ("Gig Setlist") -- exists purely for copySetlist()'s own
+    // test further down; sanity-check its baseline content loaded correctly
+    // before that test starts overwriting it.
+    CHECK_EQ(pcg.setlists()[1].name, std::string("Gig Setlist"), "second Set List's own name read from SDB1");
+    CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "second Set List's song 0 name");
+    CHECK_EQ(pcg.setlists()[1].songs[0].comment, std::string("should be overwritten"),
+             "second Set List's song 0 comment");
 
     // Song 0: Font size L, transpose -5, despite garbage bits in bytes+12/17
     // that Font size/Transpose/Color/Bank don't own (proves readSlotParams()
@@ -644,6 +670,118 @@ void testPcgFileEndToEnd() {
         CHECK(!pcg.songRecordBytes(99, 0).has_value());
         CHECK(!pcg.songRecordBytes(0, 999).has_value());
         if (bytes0) CHECK(!pcg.putSongRecordBytes(99, 0, *bytes0));
+    }
+
+    // nameRecordBytes()/putNameRecordBytes(): the SDB1 counterpart to
+    // songRecordBytes()/putSongRecordBytes() -- a slot's name lives in a
+    // completely separate chunk/stride from its params, see PcgFile.h's
+    // own doc comment on why a reorder must move both together.
+    {
+        auto name0 = pcg.nameRecordBytes(0, 0);
+        CHECK(name0.has_value());
+        if (name0) {
+            CHECK_EQ(name0->size(), static_cast<size_t>(28), "nameRecordBytes() returns one full 28-byte record");
+            CHECK_EQ(std::string(reinterpret_cast<const char*>(name0->data() + 4)), std::string("Song Zero"),
+                     "nameRecordBytes() byte+4.. is the record's name");
+        }
+        auto name1 = pcg.nameRecordBytes(0, 1);
+        CHECK(name1.has_value());
+        if (name1) {
+            CHECK_EQ(std::string(reinterpret_cast<const char*>(name1->data() + 4)), std::string("Song One"),
+                     "nameRecordBytes() for song 1");
+        }
+
+        // Rejected: wrong byte count, out-of-range indices both directions.
+        std::vector<uint8_t> wrongSize(27, 0);
+        CHECK(!pcg.putNameRecordBytes(0, 0, wrongSize));
+        CHECK(!pcg.nameRecordBytes(99, 0).has_value());
+        CHECK(!pcg.nameRecordBytes(0, 999).has_value());
+        if (name0) CHECK(!pcg.putNameRecordBytes(99, 0, *name0));
+    }
+
+    // reorderSong(): relocates a slot's name AND params together, shifting
+    // the intervening range -- the operation the Setlist drag-and-drop
+    // "insert between two entries" gesture is built on (STATE.md). Only
+    // slots 0 ("Song Zero") and 1 ("Song One") carry real data in this
+    // fixture; slots 2-5 are empty, giving a clean way to see the shift
+    // happen without needing more populated fixture data.
+    {
+        // No-op: same index, returns true, nothing changes.
+        CHECK(pcg.reorderSong(0, 3, 3));
+
+        // Rejected: out-of-range setlist/song index, both directions.
+        CHECK(!pcg.reorderSong(99, 0, 1));
+        CHECK(!pcg.reorderSong(0, 0, 999));
+
+        // Forward move: slot 0 ("Song Zero") relocates to slot 5, shifting
+        // slots [1..5] back to [0..4].
+        CHECK(pcg.reorderSong(0, 0, 5));
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song One"),
+                 "reorderSong() forward: slot 1's content shifted into slot 0");
+        CHECK_EQ(pcg.setlists()[0].songs[0].comment, std::string("second"),
+                 "reorderSong() forward: slot 0's params are now slot 1's original params");
+        CHECK(pcg.setlists()[0].songs[1].name.empty());  // was slot 2's (empty) content, shifted back one
+        CHECK_EQ(pcg.setlists()[0].songs[5].name, std::string("Song Zero"),
+                 "reorderSong() forward: the moved slot's own content lands at the target index");
+        CHECK_EQ(pcg.setlists()[0].songs[5].comment, std::string("Hello test"),
+                 "reorderSong() forward: the moved slot's params traveled with its name");
+
+        // Backward move: put it back (slot 5 -> slot 0), restoring the
+        // original order -- proves the shift works symmetrically in the
+        // other direction, not just coincidentally for this one case.
+        CHECK(pcg.reorderSong(0, 5, 0));
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song Zero"),
+                 "reorderSong() backward: restores the original order");
+        CHECK_EQ(pcg.setlists()[0].songs[0].comment, std::string("Hello test"), "reorderSong() backward: song 0 restored");
+        CHECK_EQ(pcg.setlists()[0].songs[1].name, std::string("Song One"), "reorderSong() backward: song 1 restored");
+        CHECK_EQ(pcg.setlists()[0].songs[1].comment, std::string("second"), "reorderSong() backward: song 1's params restored");
+        CHECK(pcg.setlists()[0].songs[5].name.empty());  // shifted back out to its original empty state
+    }
+
+    // copySetlist(): overwrites every song slot in the destination Set List
+    // with the source's -- the "copy all to opposite" pane-header button
+    // (STATE.md). Setlist 0 ("Test Setlist") is the source, still in its
+    // original restored state from the reorderSong() block above; setlist 1
+    // ("Gig Setlist") is the destination, pre-loaded with distinct content
+    // (song 0 = "Old Song") specifically so this test can tell a real
+    // overwrite apart from a no-op.
+    {
+        // No-op: same index, returns true, changes nothing.
+        CHECK(pcg.copySetlist(0, 0));
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song Zero"), "copySetlist() same-index no-op leaves the source alone");
+
+        // Rejected: out-of-range setlist index, both directions.
+        CHECK(!pcg.copySetlist(99, 1));
+        CHECK(!pcg.copySetlist(0, 99));
+
+        CHECK(pcg.copySetlist(0, 1));
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Song Zero"),
+                 "copySetlist(): destination song 0's name overwritten from the source");
+        CHECK_EQ(pcg.setlists()[1].songs[0].comment, std::string("Hello test"),
+                 "copySetlist(): destination song 0's params overwritten from the source");
+        CHECK_EQ(pcg.setlists()[1].songs[1].name, std::string("Song One"),
+                 "copySetlist(): destination song 1 also overwritten (source's song 1)");
+        CHECK(pcg.setlists()[1].songs[2].name.empty());  // was never populated in either Set List
+        CHECK_EQ(pcg.setlists()[1].name, std::string("Gig Setlist"),
+                 "copySetlist() leaves the destination Set List's OWN name untouched -- only song slots move");
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song Zero"),
+                 "copySetlist() doesn't disturb the source Set List");
+
+        // Restore setlist 1's original content so nothing downstream sees a
+        // mutated fixture (hygiene, matching this file's existing pattern).
+        std::vector<uint8_t> restoreName(28, 0);
+        const std::string oldSongName = "Old Song";
+        std::copy(oldSongName.begin(), oldSongName.end(), restoreName.begin() + 4);
+        CHECK(pcg.putNameRecordBytes(1, 0, restoreName));
+        auto restoredParams = makeSbkSongRecord(/*isProgram=*/true, /*bank=*/1, /*number=*/1, /*color=*/2,
+                                                  /*holdTime=*/2, /*volume=*/60, /*fontSizeValue=*/0, /*transpose=*/0,
+                                                  /*garbageLow4=*/0x00, "should be overwritten");
+        CHECK(pcg.putSongRecordBytes(1, 0, restoredParams));
+        std::vector<uint8_t> emptyName(28, 0);
+        CHECK(pcg.putNameRecordBytes(1, 1, emptyName));
+        std::vector<uint8_t> emptyParams(542, 0);
+        CHECK(pcg.putSongRecordBytes(1, 1, emptyParams));
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "copySetlist() restore round-trips cleanly");
     }
 }
 

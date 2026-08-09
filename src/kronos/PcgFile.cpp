@@ -307,6 +307,7 @@ bool PcgFile::save(const std::string& path, std::string& error) const {
 
 bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
     setlists_.clear();
+    sdbSongsStart_.clear();
 
     if (data.size() < 16 || std::memcmp(data.data(), "KORG", 4) != 0) {
         error = "Not a KORG PCG/SNG file (missing 'KORG' magic)";
@@ -341,8 +342,9 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
             setlist.index = static_cast<int>(s);
             setlist.name = readRecordName(data.data(), setlistOff, data.size());
 
+            size_t songsStart = setlistOff + kRecordSize;
             for (uint32_t k = 0; k < kSongsPerSetlist; ++k) {
-                size_t songOff = setlistOff + kRecordSize + static_cast<size_t>(k) * kRecordSize;
+                size_t songOff = songsStart + static_cast<size_t>(k) * kRecordSize;
                 Song song;
                 song.index = static_cast<int>(k);
                 song.name = readRecordName(data.data(), songOff, data.size());
@@ -350,6 +352,7 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
             }
 
             setlists_.push_back(std::move(setlist));
+            sdbSongsStart_.push_back(songsStart);
         }
     }
 
@@ -786,6 +789,95 @@ bool PcgFile::putSongRecordBytes(int setlistIndex, int songIndex, const std::vec
     Song& song = setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)];
     song.params = readSlotParams(data_.data(), songOff, data_.size());
     song.comment = readComment(data_.data(), songOff, data_.size());
+    return true;
+}
+
+std::optional<std::vector<uint8_t>> PcgFile::nameRecordBytes(int setlistIndex, int songIndex) const {
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= sdbSongsStart_.size()) return std::nullopt;
+    if (songIndex < 0 || static_cast<size_t>(songIndex) >= setlists_[static_cast<size_t>(setlistIndex)].songs.size())
+        return std::nullopt;
+
+    size_t start = sdbSongsStart_[static_cast<size_t>(setlistIndex)];
+    if (start == static_cast<size_t>(-1)) return std::nullopt;
+
+    size_t nameOff = start + static_cast<size_t>(songIndex) * kRecordSize;
+    if (nameOff + kRecordSize > data_.size()) return std::nullopt;
+
+    return std::vector<uint8_t>(data_.begin() + static_cast<long>(nameOff),
+                                 data_.begin() + static_cast<long>(nameOff + kRecordSize));
+}
+
+bool PcgFile::putNameRecordBytes(int setlistIndex, int songIndex, const std::vector<uint8_t>& bytes) {
+    if (bytes.size() != kRecordSize) return false;
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= sdbSongsStart_.size()) return false;
+    if (songIndex < 0 || static_cast<size_t>(songIndex) >= setlists_[static_cast<size_t>(setlistIndex)].songs.size())
+        return false;
+
+    size_t start = sdbSongsStart_[static_cast<size_t>(setlistIndex)];
+    if (start == static_cast<size_t>(-1)) return false;
+
+    size_t nameOff = start + static_cast<size_t>(songIndex) * kRecordSize;
+    if (nameOff + kRecordSize > data_.size()) return false;
+
+    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(nameOff));
+
+    setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)].name =
+        readRecordName(data_.data(), nameOff, data_.size());
+    return true;
+}
+
+bool PcgFile::reorderSong(int setlistIndex, int fromIndex, int toIndex) {
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= setlists_.size()) return false;
+    const int count = static_cast<int>(setlists_[static_cast<size_t>(setlistIndex)].songs.size());
+    if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count) return false;
+    if (fromIndex == toIndex) return true;
+
+    auto movingName = nameRecordBytes(setlistIndex, fromIndex);
+    auto movingParams = songRecordBytes(setlistIndex, fromIndex);
+    if (!movingName || !movingParams) return false;
+
+    // Shift the intervening range by one to fill the gap fromIndex leaves,
+    // then drop the moving slot's own original content into the now-free
+    // toIndex -- e.g. fromIndex=10,toIndex=3 shifts [3..9] to [4..10]
+    // (moving backward through the range so each write's source hasn't
+    // been overwritten yet); fromIndex=3,toIndex=10 shifts [4..10] to
+    // [3..9] (moving forward, same reasoning).
+    if (toIndex < fromIndex) {
+        for (int i = fromIndex; i > toIndex; --i) {
+            auto name = nameRecordBytes(setlistIndex, i - 1);
+            auto params = songRecordBytes(setlistIndex, i - 1);
+            if (!name || !params) return false;
+            putNameRecordBytes(setlistIndex, i, *name);
+            putSongRecordBytes(setlistIndex, i, *params);
+        }
+    } else {
+        for (int i = fromIndex; i < toIndex; ++i) {
+            auto name = nameRecordBytes(setlistIndex, i + 1);
+            auto params = songRecordBytes(setlistIndex, i + 1);
+            if (!name || !params) return false;
+            putNameRecordBytes(setlistIndex, i, *name);
+            putSongRecordBytes(setlistIndex, i, *params);
+        }
+    }
+
+    putNameRecordBytes(setlistIndex, toIndex, *movingName);
+    putSongRecordBytes(setlistIndex, toIndex, *movingParams);
+    return true;
+}
+
+bool PcgFile::copySetlist(int srcSetlistIndex, int dstSetlistIndex) {
+    if (srcSetlistIndex < 0 || static_cast<size_t>(srcSetlistIndex) >= setlists_.size()) return false;
+    if (dstSetlistIndex < 0 || static_cast<size_t>(dstSetlistIndex) >= setlists_.size()) return false;
+    if (srcSetlistIndex == dstSetlistIndex) return true;
+
+    const int count = static_cast<int>(setlists_[static_cast<size_t>(srcSetlistIndex)].songs.size());
+    for (int i = 0; i < count; ++i) {
+        auto name = nameRecordBytes(srcSetlistIndex, i);
+        auto params = songRecordBytes(srcSetlistIndex, i);
+        if (!name || !params) return false;
+        if (!putNameRecordBytes(dstSetlistIndex, i, *name)) return false;
+        if (!putSongRecordBytes(dstSetlistIndex, i, *params)) return false;
+    }
     return true;
 }
 

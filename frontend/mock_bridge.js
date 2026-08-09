@@ -9,8 +9,8 @@
 //
 // When running inside the native app, choc's addInitScript() injects the
 // real window.openFileDialog/listDatasets/listSetlists/getEntries/
-// moveEntry/copyEntry *before* this script runs, so this file becomes a
-// no-op there.
+// copyEntry/reorderSongEntry *before* this script runs, so this file becomes
+// a no-op there.
 (function () {
   if (window.openFileDialog) return;
 
@@ -83,6 +83,21 @@
   // correctly. Transpose/isProgram's other bits aren't reconstructed (mock
   // entries don't track them), so they'll always decode as their zero/
   // default value here -- fine, no mock UI reads them.
+  // Mirrors makeFakeSlotBytes() below, but for the separate SDB1 name
+  // record (PcgFile::nameRecordBytes()'s real 28-byte shape: a 4-byte
+  // marker + 24-byte ASCII name) -- mock entries only have one `label`
+  // field standing in for both a real slot's name AND its params, so this
+  // just projects that same label into the name-record shape.
+  const NAME_RECORD_SIZE = 28;
+  function makeFakeNameBytes(entry) {
+    const bytes = new Uint8Array(NAME_RECORD_SIZE);
+    const label = entry.label || "";
+    for (let i = 0; i < label.length && i < 24; i++) {
+      bytes[4 + i] = label.charCodeAt(i) & 0xff;
+    }
+    return bytes;
+  }
+
   const SBK_RECORD_SIZE = 542;
   function makeFakeSlotBytes(entry) {
     const bytes = new Uint8Array(SBK_RECORD_SIZE);
@@ -231,6 +246,17 @@
     return ok({ datasetId, displayName: datasets[datasetId].displayName, setlistCount: datasets[datasetId].setlists.length });
   };
 
+  // Mirrors openFileDialog() above -- mock mode can't write a real file
+  // either, so window.prompt() stands in for the native Save dialog just so
+  // the "Save As..." button has something to do.
+  window.saveFileDialog = (datasetId) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+    const path = window.prompt("Mock mode can't write a real file -- type a fake save path:", dataset.displayName);
+    if (!path) return Promise.resolve({ ok: true, cancelled: true });
+    return ok({ path });
+  };
+
   window.listDatasets = () =>
     Promise.resolve(
       Object.entries(datasets).map(([datasetId, d]) => ({
@@ -252,17 +278,23 @@
     return Promise.resolve(dataset && dataset.songs[setlistIndex] ? dataset.songs[setlistIndex] : []);
   };
 
-  window.moveEntry = (datasetId, setlistIndex, fromIndex, toIndex) => {
+  // Mirrors PcgFile::reorderSong()'s semantics: `.index` is a slot's
+  // POSITION in the Set List (always 0..N-1 by array order for mock data),
+  // not content tied to a particular song -- moving an entry means
+  // splicing its content to a new position and letting every slot between
+  // the old and new position shift by one, exactly what Array.splice()
+  // does here. Backs the Setlist drag-and-drop "insert before/after"
+  // gesture (pane.js's dropZoneForEvent()/app.js's onDropEntry()).
+  window.reorderSongEntry = (datasetId, setlistIndex, fromIndex, toIndex) => {
     const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
     if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);
     const fromIdx = list.findIndex((e) => e.index === fromIndex);
     const toIdx = list.findIndex((e) => e.index === toIndex);
     if (fromIdx < 0 || toIdx < 0) return fail("Entry index out of range");
-    const fromOriginalIndex = list[fromIdx].index;
-    const toOriginalIndex = list[toIdx].index;
-    [list[fromIdx], list[toIdx]] = [list[toIdx], list[fromIdx]];
-    list[fromIdx].index = fromOriginalIndex;
-    list[toIdx].index = toOriginalIndex;
+    if (fromIdx === toIdx) return ok();
+    const [moved] = list.splice(fromIdx, 1);
+    list.splice(toIdx, 0, moved);
+    list.forEach((e, i) => { e.index = i; });
     return ok();
   };
 
@@ -275,6 +307,23 @@
     if (srcIdx < 0 || dstIdx < 0) return fail("Entry index out of range");
     const dstOriginalIndex = dstList[dstIdx].index;
     dstList[dstIdx] = Object.assign({}, srcList[srcIdx], { index: dstOriginalIndex });
+    return ok();
+  };
+
+  // "Copy all to opposite" (pane.js's setlist-info row) -- same dataset
+  // only (the button itself is only enabled when both panes already show
+  // it, see updateCopyButtonState()), overwrites every slot of
+  // dstSetlistIndex with srcSetlistIndex's content, keeping each dst slot's
+  // own `.index` (position) -- mirrors PcgFile::copySetlist() only moving
+  // content, never the destination Set List's own slot count/positions.
+  window.copySetlistEntries = (datasetId, srcSetlistIndex, dstSetlistIndex) => {
+    const srcList = datasets[datasetId] && datasets[datasetId].songs[srcSetlistIndex];
+    const dstList = datasets[datasetId] && datasets[datasetId].songs[dstSetlistIndex];
+    if (!srcList || !dstList) return fail(`Dataset ${datasetId} has no such Set List loaded`);
+    if (srcSetlistIndex === dstSetlistIndex) return ok();
+    for (let i = 0; i < dstList.length; i++) {
+      if (srcList[i]) dstList[i] = Object.assign({}, srcList[i], { index: dstList[i].index });
+    }
     return ok();
   };
 
@@ -317,6 +366,32 @@
     let end = 18;
     while (end < bytes.length && bytes[end] !== 0) end++;
     entry.comment = bytes.slice(18, end).map((b) => String.fromCharCode(b)).join("");
+    return ok();
+  };
+
+  // The Setlist drag-and-drop "copy over" gesture (app.js's onDropEntry())
+  // reads/writes a slot's name through these two, separately from its
+  // params above -- see makeFakeNameBytes()'s own comment for why mock
+  // mode needs a second synthesized buffer rather than reusing
+  // makeFakeSlotBytes().
+  window.getNameRecordBytes = (datasetId, setlistIndex, songIndex) => {
+    const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
+    if (!list) return fail(`Dataset ${datasetId} has no file loaded`);
+    const entry = list.find((e) => e.index === songIndex);
+    if (!entry) return fail("No SDB1 name record for that Set List slot");
+    return ok({ bytes: Array.from(makeFakeNameBytes(entry)) });
+  };
+
+  window.putNameRecordBytes = (datasetId, setlistIndex, songIndex, bytes) => {
+    const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
+    if (!list) return fail(`Dataset ${datasetId} has no file loaded`);
+    const entry = list.find((e) => e.index === songIndex);
+    if (!entry || !Array.isArray(bytes) || bytes.length !== NAME_RECORD_SIZE) {
+      return fail("Couldn't write that Set List slot's name record (wrong size, or index out of range)");
+    }
+    let end = 4;
+    while (end < bytes.length && bytes[end] !== 0) end++;
+    entry.label = bytes.slice(4, end).map((b) => String.fromCharCode(b)).join("");
     return ok();
   };
 

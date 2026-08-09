@@ -12,6 +12,12 @@
      below) both use this one orange so the two reinforce each other
      visually, one token instead of two similar-but-different ones. */
   --editor-accent: darkorange;
+  /* ctrl/cmd+click multi-select marker (pane.js's handleMultiSelectClick())
+     -- deliberately a third color, distinct from --accent (blue, used for
+     drag-and-drop hover) and --editor-accent (orange, "this row's editor is
+     open") so a row carrying any combination of the three states at once
+     stays visually unambiguous. */
+  --multiselect-accent: #3ecf8e;
 }
 
 /* Overrides Bulma's own `.is-selected` row highlight (a green/teal derived
@@ -123,6 +129,44 @@ body {
      this, or -- for .entries-scroll/.library-body -- get it for free from
      their own non-visible overflow). */
   min-width: 0;
+  /* Positioning context for .swap-panes-button below. */
+  position: relative;
+}
+
+/* Floats over the 1px seam between the two panes rather than being a real
+   third flex item (index.html places it as a plain sibling `<button>`
+   between the two `.pane` sections, but `position: absolute` takes it
+   completely out of Bulma's `.columns` flex layout, so it never affects
+   either pane's width -- app.js's swapPanes() just reorders the two
+   `.pane` elements' DOM position, this button's own position never needs
+   to move to match). Centered on both axes against `.panes` -- vertically
+   that's the middle of the whole pane area, not literally the header row,
+   since the pane area is normally much taller than the header. */
+.swap-panes-button {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swap-panes-button:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
 .pane {
@@ -213,6 +257,25 @@ body {
   }
 }
 
+/* Holds the dataset selector and the "Save As..." button side by side --
+   same flex-to-fill/stay-natural-width pattern as .setlist-info-row and
+   .filter-row further down. */
+.dataset-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dataset-select-row .dataset-select-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.dataset-select-row .save-file-button {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* Bulma's own `.tabs` defaults to horizontal-scroll-on-overflow
    (`overflow-x: auto`, `white-space: nowrap` -- never wraps its own
    items), fine when 4 tabs comfortably fit the half-width column above,
@@ -240,11 +303,52 @@ body {
    default, and .select.is-fullwidth sets both the wrapper AND the inner
    <select> to width:100%, so neither needs anything from us here. */
 
+/* Holds .setlist-info (below) and the "copy all to opposite" button
+   (pane.js) side by side -- .setlist-info flexes to fill whatever space the
+   button doesn't need, so the row's height stays the button's natural
+   .button.is-small height regardless of how long the "Showing ..." text
+   is. */
+.setlist-info-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .setlist-info {
   /* font-size comes from Bulma's .help class now (pane.js) -- just our own
      dim color on top, since Bulma's default .help text color doesn't
      necessarily match our palette. */
   color: var(--text-dim);
+  flex: 1;
+  min-width: 0;  /* same content-based-minimum reasoning as .pane/.entries-scroll elsewhere in this file -- lets long "Showing ..." text truncate/wrap instead of pushing the button off */
+}
+
+.copy-setlist-button {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Holds the filter input and the two A-Z/Z-A sort buttons (pane.js) side by
+   side, same "flex to fill, buttons stay their own natural width" pattern
+   as .setlist-info-row above. Bulma's own `.buttons.has-addons` already
+   joins the two sort buttons into one visual group (shared border, no gap
+   between them) -- `margin-bottom: 0` overrides Bulma's default (`.buttons`
+   normally reserves space for wrapping onto multiple rows, which just adds
+   unwanted height here since this group never wraps). */
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-row .filter-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-row .sort-buttons {
+  flex: none;
+  margin-bottom: 0;
 }
 
 /* Each pane's category content (Setlist, or the Programs/Combis/Duplicates
@@ -273,6 +377,14 @@ body {
 .entries-scroll {
   flex: 1;
   overflow-y: auto;
+  /* Positioning context for the Setlist panel's .drop-indicator (pane.js) --
+     an absolutely positioned child of this element scrolls right along with
+     the table beneath it (same scrolling box), which is exactly what a
+     "this is where the drag will land" line needs to do. Harmless for the
+     Programs/Combis/Duplicates panels that reuse this class without a
+     .drop-indicator child -- position: relative with no positioned children
+     changes nothing about how they render. */
+  position: relative;
   /* Explicit, not left to default -- per spec, setting only overflow-y
      makes overflow-x compute to `auto` too (not `visible`), which is what
      was producing a horizontal scrollbar whenever the table's column
@@ -336,6 +448,34 @@ td.has-comment {
   background: rgba(91, 141, 239, 0.25);
   outline: 1px dashed var(--accent);
   outline-offset: -1px;
+}
+
+/* Setlist-only: the drag-and-drop "insert before/after this row" gesture
+   (pane.js's dropZoneForEvent(), top/bottom 30% of a row) is NOT a class on
+   the target `<tr>` -- see pane.js's showDropIndicator()/.drop-indicator
+   below for why (box-shadow silently doesn't render on a collapsed table
+   row at all, in every current browser). */
+.drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  margin-top: -1.5px;  /* straddles the row boundary it's placed at, half above/half below */
+  background: var(--accent);
+  pointer-events: none;  /* purely visual -- must never intercept the dragover/drop it's illustrating */
+}
+
+/* ctrl/cmd+click "marked for a future bulk action" toggle (pane.js's
+   handleMultiSelectClick()/multiSelected set) -- independent of
+   .is-selected (this row's editor is open) and .drop-target (drag-hover),
+   a row can carry any combination of the three at once. Targets the row's
+   first cell rather than the `<tr>` itself for the same reason
+   .drop-indicator above exists as a separate floating element: box-shadow
+   on a `<tr>` in a `border-collapse` table (Bulma's `.table` default)
+   doesn't reliably paint in any current browser, but box-shadow on a `<td>`
+   does. */
+.setlist-table tbody tr.multi-selected > td:first-child {
+  box-shadow: inset 4px 0 0 0 var(--multiselect-accent);
 }
 
 /* The Setlist table's Bank cell is a button (jumps to that exact Program/

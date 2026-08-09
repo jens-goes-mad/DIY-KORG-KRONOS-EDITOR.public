@@ -20,10 +20,12 @@
 // pointed at the same dataset edit the same in-memory file -- this is
 // deliberate, see docs/content/components/index.md's dataset section. Dataset
 // count is unbounded and nothing evicts a dataset except an explicit
-// closeDataset() call. Setlist moveEntry()/copyEntry() only rearrange the
-// in-memory Setlist struct, but copyProgram() and putSongRecordBytes() write
-// directly into the dataset's own retained raw bytes -- see README.md/
-// STATE.md. saveFileAs() writes that same retained buffer straight to disk;
+// closeDataset() call. Cross-Set-List copyEntry() only rearranges the
+// in-memory Setlist struct (a real, known limitation -- see its own doc
+// comment), but copyProgram(), putSongRecordBytes(), putNameRecordBytes(),
+// and reorderSongEntry() write directly into the dataset's own retained raw
+// bytes -- see README.md/STATE.md. saveFileAs() writes that same retained
+// buffer straight to disk;
 // there's no real Save UI wired up yet (no dialog, no dirty-tracking), just
 // the bridge-level building block -- see saveFileAs()'s own doc comment.
 class EditorBridge {
@@ -58,8 +60,18 @@ public:
 
     choc::value::Value listSetlists(const choc::value::ValueView& args);  // [datasetId]
     choc::value::Value getEntries(const choc::value::ValueView& args);    // [datasetId, setlistIndex]
-    choc::value::Value moveEntry(const choc::value::ValueView& args);     // [datasetId, setlistIndex, fromIndex, toIndex] (swap)
-    choc::value::Value copyEntry(const choc::value::ValueView& args);     // [srcDatasetId, srcSetlistIndex, srcIndex, dstDatasetId, dstSetlistIndex, dstIndex]
+
+    // [srcDatasetId, srcSetlistIndex, srcIndex, dstDatasetId, dstSetlistIndex, dstIndex].
+    // Cross-Set-List only now (same-Set-List dragging uses the real byte-
+    // level getSongRecordBytes()/getNameRecordBytes()/putSongRecordBytes()/
+    // putNameRecordBytes() pair instead, see pane.js) -- still the older,
+    // in-memory-only mechanism (see the class doc comment above), since
+    // making cross-Set-List operations save-durable raises the same
+    // fixed-128-slot-capacity question reorderSongEntry() above
+    // deliberately doesn't attempt yet. `moveEntry()` (same-Set-List swap)
+    // is gone -- fully superseded by the new byte-level copy-over/insert
+    // gestures.
+    choc::value::Value copyEntry(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, songIndex, newComment] -- in-memory only,
     // like move/copy; nothing is written back to disk (see README.md/STATE.md).
@@ -88,14 +100,74 @@ public:
     // mutating in-memory bookkeeping.
     choc::value::Value putSongRecordBytes(const choc::value::ValueView& args);
 
+    // [datasetId, setlistIndex, songIndex] -> {ok, bytes:[0-255 x 28]} or
+    // {ok:false, error}. The raw SDB1 name record for one Set List slot --
+    // a completely separate chunk and byte stride from
+    // getSongRecordBytes() above, see PcgFile::nameRecordBytes()'s own doc
+    // comment for why a slot's name and params need independent
+    // read/write paths (they aren't stored together).
+    choc::value::Value getNameRecordBytes(const choc::value::ValueView& args);
+
+    // [datasetId, setlistIndex, songIndex, bytes[0-255 x 28]] -> {ok} or
+    // {ok:false, error}. Writes straight into the dataset's retained raw
+    // bytes via PcgFile::putNameRecordBytes().
+    choc::value::Value putNameRecordBytes(const choc::value::ValueView& args);
+
+    // [datasetId, setlistIndex, fromIndex, toIndex] -> {ok} or {ok:false,
+    // error}. Relocates one Set List slot (its name AND its params
+    // together) within the same Set List, shifting the intervening range
+    // -- see PcgFile::reorderSong()'s own doc comment. The Setlist drag-
+    // and-drop "insert between two entries" gesture is built on this: one
+    // native call so a wide shift (up to ~127 slots) is a single bridge
+    // round-trip, not one per shifted slot. Same-Set-List only, per direct
+    // agreement -- relocating *between* Set Lists raises a real data-loss
+    // question (a fixed-128-slot destination has to evict something to
+    // make room for an insert) that needs its own careful design, not
+    // bundled into this pass. copyEntry() below still handles cross-
+    // Set-List copying, unchanged, at its existing (in-memory-only, not
+    // yet save-durable) fidelity.
+    choc::value::Value reorderSongEntry(const choc::value::ValueView& args);
+
+    // [datasetId, srcSetlistIndex, dstSetlistIndex] -> {ok} or {ok:false,
+    // error}. Overwrites every song slot in dstSetlistIndex with
+    // srcSetlistIndex's content (both Set Lists live in the SAME dataset --
+    // this is a same-file operation, not a cross-dataset one, see
+    // PcgFile::copySetlist()'s own doc comment) -- the "copy all to
+    // opposite" pane-header button (frontend/pane.js/app.js), for starting a
+    // gig's Set List from an existing one and then tweaking a few entries.
+    // Leaves dstSetlistIndex's own Setlist::name untouched -- only the 128
+    // song slots move. The frontend is responsible for only offering this
+    // when both panes already share one dataset with two different Set
+    // Lists selected (see app.js's copyAllToOpposite()) -- this method
+    // itself doesn't know or care which pane called it.
+    choc::value::Value copySetlistEntries(const choc::value::ValueView& args);
+
     // [datasetId, path] -> {ok} or {ok:false, error}. Writes the dataset's
     // retained raw bytes straight to `path` via PcgFile::save() -- see that
     // method's own doc comment for why this needs no serialization step of
     // its own (every edit already lands directly in the retained buffer).
-    // Deliberately minimal for now: takes a plain path, no native Save
-    // dialog wired up yet (see STATE.md) -- callers (currently a devtools
-    // console script, not real app UI) supply an absolute path themselves.
+    // Deliberately minimal: takes a plain path, no dialog -- callers
+    // (currently a devtools console script) supply an absolute path
+    // themselves. saveFileDialog() below is the real, UI-reachable front
+    // door onto the same write; this stays as the lower-level building
+    // block it wraps.
     choc::value::Value saveFileAs(const choc::value::ValueView& args);
+
+    // [datasetId] -> {ok, path} or {ok:true, cancelled:true} (user closed
+    // the dialog, see makeCancelled()) or {ok:false, error}. Shows a native
+    // "Save As" dialog (src/platform/NativeFileDialog.h's
+    // showSaveFileDialog(), invoked directly for the same reason
+    // openFileDialog() above doesn't go through CHOC's own WebView-
+    // triggered picker -- see NativeFileDialog.cpp), pre-filled with the
+    // dataset's own display name, then writes to wherever the user picked
+    // via the same PcgFile::save() saveFileAs() above uses. This is the
+    // per-pane "Save As..." button's bridge method (frontend/pane.js) --
+    // the first real, UI-reachable way to write an edited dataset back to
+    // disk; saveFileAs() above stays reachable directly (path supplied by
+    // the caller) for scripted/devtools use. Currently macOS-only, like
+    // openFileDialog(); returns an error on platforms
+    // NativeFileDialog.cpp doesn't support yet.
+    choc::value::Value saveFileDialog(const choc::value::ValueView& args);
 
     // Library browser (read-only) -- see docs/README.md and STATE.md's
     // Program/Combi Library Editor plan for scope/roadmap.

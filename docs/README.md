@@ -212,6 +212,23 @@ Floyd`) with real song titles (`Rolling in the Deep`, `Sex on Fire`,
 `AC/DC`, `Africa`, `Purple Rain`, ...) and 123 untouched `Set List NNN`
 defaults.
 
+**A slot's position IS its order — CONFIRMED, no separate ordering field.**
+`docs/external/KORG/SetList.txt` (Korg's own SysEx documentation) lays out
+records 24..565 as "Slot 0", then states records 566..69399 are "Slot 1 ~
+127 ... and the IDX is assigned to 1 ~ 127" -- i.e. a slot's on-hardware
+number/order is simply which fixed-stride record it physically occupies,
+with no separate "play order"/"next slot" pointer field anywhere in the
+structure. This is the direct ground truth behind why this project's
+reorder/copy operations (`PcgFile::reorderSong()`/`copySetlist()`, see
+STATE.md) physically move the 28-byte name + 542-byte params records
+themselves rather than writing to some lighter-weight order/index field --
+there isn't one to write to. It's also why the editor's own on-screen A-Z/
+Z-A sort buttons (`frontend/pane.js`) are deliberately display-only: a real
+Kronos loading this file plays Set List slots back strictly in raw record
+position, so re-sorting what's shown in the app changes nothing about what
+the hardware will actually do unless a real reorder/copy operation writes
+different bytes into those fixed positions.
+
 ## 4. SBK1 -- per-slot parameters — CONFIRMED (mostly)
 
 Every SDB1 song record turned out to be **name-only** -- confirmed with a

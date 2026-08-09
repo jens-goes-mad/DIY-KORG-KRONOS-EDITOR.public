@@ -27,6 +27,25 @@ function onDatasetsChanged(listener) {
   listener(datasetsCache);
 }
 
+// A plain broadcast, deliberately with no stored state of its own (unlike
+// datasetsCache above) -- app.js's `panes` object is already the
+// authoritative source for "what is each pane currently showing"
+// (getCurrentDatasetId()/getCurrentSetlistIndex()), so this only needs to
+// tell interested listeners WHEN to re-read it, not cache a second copy that
+// could drift. Fired by a Setlist panel (pane.js) whenever its own
+// dataset/Set List selection changes; the "copy all to opposite" button
+// (also pane.js) subscribes so it can recompute its enabled state whenever
+// EITHER pane's selection changes, not just its own.
+const paneSelectionListeners = [];
+
+function notifyPaneSelectionChanged() {
+  for (const listener of paneSelectionListeners) listener();
+}
+
+function onPaneSelectionChanged(listener) {
+  paneSelectionListeners.push(listener);
+}
+
 // Repopulates a <select> from the current dataset list, preserving
 // `currentValue` (a datasetId, as a string -- <select> values are always
 // strings) if it's still present, otherwise falling back to the placeholder.

@@ -20,6 +20,12 @@
 // "INT-"/"USER-" form is what's actually verified against ground truth
 // (docs/README.md, PcgFile.cpp's confirmed Timbre bank codes), so only the
 // display layer abbreviates, never the underlying data.
+// Confirmed fixed count, real hardware and file format alike (docs/README.md
+// §3.2/§4.2) -- every Set List always has exactly this many song slots, never
+// more or fewer. Used by the drag-and-drop "insert after the last entry"
+// gesture to clamp a target index to the last real slot.
+const SETLIST_SONG_COUNT = 128;
+
 const COMBI_BANK_NAMES = [
   "I-A", "I-B", "I-C", "I-D", "I-E", "I-F", "I-G",
   "U-A", "U-B", "U-C", "U-D", "U-E", "U-F", "U-G",
@@ -105,6 +111,21 @@ function setlistColorHex(color) {
 
 function setlistColorName(color) {
   return SETLIST_COLOR_NAMES[color - 1] || `Color ${color}`;
+}
+
+// Which of the three drag-and-drop gestures a Setlist row's dragover/drop
+// applies, based on where within the row's own height the cursor currently
+// is -- top 30% = "insert before this row", bottom 30% = "insert after this
+// row", middle 40% = "copy over this row" (see app.js's onDropEntry and
+// STATE.md's RFC for what each does). Recomputed on every dragover, not
+// just once, since the cursor can move between zones while still hovering
+// the same row.
+function dropZoneForEvent(tr, ev) {
+  const rect = tr.getBoundingClientRect();
+  const relativeY = (ev.clientY - rect.top) / rect.height;
+  if (relativeY < 0.3) return "before";
+  if (relativeY > 0.7) return "after";
+  return "on";
 }
 
 function kronosNumber(n) {
@@ -231,13 +252,25 @@ function slotEditorKey(datasetId, setlistIndex, songIndex) {
 // the shell mounts/hides depending on which category button is active.
 // Reads the dataset to show via getDatasetId() (owned by the shell) rather
 // than tracking it itself, matching createLibraryPanels()'s same contract.
-function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, getDatasetId, getProgramBankType, onJumpToInstrument }) {
+function createSetlistPanel(
+  container,
+  { paneId, log, showToast, onDropEntry, onCopySetlist, getDatasetId, getOpposite, getProgramBankType, onJumpToInstrument }
+) {
   container.innerHTML = `
     <div class="select is-fullwidth is-small">
       <select class="setlist-select" disabled></select>
     </div>
-    <div class="setlist-info help">${NO_DATASET_MESSAGE}</div>
-    <input class="filter-input input is-small" type="text" placeholder="Filter / search..." disabled />
+    <div class="setlist-info-row">
+      <div class="setlist-info help">${NO_DATASET_MESSAGE}</div>
+      <button class="button is-small copy-setlist-button" type="button" disabled>Copy all to opposite</button>
+    </div>
+    <div class="filter-row">
+      <input class="filter-input input is-small" type="text" placeholder="Filter / search..." disabled />
+      <div class="buttons has-addons sort-buttons">
+        <button class="button is-small sort-asc-button" type="button" disabled title="Sort the list below by name, A to Z -- display order only, doesn't change the Set List's actual slot order (click again to go back to slot order)">A&#8594;Z</button>
+        <button class="button is-small sort-desc-button" type="button" disabled title="Sort the list below by name, Z to A -- display order only, doesn't change the Set List's actual slot order (click again to go back to slot order)">Z&#8594;A</button>
+      </div>
+    </div>
     <div class="entries-scroll">
       <table class="table is-fullwidth is-hoverable is-narrow setlist-table">
         ${colgroupHtml([
@@ -258,18 +291,52 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
         </thead>
         <tbody></tbody>
       </table>
+      <div class="drop-indicator" hidden></div>
     </div>
   `;
 
   const setlistSelect = container.querySelector(".setlist-select");
   const infoEl = container.querySelector(".setlist-info");
+  const copySetlistButton = container.querySelector(".copy-setlist-button");
   const filterInput = container.querySelector(".filter-input");
+  const sortAscButton = container.querySelector(".sort-asc-button");
+  const sortDescButton = container.querySelector(".sort-desc-button");
   const tbody = container.querySelector("tbody");
+  const dropIndicator = container.querySelector(".drop-indicator");
+
+  // The "insert before/after this row" drag gesture (dropZoneForEvent()
+  // below) originally showed a `box-shadow` on the target `<tr>` itself --
+  // it never actually rendered. Bulma's `.table` sets `border-collapse:
+  // collapse`, and collapsed table rows don't paint a box-shadow at all in
+  // any current browser (a well-known table-rendering limitation, not a
+  // specificity/z-index bug -- the "on" gesture's `.drop-target` class
+  // works fine because it uses `background`/`outline`, neither of which has
+  // this limitation). Rather than fight `<tr>` styling further, this is one
+  // floating `<div>` per pane, absolutely positioned against
+  // `.entries-scroll` (`position: relative`, see style.css) and moved to
+  // straddle the boundary above/below whichever row is currently the
+  // insert target -- a real "this is where it lands" line, unaffected by
+  // table layout quirks, and it naturally scrolls with the table since it's
+  // a child of the same scrolling element rather than the table itself.
+  function showDropIndicator(tr, zone) {
+    dropIndicator.style.top = `${zone === "before" ? tr.offsetTop : tr.offsetTop + tr.offsetHeight}px`;
+    dropIndicator.hidden = false;
+  }
+  function hideDropIndicator() {
+    dropIndicator.hidden = true;
+  }
 
   let setlists = [];        // [{index, name}], as returned by listSetlists()
   let currentSetlistIndex = -1;
   let entries = [];         // [{index, label}], as returned by getEntries()
   let filterText = "";
+  // Display order only, exactly like filterText above -- never touches
+  // `entries`/each entry's own `.index` (the Kronos slot number), so
+  // drag-and-drop (which always acts on `.index`, see dropZoneForEvent()/
+  // the row builders below) keeps working the same way regardless of
+  // whether the table's currently showing physical slot order or a sort.
+  // null = natural slot order, "asc"/"desc" = by name (localeCompare).
+  let sortOrder = null;
   // Which slots currently show the editor panel at all -- a slot's panel,
   // once open, stays open (showing all three Color/Comment/Volume accordion
   // headers) until explicitly dismissed via its own Close button, regardless
@@ -280,6 +347,12 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
   // (one <tr> per open type, closed by re-clicking the same column) read as
   // counterintuitive once there was no single place to close "all of it."
   let openPanels = new Set();
+  // Multi-select for a future bulk drag-and-drop iteration (STATE.md's
+  // RFC) -- ctrl/cmd+click toggles a row in/out of this set, visual only
+  // for now, no bulk action wired up yet. Deliberately a SEPARATE concept
+  // from openPanels above (which row's editor is open) -- a row can be
+  // multi-selected without its editor being open, and vice versa.
+  const multiSelected = new Set();
   // Which of an OPEN panel's three accordion sections are currently
   // expanded (showing content, not just a header) -- songIndex -> Set of
   // "comment"|"color"|"volume". A type absent here (or the whole songIndex
@@ -718,9 +791,35 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
     return section;
   }
 
+  // Shared by every per-cell click handler below (row fallback, Bank/Vol/#
+  // cells) -- ctrl/cmd+click toggles multi-select and pre-empts whatever
+  // that cell would normally do, so building a selection never has the
+  // side effect of also opening an editor. Returns true if it handled the
+  // click (caller should stop there, not run its own action).
+  function handleMultiSelectClick(ev, songIndex) {
+    if (!ev.ctrlKey && !ev.metaKey) return false;
+    if (multiSelected.has(songIndex)) multiSelected.delete(songIndex);
+    else multiSelected.add(songIndex);
+    renderRows();
+    return true;
+  }
+
   function renderRows() {
     const needle = filterText.trim().toLowerCase();
-    const visible = needle ? entries.filter((e) => e.label.toLowerCase().includes(needle)) : entries;
+    const filtered = needle ? entries.filter((e) => e.label.toLowerCase().includes(needle)) : entries;
+    // Empty slots (label === "", shown as "(empty)" below) always sort to
+    // the bottom regardless of direction -- an empty slot has no real name
+    // to compare, and "" sorts before any letter under a plain
+    // localeCompare, which would otherwise flood the top of an A-Z sort
+    // with every unused slot instead of the songs actually being looked
+    // for (the main reason this button exists).
+    const visible = sortOrder
+      ? [...filtered].sort((a, b) => {
+          if (!a.label !== !b.label) return a.label ? -1 : 1;
+          if (!a.label) return 0;
+          return sortOrder === "asc" ? a.label.localeCompare(b.label) : b.label.localeCompare(a.label);
+        })
+      : filtered;
 
     tbody.innerHTML = "";
     for (const entry of visible) {
@@ -733,14 +832,19 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
       // individually collapsed, since the panel (and its Close button)
       // are still showing.
       if (openPanels.has(entry.index)) tr.classList.add("is-selected");
+      if (multiSelected.has(entry.index)) tr.classList.add("multi-selected");
 
       // Row-level fallback: Song/Type cells (and anywhere else not handled
       // by a cell's own listener below) open/toggle the Comment section,
       // same as before this row grew per-column routing. # and Vol get
       // their own listeners (with stopPropagation) further down, inside
       // the paramsFound block -- there's nothing meaningful to toggle for
-      // either without real slot params.
-      tr.addEventListener("click", () => {
+      // either without real slot params. ctrl/cmd+click is intercepted
+      // first (both modifiers, for cross-platform muscle memory) to toggle
+      // multi-select instead -- no editor-opening side effect while
+      // building a selection.
+      tr.addEventListener("click", (ev) => {
+        if (handleMultiSelectClick(ev, entry.index)) return;
         openSection(entry, "comment");
       });
 
@@ -754,6 +858,7 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
       });
       tr.addEventListener("dragend", () => {
         draggedFromDatasetId = null;
+        hideDropIndicator();
       });
       tr.addEventListener("dragover", (ev) => {
         // Cross-dataset Setlist copies are rejected outright (see app.js's
@@ -762,20 +867,34 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
         // cursor takes over and no `drop` event fires here at all.
         if (draggedFromDatasetId != null && draggedFromDatasetId !== getDatasetId()) {
           tr.classList.remove("drop-target");
+          hideDropIndicator();
           return;
         }
         ev.preventDefault();
         ev.dataTransfer.dropEffect = "move";
-        tr.classList.add("drop-target");
+        const zone = dropZoneForEvent(tr, ev);
+        tr.classList.toggle("drop-target", zone === "on");
+        if (zone === "on") hideDropIndicator();
+        else showDropIndicator(tr, zone);
       });
-      tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
+      tr.addEventListener("dragleave", () => {
+        tr.classList.remove("drop-target");
+        hideDropIndicator();
+      });
       tr.addEventListener("drop", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();  // don't also trigger the pane's file-drop handler
+        const zone = dropZoneForEvent(tr, ev);
         tr.classList.remove("drop-target");
+        hideDropIndicator();
         const raw = ev.dataTransfer.getData("application/json");
         if (!raw) return;
-        onDropEntry(JSON.parse(raw), { datasetId: getDatasetId(), setlistIndex: currentSetlistIndex, index: entry.index });
+        onDropEntry(JSON.parse(raw), {
+          datasetId: getDatasetId(),
+          setlistIndex: currentSetlistIndex,
+          index: entry.index,
+          zone,
+        });
       });
 
       const idxTd = document.createElement("td");
@@ -828,6 +947,7 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
         bankButton.title = `Show ${entry.isProgram ? "Program" : "Combi"} ${formatBankNumber(entry, bankType)} in this pane's Programs/Combis view`;
         bankButton.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          if (handleMultiSelectClick(ev, entry.index)) return;
           onJumpToInstrument({ isProgram: entry.isProgram, bank: entry.bank, number: entry.number });
         });
         bankTd.appendChild(bankButton);
@@ -837,6 +957,7 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
         // listener above from also firing (same pattern as bankButton).
         volTd.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          if (handleMultiSelectClick(ev, entry.index)) return;
           openSection(entry, "volume");
         });
         // Color used to be its own swatch column -- now shown as the "#"
@@ -850,6 +971,7 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
         // Comment-editor fallback -- same stopPropagation pattern as Vol.
         idxTd.addEventListener("click", (ev) => {
           ev.stopPropagation();
+          if (handleMultiSelectClick(ev, entry.index)) return;
           openSection(entry, "color");
         });
       }
@@ -882,6 +1004,43 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
     renderRows();
   }
 
+  // "Copy all to opposite" (setlist-info row) -- only meaningful once both
+  // panes are pointed at the SAME dataset but showing two DIFFERENT Set
+  // Lists (per direct request); copying a Set List onto itself is a no-op,
+  // and cross-dataset copying raises the same physical bank/number
+  // portability question app.js's onDropEntry() already documents for
+  // single-slot copies. Recomputed whenever EITHER pane's selection changes
+  // (onPaneSelectionChanged() below, datasets.js), not just this one's --
+  // the opposite pane switching its own Set List must also flip this
+  // button's state even though nothing here changed.
+  function updateCopyButtonState() {
+    const datasetId = getDatasetId();
+    const opposite = getOpposite();
+    const oppositeDatasetId = opposite ? opposite.getCurrentDatasetId() : null;
+    const oppositeSetlistIndex = opposite ? opposite.getCurrentSetlistIndex() : -1;
+    const eligible =
+      datasetId != null &&
+      oppositeDatasetId === datasetId &&
+      currentSetlistIndex >= 0 &&
+      oppositeSetlistIndex >= 0 &&
+      currentSetlistIndex !== oppositeSetlistIndex;
+    copySetlistButton.disabled = !eligible;
+    copySetlistButton.title = eligible
+      ? `Copy all 128 slots of this Set List onto the opposite pane's Set List ${kronosNumber(oppositeSetlistIndex)}, overwriting it.`
+      : "Copy every slot of this Set List onto the opposite pane's -- only available when both panes show the same dataset with two different Set Lists selected.";
+  }
+
+  copySetlistButton.addEventListener("click", async () => {
+    const datasetId = getDatasetId();
+    const opposite = getOpposite();
+    if (datasetId == null || !opposite) return;
+    const oppositeSetlistIndex = opposite.getCurrentSetlistIndex();
+    if (oppositeSetlistIndex < 0 || oppositeSetlistIndex === currentSetlistIndex) return;
+    await onCopySetlist({ datasetId, setlistIndex: currentSetlistIndex }, { datasetId, setlistIndex: oppositeSetlistIndex });
+  });
+
+  onPaneSelectionChanged(updateCopyButtonState);
+
   function populateSetlistSelect() {
     setlistSelect.innerHTML = "";
     for (const s of setlists) {
@@ -897,15 +1056,41 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
     currentSetlistIndex = Number(setlistSelect.value);
     filterText = "";
     filterInput.value = "";
+    sortOrder = null;  // a sort from the previous Set List carrying over silently would be confusing
+    updateSortButtons();
     openPanels.clear();  // don't carry an open editor panel over to a different Set List's song at the same index
     expandedSections.clear();
     slotBytesCache.clear();
     releaseAllSlotLocks();
+    notifyPaneSelectionChanged();
     await refreshEntries();
   });
 
   filterInput.addEventListener("input", () => {
     filterText = filterInput.value;
+    renderRows();
+  });
+
+  // Reflects `sortOrder` on the two buttons' own active state -- Bulma's
+  // `.is-link` (real Bulma button state, same "currently selected" idiom
+  // the bank-filter buttons already use elsewhere in this app), not a
+  // hand-rolled class.
+  function updateSortButtons() {
+    sortAscButton.classList.toggle("is-link", sortOrder === "asc");
+    sortDescButton.classList.toggle("is-link", sortOrder === "desc");
+  }
+
+  // Clicking the already-active direction turns sorting off again (back to
+  // physical slot order) rather than being a one-way toggle -- same
+  // "click again to undo" affordance the bank-filter buttons already have.
+  sortAscButton.addEventListener("click", () => {
+    sortOrder = sortOrder === "asc" ? null : "asc";
+    updateSortButtons();
+    renderRows();
+  });
+  sortDescButton.addEventListener("click", () => {
+    sortOrder = sortOrder === "desc" ? null : "desc";
+    updateSortButtons();
     renderRows();
   });
 
@@ -923,12 +1108,17 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
       filterText = "";
       filterInput.value = "";
       filterInput.disabled = true;
+      sortOrder = null;
+      updateSortButtons();
+      sortAscButton.disabled = true;
+      sortDescButton.disabled = true;
       openPanels.clear();
       expandedSections.clear();
       slotBytesCache.clear();
       releaseAllSlotLocks();
       infoEl.textContent = NO_DATASET_MESSAGE;
       renderRows();
+      notifyPaneSelectionChanged();
       return;
     }
 
@@ -944,6 +1134,8 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
     // cache would be for the WRONG dataset's slot entirely).
     filterText = "";
     filterInput.value = "";
+    sortOrder = null;
+    updateSortButtons();
     openPanels.clear();
     expandedSections.clear();
     slotBytesCache.clear();
@@ -951,21 +1143,25 @@ function createSetlistPanel(container, { paneId, log, showToast, onDropEntry, ge
 
     infoEl.textContent = `Showing ${displayName}`;
     filterInput.disabled = setlists.length === 0;
+    sortAscButton.disabled = setlists.length === 0;
+    sortDescButton.disabled = setlists.length === 0;
+    notifyPaneSelectionChanged();
     await refreshEntries();
     log(`[Pane ${paneId}] Showing ${displayName}`);
   }
 
-  return { refreshEntries, onDatasetChanged };
+  return { refreshEntries, onDatasetChanged, getCurrentSetlistIndex: () => currentSetlistIndex };
 }
 
-function createPane(paneId, root, { onDropEntry, onDropProgram, log, showToast }) {
+function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, getOpposite, log, showToast }) {
   root.innerHTML = `
     <div class="pane-header">
       <div class="pane-header-row">
-        <div class="pane-header-col">
+        <div class="pane-header-col dataset-select-row">
           <div class="select is-small is-fullwidth dataset-select-wrap">
             <select class="dataset-select"></select>
           </div>
+          <button class="button is-small save-file-button" type="button" disabled title="Save this pane's dataset -- its current in-memory bytes, including any unsaved edits -- to a .PCG/.SNG file via a native Save dialog">Save As...</button>
         </div>
         <div class="pane-header-col">
           <div class="tabs is-boxed is-small pane-category-tabs">
@@ -986,6 +1182,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, log, showToast }
   `;
 
   const datasetSelect = root.querySelector(".dataset-select");
+  const saveFileButton = root.querySelector(".save-file-button");
   const categoryTabs = root.querySelectorAll(".pane-category-tabs li");
   const setlistContainer = root.querySelector('[data-category-panel="setlist"]');
   const libraryContainer = root.querySelector('[data-category-panel="library"]');
@@ -1060,7 +1257,9 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, log, showToast }
     log,
     showToast,
     onDropEntry,
+    onCopySetlist,
     getDatasetId: getCurrentDatasetId,
+    getOpposite,
     getProgramBankType,
     onJumpToInstrument: jumpToInstrument,
   });
@@ -1084,6 +1283,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, log, showToast }
   async function loadDataset(datasetId, displayName) {
     currentDatasetId = datasetId;
     datasetSelect.value = String(datasetId);
+    saveFileButton.disabled = false;
     await refreshProgramBankTypes();
     await setlistPanel.onDatasetChanged(displayName);
     await libraryPanels.onDatasetChanged();
@@ -1095,11 +1295,36 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, log, showToast }
   // closed from elsewhere (another pane).
   async function resetToEmpty() {
     currentDatasetId = null;
+    saveFileButton.disabled = true;
     await refreshProgramBankTypes();
     await setlistPanel.onDatasetChanged();
     await libraryPanels.onDatasetChanged();
     await internalsPanel.onDatasetChanged();
   }
+
+  // "Save As..." (pane header, beside the dataset selector) -- writes this
+  // pane's dataset's CURRENT in-memory bytes (including any edits made this
+  // session: Setlist reorders/copy-overs, Color/Volume/Comment writes,
+  // Program copies, ...) to a file via a native Save dialog. Built
+  // specifically to let a sorted/reordered Set List actually be tested on
+  // real Kronos hardware -- the app's own A-Z/Z-A sort buttons are display-
+  // only (STATE.md/docs/README.md §3.2), so seeing a REAL reorder reflected
+  // on the hardware needs an actual drag-and-drop move/copy (which does
+  // write real bytes) followed by saving those bytes out to a file the unit
+  // can load. `PcgFile::save()`'s own doc comment covers why no separate
+  // serialization step is needed -- every edit already lands directly in
+  // the retained buffer this writes out verbatim.
+  saveFileButton.addEventListener("click", async () => {
+    if (currentDatasetId == null) return;
+    const result = await window.saveFileDialog(currentDatasetId);
+    if (result.cancelled) return;  // user closed the dialog -- not an error, nothing to log
+    if (!result.ok) {
+      log(result.error);
+      return;
+    }
+    showToast(`Saved to ${result.path}`);
+    log(`[Pane ${paneId}] Saved to ${result.path}`);
+  });
 
   datasetSelect.addEventListener("change", async () => {
     const value = datasetSelect.value;
@@ -1137,6 +1362,11 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, log, showToast }
     // refreshing" need as refreshEntries above, just for the library view.
     refreshLibrary: libraryPanels.refresh,
     getCurrentDatasetId,
+    // Exposed so the OPPOSITE pane's "copy all to opposite" button
+    // (createSetlistPanel's getOpposite() callback, app.js wires it) can
+    // read which Set List this pane currently shows, without this pane
+    // needing any reference back to the shell that created it.
+    getCurrentSetlistIndex: setlistPanel.getCurrentSetlistIndex,
     loadDataset,
     isEmpty: () => currentDatasetId == null,
   };

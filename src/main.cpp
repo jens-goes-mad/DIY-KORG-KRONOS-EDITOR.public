@@ -103,14 +103,23 @@ int main() {
         view.bind("listSetlists",
                    [&bridge](const choc::value::ValueView& args) { return bridge.listSetlists(args); });
         view.bind("getEntries", [&bridge](const choc::value::ValueView& args) { return bridge.getEntries(args); });
-        view.bind("moveEntry", [&bridge](const choc::value::ValueView& args) { return bridge.moveEntry(args); });
         view.bind("copyEntry", [&bridge](const choc::value::ValueView& args) { return bridge.copyEntry(args); });
         view.bind("setComment", [&bridge](const choc::value::ValueView& args) { return bridge.setComment(args); });
         view.bind("getSongRecordBytes",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getSongRecordBytes(args); });
         view.bind("putSongRecordBytes",
                    [&bridge](const choc::value::ValueView& args) { return bridge.putSongRecordBytes(args); });
+        view.bind("getNameRecordBytes",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.getNameRecordBytes(args); });
+        view.bind("putNameRecordBytes",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.putNameRecordBytes(args); });
+        view.bind("reorderSongEntry",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.reorderSongEntry(args); });
+        view.bind("copySetlistEntries",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.copySetlistEntries(args); });
         view.bind("saveFileAs", [&bridge](const choc::value::ValueView& args) { return bridge.saveFileAs(args); });
+        view.bind("saveFileDialog",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.saveFileDialog(args); });
         view.bind("listPrograms",
                    [&bridge](const choc::value::ValueView& args) { return bridge.listPrograms(args); });
         view.bind("listCombis", [&bridge](const choc::value::ValueView& args) { return bridge.listCombis(args); });

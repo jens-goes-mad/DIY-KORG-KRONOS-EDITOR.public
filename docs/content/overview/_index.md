@@ -41,9 +41,12 @@ None of this is documented by Korg beyond the user manual's *behavior*. The on-d
 
 ## What's confirmed so far
 
-- **Container format**: chunked, RIFF/IFF-like but big-endian, every chunk preceded by
-  one still-unexplained 4-byte field before its `[4-char tag][u32 size][content]`
-  header. Top-level children of interest: `SLS1` (Set Lists), `PRG1` (Programs, 20
+- **Container format**: chunked, RIFF/IFF-like but big-endian -- every chunk has a
+  fixed 12-byte header, `[4-char tag][u32 size][4-byte unknown field "dwX"]`, followed
+  by exactly `size` bytes of content (a nested chunk's own size is counted in full
+  toward its parent's, all the way down). `PCG1` itself is a real top-level chunk
+  spanning the rest of the file, not implicit padding before the "real" content
+  starts. Top-level children of interest: `SLS1` (Set Lists), `PRG1` (Programs, 20
   sub-banks), `CMB1` (Combis, 14 sub-banks) -- `DKT1`/`WSQ1`/`GLB1`/`DPI1` (Drum Kits,
   Wave Sequences, Global settings, and one unidentified chunk) exist but are unexplored.
 - **Set Lists** (`SDB1`): all 128 Set Lists, 128 song slots each, extracted correctly --
@@ -81,13 +84,24 @@ corresponds to which on-screen label beyond the ones directly confirmed above.
   **dataset** (loaded file) to show from its own selector, and a per-pane category
   navbar (Setlist / Programs / Combis / Duplicates / Internals) switches what that pane
   is browsing -- so two panes can show different categories of the same dataset, the same
-  category of two different datasets side by side, or anything in between. Point both
-  panes at the same dataset to rearrange one backup (edits show up in both
-  immediately, dragging a Set List row between them swaps/copies it); point them at
-  different datasets to compare two backups side by side -- see
-  [App architecture & components](/components) for how this is built.
-- **Setlist**: browse any Set List's 128 slots with filter/search, drag entries to
-  swap them within a list or copy them across panes, and jump straight from a slot's
+  category of two different datasets side by side, or anything in between. A swap button
+  between the two panes flips which side each one is shown on -- a pure display swap,
+  nothing about either pane's own data changes. Point both panes at the same dataset to
+  rearrange one backup (edits show up in both immediately) or work on two different Set
+  Lists of it side by side; point them at different datasets to compare two backups --
+  see [App architecture & components](/components) for how this is built.
+- **Setlist**: browse any Set List's 128 slots with filter/search. Drag a row within its
+  own Set List to reorder things -- drop it directly onto another slot to copy that
+  slot's whole content over the target (name, Program/Combi reference, Color/Volume/
+  Comment together; the source slot is left untouched), or drop it between two slots (or
+  before the first/after the last) to insert it there instead, shifting every slot in
+  between down one to make room -- a floating line shows exactly where the insert will
+  land as you drag. A **"Copy all to opposite"** button clones an entire prepared Set
+  List onto the other pane's currently-selected one in a single click (both panes need to
+  already be on the same dataset with two different Set Lists picked) -- built for
+  starting a gig's list from an existing one and then only touching the handful of slots
+  that need to change. Ctrl/Cmd-click marks rows for a future bulk action (nothing wired
+  up to the selection yet -- groundwork for what's next). Jump straight from a slot's
   Bank/number to that exact Program or Combi in the same pane's Programs/Combis view.
   Click a slot's # for its Color (one of the 16 real Kronos Set List colors), Vol for
   its Volume (0-127), or Song/Type for its Comment and Font size -- one editor panel per
