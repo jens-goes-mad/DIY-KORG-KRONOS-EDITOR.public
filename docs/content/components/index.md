@@ -5,7 +5,7 @@ links:
     description: componentization, encapsulation, and testability without building the native app at all
 menu:
     main:
-        weight: 4
+        weight: 5
         params:
             icon: sitemap
 

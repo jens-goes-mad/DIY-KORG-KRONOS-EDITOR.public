@@ -5,7 +5,7 @@ links:
     description: CMake-based build instructions, verified via CI on all three platforms
 menu:
     main:
-        weight: 3
+        weight: 4
         params:
             icon: cpu
 
