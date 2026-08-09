@@ -1423,6 +1423,34 @@ full rationale):
     it's a thin dialog/path wrapper around the already-tested
     `PcgFile::save()`/`saveFileAs()`); `node --check` clean on both touched
     frontend files.
+  - **`docs/README.md` demoted from a second full copy to a short pointer
+    (2026-08-09)**: raised by the project owner directly -- "Maybe we should
+    get rid of the README.md over time?" -- after noticing the dual-
+    maintenance cost (`docs/README.md` and `docs/content/format/index.md`
+    kept in sync by hand, per this file's own "Keep the docs in sync"
+    convention) had already caused real drift: a stale, dangling half-
+    paragraph in `docs/README.md`'s Transpose section (an old edit that
+    removed a sentence but left its tail behind) that `docs/content/
+    format/index.md` didn't have, found while reconciling the two before
+    this change. Decided against deleting `docs/README.md` outright (it's
+    the one file-format reference someone browsing the repo on GitHub, not
+    the Hugo site, can read without leaving) or Hugo's `module.mounts`
+    (would need frontmatter in the mounted file, which would show as raw
+    text at the top of the GitHub-rendered README) -- settled on a short
+    pointer instead. `docs/content/format/index.md` is now the single
+    canonical file-format reference; `docs/README.md` is a short redirect
+    plus a table of contents. Every in-repo citation of `docs/README.md`
+    (§N.N section references throughout `src/`, `frontend/`, `tests/`,
+    `tools/`, plus `CLAUDE.md`, the top-level `README.md`, `docs/external/
+    README.md`, `docs/references/README.md`, `docs/HUGO-SITE.md`) updated
+    to point at `docs/content/format/index.md` instead -- except STATE.md's
+    own historical entries below this point, deliberately left as-is (a
+    changelog records what was true at the time; the section numbers
+    themselves didn't change, only which file holds them). Verified: full
+    `cmake --build build` clean, `ctest` clean, `node --check` clean on
+    every touched frontend file, and a local `hugo --minify` build clean
+    (confirms the Hugo site itself, e.g. the `format`/`overview` pages'
+    cross-links, wasn't broken by any of the file moves).
   - **Explicitly not committed to being final**: both the project owner and this
     assistant agreed to revisit/rethink this shape as each piece (Program decoder now
     done; chunk-based component wiring next) proves itself against real tests and the

@@ -30,7 +30,7 @@ struct CombiFields {
 };
 
 // `record` must point to exactly `recordSize` bytes -- one CBK1 record
-// slice (see docs/README.md's "Combi Timbre references" section). Never
+// slice (see docs/content/format/index.md's "Combi Timbre references" section). Never
 // throws or fails: a malformed/truncated slice yields an empty name and/or
 // default (isDefault=true) TimbreRefs for whatever doesn't fit, matching
 // this project's usual "degrade gracefully" convention for optional data.

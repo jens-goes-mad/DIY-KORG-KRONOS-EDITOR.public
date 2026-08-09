@@ -10,7 +10,7 @@ namespace kronos {
 // Confirmed by diffing purpose-built test files (setlist_test.PCG, and
 // later test_1.PCG for Font size/Transpose specifically) where each
 // parameter was varied in isolation across known slots -- see
-// docs/README.md's "SBK1" section (§4.3-4.4) for the byte-level
+// docs/content/format/index.md's "SBK1" section (§4.3-4.4) for the byte-level
 // derivation, including the bit-packing note: Font size and Transpose
 // each share a byte with Color/Bank respectively, so reading (or
 // writing) any of these four fields must mask to the bits it actually
@@ -18,12 +18,12 @@ namespace kronos {
 //
 // 0=S (the true baseline -- zero extra bits set), 1=XS, 2=M, 3=L, 4=XL --
 // not alphabetical/size order, that's just what the confirmed bit
-// encoding produces (see docs/README.md §4.4).
+// encoding produces (see docs/content/format/index.md §4.4).
 enum class FontSize { S, XS, M, L, XL };
 
 struct SlotParams {
     bool isProgram = true;  // true = Program, false = Combi
-    int bank = 0;           // bank index (masked to this field's own 5 bits -- see docs/README.md §4.3)
+    int bank = 0;           // bank index (masked to this field's own 5 bits -- see docs/content/format/index.md §4.3)
     int number = 0;         // program/combi number within that bank (0-127)
     int color = 1;          // 1-based color index (1..16 -- masked to this field's own bits, see §4.3)
     int holdTime = 0;       // Hold Time value
@@ -72,7 +72,7 @@ struct Setlist {
 // caveat before trusting this for anything beyond its own unit test.
 //
 // One thing IS confirmed directly (real hardware behavior, 2026-08-07,
-// see docs/README.md §5.2): engine assignment is a global, per-BANK
+// see docs/content/format/index.md §5.2): engine assignment is a global, per-BANK
 // setting on the unit -- Programs within one bank can never mix engines,
 // and a bank's storage is all-or-nothing (always exactly 128 slots, never
 // partially saved). That's exactly why this type is tracked once per bank
@@ -81,7 +81,7 @@ struct Setlist {
 enum class ProgramBankType { Hd1, Exi };
 
 // One Program's table row: `bank`/`name`/`number` are raw Kronos fields,
-// read directly off PRG1's MBK1/PBK1 banks (see docs/README.md §5.2) by
+// read directly off PRG1's MBK1/PBK1 banks (see docs/content/format/index.md §5.2) by
 // src/kronos/ProgramDecoder.h. `contentHash` is deliberately NOT a Kronos
 // format field -- it's this project's own application-level bookkeeping
 // (an FNV-1a hash of the record's raw bytes, for byte-exact duplicate
@@ -102,7 +102,7 @@ struct ProgramInfo {
 // after its [number][bank] pair (byte offset +2 within the Timbre block):
 // the top 3 bits ((byte >> 5) & 0x07) give this status, confirmed against
 // an independent external reference (DaBlick/PCG-Tools' "PCG Structure
-// Kronos.txt", see docs/README.md) and cross-checked against this project's
+// Kronos.txt", see docs/content/format/index.md) and cross-checked against this project's
 // own real Combi samples. `Off` is what every genuinely-unassigned Timbre
 // slot shows; the lower 5 bits of the same byte are NOT part of this --
 // they hold the Timbre's own 0-based index, a redundant field unrelated to
@@ -111,7 +111,7 @@ struct ProgramInfo {
 enum class TimbreStatus { Off, Internal, External, Ex2, Unknown };
 
 // One Combi Timbre's Program reference, read directly from the Combi's raw
-// record bytes at a fixed stride (see docs/README.md's "Combi Timbre
+// record bytes at a fixed stride (see docs/content/format/index.md's "Combi Timbre
 // references" section for how this was derived from real Combi samples the
 // project owner provided directly, and independently cross-checked against
 // DaBlick/PCG-Tools' reference doc). Encoding: byte 0 = Program number, byte
@@ -145,7 +145,7 @@ std::string timbreBankName(int rawBankCode);
 // index, see ProgramInfo::bank) has an independently-confirmed Combi
 // Timbre raw bank code (TimbreRef::rawBankCode) -- true for the 8 banks in
 // PcgFile.cpp's kConfirmedTimbreBanks table (INT-A..D, USER-A/D/F/AA, see
-// docs/README.md §6.2). The two numbering schemes coincide for INT-A..D
+// docs/content/format/index.md §6.2). The two numbering schemes coincide for INT-A..D
 // (both use 0..3) but diverge for the other 4 (e.g. USER-D is file-order
 // index 11 but Timbre code 20) -- combiUsagesForProgram()/
 // combiUsageCounts() translate between the two via that same table rather
@@ -156,7 +156,7 @@ std::string timbreBankName(int rawBankCode);
 // attempted.
 bool isConfirmedTimbreProgramBank(int programBank);
 
-// One Combi, from CMB1's CBK1 banks (see docs/README.md §5.1). No
+// One Combi, from CMB1's CBK1 banks (see docs/content/format/index.md §5.1). No
 // contentHash -- duplicate detection was only requested for Programs.
 struct CombiInfo {
     int bank = 0;
@@ -167,7 +167,7 @@ struct CombiInfo {
 
 // One Set List slot that directly references a given Program (as opposed
 // to referencing it indirectly through a Combi -- Combi-internal
-// references aren't parsed yet, see docs/README.md's Phase 2 roadmap).
+// references aren't parsed yet, see docs/content/format/index.md's Phase 2 roadmap).
 struct SetlistUsage {
     int setlistIndex = 0;
     std::string setlistName;
@@ -240,7 +240,7 @@ public:
 
     // Every top-level chunk tag actually found directly under PCG1 (DIV1,
     // SLS1, PRG1, CMB1, DKT1, WSQ1, GLB1, DPI1 are the ones this format is
-    // known to use -- see docs/README.md), in file order, duplicates
+    // known to use -- see docs/content/format/index.md), in file order, duplicates
     // included if a tag genuinely appears more than once. For "Internals"-
     // style diagnostics: a real backup can apparently be saved with only a
     // subset of this data included (the project owner's own observation),
@@ -327,7 +327,7 @@ public:
 
     // Every Program-type Set List slot that directly references this
     // bank/number. Does NOT include usage from inside a Combi's Timbres --
-    // that part of the format isn't parsed yet (see docs/README.md).
+    // that part of the format isn't parsed yet (see docs/content/format/index.md).
     //
     // Caveat: bank 0 / number 0 is also the all-zero byte value, so it
     // over-counts -- a slot that was never actually assigned a Program
@@ -470,7 +470,7 @@ public:
     // song. This is a REAL, immediate, whole-Set-List rewrite -- there is
     // no separate "display order" a Kronos can show independent of a
     // slot's actual record position (confirmed against
-    // docs/external/KORG/SetList.txt, see docs/README.md §3.2), so
+    // docs/external/KORG/SetList.txt, see docs/content/format/index.md §3.2), so
     // "sorted" only ever means "physically rearranged." Every slot's raw
     // bytes are snapshotted up front before any write, so reading a slot
     // that's about to be overwritten never races its own move (unlike

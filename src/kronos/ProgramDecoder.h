@@ -21,7 +21,7 @@ namespace kronos {
 // Raw Kronos fields for one Program record -- read directly off the
 // bytes, nothing derived or computed. bank/number are the record's own
 // position among its siblings, not something stored in the record's
-// bytes (see docs/README.md §5's shared record-shape note) -- passed in
+// bytes (see docs/content/format/index.md §5's shared record-shape note) -- passed in
 // by the caller, not decoded here.
 struct ProgramFields {
     int bank = 0;
@@ -30,7 +30,7 @@ struct ProgramFields {
 };
 
 // `record` must point to exactly `recordSize` bytes -- one MBK1/PBK1
-// record slice (see docs/README.md §5). Never throws or fails: a
+// record slice (see docs/content/format/index.md §5). Never throws or fails: a
 // malformed/truncated slice just yields an empty name, matching this
 // project's usual "degrade gracefully" convention for optional data.
 ProgramFields decodeProgramFields(const uint8_t* record, size_t recordSize, int bank, int number);

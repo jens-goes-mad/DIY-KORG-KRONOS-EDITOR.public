@@ -11,15 +11,20 @@ backup files, built on [CHOC](https://github.com/Tracktion/choc)
 
 ## Why this exists
 
-Korg never published a spec for the Kronos's `.PCG`/`.SNG` backup format, and
-managing a real Kronos's library -- years of accumulated duplicate Programs,
-Set Lists scattered across gig backups, no easy way to compare two backups
-side by side -- means doing it entirely by hand on the unit's own screen, or
-not at all. This project is reverse-engineering that format from scratch,
-byte by byte, verified against real backup files with known ground truth
-(not guessed), and building a real cross-platform editor on top of it as the
-findings land -- see [`docs/README.md`](docs/README.md) for the full format
-writeup and [the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR)
+Korg never published a spec for the container/chunk structure the Kronos's
+`.PCG`/`.SNG` backup format is built from -- that part is entirely
+reverse-engineered here, though Korg's own SysEx documentation (describing
+individual objects like Programs/Combis/Set Lists) is used as a real
+cross-check wherever it exists. Managing a real Kronos's library -- years of
+accumulated duplicate Programs, Set Lists scattered across gig backups, no
+easy way to compare two backups side by side -- means doing it entirely by
+hand on the unit's own screen, or not at all. This project is
+reverse-engineering that format from scratch, byte by byte, verified against
+real backup files with known ground truth (not guessed), and building a real
+cross-platform editor on top of it as the findings land -- see
+[`docs/content/format/index.md`](docs/content/format/index.md) for the full format
+writeup, also published at
+[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/format)
 for the readable version.
 
 **If you own a Kronos**, the browsing/rearranging features below already work
@@ -147,10 +152,12 @@ between.
 Everything about the file format -- container structure, the Set List
 name and per-slot parameter layout, the Program/Combi instrument-name
 cross-reference, verification evidence, and the full list of remaining
-unknowns -- is documented in **[`docs/README.md`](docs/README.md)**. There
-is no official Korg spec being followed; that document is the complete
-internals reference this project's parser (`src/kronos/PcgFile.cpp`) is
-based on.
+unknowns -- is documented in
+**[`docs/content/format/index.md`](docs/content/format/index.md)**
+(also at [the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/format)).
+Korg has never published a spec for the container/chunk format itself; that
+document is the complete internals reference this project's parser
+(`src/kronos/PcgFile.cpp`) is based on.
 
 ## Opening a file
 
@@ -242,10 +249,11 @@ REFACTOR" section for the current decision and where it's headed next
 ## Layout
 
 ```
-docs/README.md                -- the full file-format internals reference
-docs/content/                 -- the public Hugo/GitHub Pages docs site (mirrors docs/README.md by hand)
+docs/README.md                -- short pointer to docs/content/format/index.md below
+docs/content/format/index.md  -- the full file-format internals reference (also the Hugo docs site)
+docs/content/                 -- the public Hugo/GitHub Pages docs site
 src/
-  kronos/PcgFile.{h,cpp}     -- the file-format parser (implements docs/README.md)
+  kronos/PcgFile.{h,cpp}     -- the file-format parser (implements docs/content/format/index.md)
   bridge/EditorBridge.{h,cpp} -- native functions exposed to the web UI
   platform/NativeFileDialog.{h,cpp} -- native Open/Save dialog (macOS; Windows/Linux stubbed)
   main.cpp                   -- CHOC window/webview wiring

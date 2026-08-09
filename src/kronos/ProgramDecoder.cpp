@@ -8,7 +8,7 @@ namespace {
 // this format (Combi, and the rest of Program's own record beyond just
 // the name) -- space/NUL-padded, NOT NUL-terminated, so a full-length
 // 24-character name has no terminator at all and trailing NUL/space must
-// be trimmed rather than scanned-for. See docs/README.md §5.
+// be trimmed rather than scanned-for. See docs/content/format/index.md §5.
 constexpr size_t kNameOffset = 4;
 constexpr size_t kNameLength = 24;
 

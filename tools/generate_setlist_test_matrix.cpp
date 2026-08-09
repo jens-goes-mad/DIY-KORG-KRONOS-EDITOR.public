@@ -69,7 +69,7 @@ constexpr size_t kCommentOffset = 18;
 constexpr size_t kRecordSize = 542;
 
 // Display order (ascending small-to-large) paired with each size's
-// confirmed encoding value (docs/README.md §4.4 -- 0=S is the true
+// confirmed encoding value (docs/content/format/index.md §4.4 -- 0=S is the true
 // baseline, not first alphabetically/by size; matches
 // kronos::FontSize's own enum order exactly, S=0..XL=4).
 const char* const kFontSizeNames[5] = {"XS", "S", "M", "L", "XL"};
@@ -144,7 +144,7 @@ bool writeSlot(kronos::PcgFile& pcg, int slot, const std::vector<uint8_t>& sourc
 
 // "<dir>/<name>.pcg" -> "<dir>/<name>-test.pcg" -- keeps whatever extension
 // the input actually has (".PCG"/".SNG" are both real dialects this format
-// covers, see docs/README.md) rather than assuming ".pcg" specifically.
+// covers, see docs/content/format/index.md) rather than assuming ".pcg" specifically.
 std::string testOutputPath(const std::string& inputPath) {
     size_t dot = inputPath.find_last_of('.');
     size_t slash = inputPath.find_last_of("/\\");

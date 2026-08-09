@@ -35,7 +35,7 @@ check("record is the documented SBK1 stride", realRecord.length, RECORD_SIZE);
 const decoded = decodeSetlistComment(realRecord);
 check("comment starts with real text", decoded.comment.startsWith("Intro (1):"), true);
 check("comment preserves embedded \\r\\n", decoded.comment.includes("\r\nBridge"), true);
-// Confirmed via a dedicated isolated test file (docs/README.md §4.4) --
+// Confirmed via a dedicated isolated test file (docs/content/format/index.md §4.4) --
 // this real record's font-size bits happen to decode as "L", matching
 // the C++ parser (src/kronos/PcgFile.cpp) exactly on the same record.
 check("fontSize decodes per the confirmed encoding (§4.4)", decoded.fontSize, "L");
@@ -50,7 +50,7 @@ for (const size of FONT_SIZES) {
 }
 
 // CRITICAL: Font size shares byte+12 with Type+Color and byte+17 with
-// Transpose/unexplained bits (docs/README.md §4.3) -- a font-size edit
+// Transpose/unexplained bits (docs/content/format/index.md §4.3) -- a font-size edit
 // must never clobber those other bits. Craft a record with arbitrary
 // non-zero values in exactly the bits Font size does NOT own, then
 // confirm they survive a font-size change untouched.

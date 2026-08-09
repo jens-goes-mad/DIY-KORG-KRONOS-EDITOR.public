@@ -279,7 +279,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       td.title =
         "Combi usage is only confirmed correct for 8 individually-verified banks so far (INT-A..D, " +
         "USER-A/D/F/AA) -- other banks would risk a wrong count due to the Combi-internal bank " +
-        "numbering not matching this bank's index everywhere. See docs/README.md's Combi Timbre " +
+        "numbering not matching this bank's index everywhere. See docs/content/format/index.md's Combi Timbre " +
         "references section.";
     }
     return td;
@@ -330,7 +330,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
         note.className = "usage-note";
         note.textContent =
           "Combi usage: not available for this bank yet -- only confirmed for 8 individually-verified " +
-          "banks so far (INT-A..D, USER-A/D/F/AA). See docs/README.md's Combi Timbre references section.";
+          "banks so far (INT-A..D, USER-A/D/F/AA). See docs/content/format/index.md's Combi Timbre references section.";
         box.appendChild(note);
       } else {
         const combiHeading = document.createElement("div");
@@ -451,7 +451,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   }
 
   // Mirrors PcgFile.cpp's kConfirmedTimbreBanks -- the 8 individually-
-  // confirmed Program-bank <-> Combi-Timbre-raw-code pairs (docs/README.md
+  // confirmed Program-bank <-> Combi-Timbre-raw-code pairs (docs/content/format/index.md
   // §6.2), kept as one small table here too so this mirror can't drift out
   // of sync with the backend's own list as more codes get confirmed later.
   // INT-A..D coincide (both number spaces use 0..3); USER-A/D/F/AA use a
@@ -482,7 +482,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
 
   // Formats one Timbre's Program reference for display: the confirmed bank
   // name when known, otherwise the raw numeric code so it's still honest
-  // about what was found (see docs/README.md's "Combi Timbre references"
+  // about what was found (see docs/content/format/index.md's "Combi Timbre references"
   // section -- only some bank codes have been identified so far). For a
   // confirmed bank, also shows the engine type (getProgramBankType(), same
   // per-bank map the Programs panel's own bank-filter buttons use) and the

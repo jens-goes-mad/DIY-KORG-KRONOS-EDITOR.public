@@ -42,7 +42,7 @@ struct ChunkInfo {
 // 4-byte field sometimes preceding the tag, tried at two candidate
 // positions) -- the unknown field is not a prefix before the tag at all,
 // it's the third word of a fixed header, right after size and right
-// before content. See docs/README.md §1 for the full story of how this
+// before content. See docs/content/format/index.md §1 for the full story of how this
 // was found (cross-referencing two independent official/community
 // documents against this project's own byte-level findings) and its
 // real-world consequence: every top-level chunk's `contentStart` was
@@ -108,7 +108,7 @@ std::string readRecordName(const uint8_t* data, size_t off, size_t end) {
 // song parameter records on a fixed stride. Offsets confirmed by diffing
 // setlist_test.PCG and test_1.PCG, files the project owner built
 // specifically to isolate one parameter per group of slots -- see
-// docs/README.md's "SBK1" section (§4.3-4.4).
+// docs/content/format/index.md's "SBK1" section (§4.3-4.4).
 //
 // +12 and +17 are each shared by two fields, and +13 by two more --
 // Font size and Transpose are packed a few bits at a time into otherwise-
@@ -120,7 +120,7 @@ constexpr size_t kSbkRecordSize = 542;
 constexpr size_t kSbkTypeColorOffset = 12;  // bits0-1: Type (0=Combi/1=Program/2=Song); bits2-5: (color-1); bits6-7: Font size low 2 bits
 constexpr uint8_t kSbkTypeMask = 0x03;           // bits 0-1 -- Performance Type, confirmed 2 bits wide via
                                                   // docs/external/KORG/SetList.txt (2026-08-08), not the single
-                                                  // bit this project originally assumed -- see docs/README.md
+                                                  // bit this project originally assumed -- see docs/content/format/index.md
 constexpr uint8_t kSbkTypeColorMask = 0x3F;      // bits 0-5 -- Type+Color's own bits
 constexpr uint8_t kSbkFontSizeLowMask = 0xC0;    // bits 6-7 of +12
 constexpr size_t kSbkBankOffset = 13;       // bits0-4: bank; bits5-7: Transpose high 3 bits
@@ -129,7 +129,7 @@ constexpr uint8_t kSbkTransposeHighMask = 0xE0;  // bits 5-7 of +13
 constexpr size_t kSbkNumberOffset = 14;
 constexpr size_t kSbkHoldTimeOffset = 15;  // stored value = Hold Time + 1
 constexpr size_t kSbkVolumeOffset = 16;
-constexpr size_t kSbkFontTransposeOffset = 17;   // bit4: Font size high bit; bits5-7: Transpose low 3 bits; bit3 and bits0-2 still unexplained, see docs/README.md
+constexpr size_t kSbkFontTransposeOffset = 17;   // bit4: Font size high bit; bits5-7: Transpose low 3 bits; bit3 and bits0-2 still unexplained, see docs/content/format/index.md
 constexpr uint8_t kSbkFontSizeHighMask = 0x10;   // bit 4 of +17
 constexpr uint8_t kSbkTransposeLowMask = 0xE0;   // bits 5-7 of +17
 constexpr size_t kSbkCommentOffset = 18;
@@ -183,14 +183,14 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
     params.volume = data[songOff + kSbkVolumeOffset];
 
     // Font size: 3 bits, low 2 in +12's top bits, high 1 in +17 bit 4 --
-    // see docs/README.md §4.4. Enum order (S,XS,M,L,XL) matches this
+    // see docs/content/format/index.md §4.4. Enum order (S,XS,M,L,XL) matches this
     // value directly, no further lookup needed.
     int fontSizeValue = ((fontTransposeByte & kSbkFontSizeHighMask) ? 4 : 0) |
                          ((typeColor & 0x80) ? 2 : 0) | ((typeColor & 0x40) ? 1 : 0);
     params.fontSize = static_cast<FontSize>(fontSizeValue);
 
     // Transpose: 6-bit two's complement, high 3 bits in +13's top bits,
-    // low 3 bits in +17's top bits -- see docs/README.md §4.4.
+    // low 3 bits in +17's top bits -- see docs/content/format/index.md §4.4.
     int unsigned6 = ((bankByte & kSbkTransposeHighMask) >> 2) | ((fontTransposeByte & kSbkTransposeLowMask) >> 5);
     params.transpose = unsigned6 >= 32 ? unsigned6 - 64 : unsigned6;
 
@@ -206,7 +206,7 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
 // sources agree at every point they overlap (INT-A/B/C, and USER-F's code
 // independently explaining a byte this project had first read from its own
 // sample but the project owner had misremembered the Program number for).
-// See docs/README.md's "Combi Timbre references" section for the full
+// See docs/content/format/index.md's "Combi Timbre references" section for the full
 // derivation. Every entry below is a directly-verified byte value, from one
 // source or the other -- not an extrapolation. That said, the two anchors
 // on each side (INT-A..D=0..3, USER-A=17/USER-D=20/USER-F=22/USER-AA=24)
@@ -215,7 +215,7 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
 // same way as these.
 //
 // `programBankIndex` is this project's own PBK1 file-order Program bank
-// index (ProgramInfo::bank, see docs/README.md §5.2); `rawBankCode` is the
+// index (ProgramInfo::bank, see docs/content/format/index.md §5.2); `rawBankCode` is the
 // completely separate number a Combi Timbre slot's own byte actually
 // stores (TimbreRef::rawBankCode). The two coincide for INT-A..D (both use
 // 0..3) but diverge for every other confirmed bank (e.g. USER-D is

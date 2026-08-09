@@ -12,12 +12,19 @@ menu:
 toc: true
 ---
 This is the complete internals reference for the file format this project
-parses. There is no official Korg spec being followed here -- everything
-below was derived by hex-inspecting real backups and, where noted,
-confirmed against ground truth the project owner provided directly (known
+parses. Korg has never published a single spec for this specific container
+format, so the core of it was derived by hex-inspecting real backups and
+confirming every offset against ground truth given directly (known
 song/Combi/Program names, or deliberately-constructed test files that vary
-one parameter at a time). Field names are our own working labels, not
-necessarily Korg's internal terminology, unless stated otherwise.
+one parameter at a time) -- nothing here is a plausible-looking guess left
+unchecked. Alongside that, real external sources are used wherever they
+exist and help: Korg's own SysEx/Parameter Guide documentation
+(`docs/external/KORG/`, see `docs/external/README.md`) and an independent
+third-party reverse-engineering effort
+([DaBlick/PCG-Tools](https://github.com/DaBlick/PCG-Tools)), both
+cross-checked against this project's own findings rather than trusted
+blindly. Field names are our own working labels, not necessarily Korg's
+internal terminology, unless stated otherwise.
 
 Two files were used throughout: a real full backup (`20210504.PCG`,
 ~47.9MB) and two purpose-built test files the project owner created

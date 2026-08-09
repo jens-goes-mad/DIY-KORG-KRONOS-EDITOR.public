@@ -1,12 +1,13 @@
 # docs/ -- GitHub Pages site (Hugo)
 
-This `docs/` folder does double duty: `README.md` here is the Kronos `.PCG`/`.SNG`
-file-format reference (unrelated to Hugo -- don't confuse the two), while everything else
-(`config/`, `content/`, `layouts/`, `assets/`, `static/`) is the Hugo site source for the
-project's GitHub Pages site, deployed by `../.github/workflows/hugo.yml` on every push to
-`main`. Built with [Hugo](https://gohugo.io/) and the
-[Stack theme](https://github.com/CaiJimmy/hugo-theme-stack), copied from the sibling
-`DIY-MIDI-METRONOME.public/documentation-github-page` site (same author, same template).
+Almost everything under this `docs/` folder (`config/`, `content/`, `layouts/`, `assets/`,
+`static/`) is the Hugo site source for the project's GitHub Pages site, deployed by
+`../.github/workflows/hugo.yml` on every push to `main`. Built with
+[Hugo](https://gohugo.io/) and the [Stack theme](https://github.com/CaiJimmy/hugo-theme-stack),
+copied from the sibling `DIY-MIDI-METRONOME.public/documentation-github-page` site (same
+author, same template). The one exception is `README.md` right here, unrelated to Hugo --
+it's just a short pointer to `content/format/index.md`, the actual Kronos `.PCG`/`.SNG`
+file-format reference (see that file's own note on why it's not a second full copy anymore).
 
 ## Local development
 

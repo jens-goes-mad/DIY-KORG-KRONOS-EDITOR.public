@@ -42,7 +42,7 @@
 // pane says so plainly rather than guessing which specific bank is missing.
 
 // The only top-level chunks this format is known to use (direct children
-// of PCG1, see docs/README.md) -- SDB1/SBK1 are nested inside SLS1, not
+// of PCG1, see docs/content/format/index.md) -- SDB1/SBK1 are nested inside SLS1, not
 // listed separately here.
 const INTERNALS_TOP_LEVEL_CHUNKS = [
   { tag: "DIV1", label: "DIV1 (fixed table)" },
@@ -124,7 +124,7 @@ function createInternalsPanel(container, { getDatasetId, log }) {
   // only), U-* (single-letter USER banks), U-** (double-letter USER
   // banks, Programs only) -- dropping any row that's empty for a given
   // category (Combis have no G(d) and no double-letter USER banks, see
-  // docs/README.md §5.1/§5.2) rather than rendering it blank.
+  // docs/content/format/index.md §5.1/§5.2) rather than rendering it blank.
   function bankNameRows(names) {
     const groups = [/^I-[A-Z]$/, /^G\(d\)$/, /^U-[A-Z]$/, /^U-[A-Z]{2}$/];
     return groups

@@ -1,12 +1,12 @@
 // SetlistComment: a Comment textarea + font-size button bar (XS/S/M/L/XL)
 // for one SBK1 Set List song record. Deliberately standalone -- reads and
-// writes a raw 542-byte record (see docs/README.md's "SBK1" section), with
+// writes a raw 542-byte record (see docs/content/format/index.md's "SBK1" section), with
 // no dependency on the rest of this app, choc, or a native build at all.
 // Open setlist-comment.test.html directly (via a static file server, see
 // its own comment) to develop/test this file in complete isolation.
 //
 // Comment (offset +18, NUL-terminated ASCII, may contain literal \r\n) and
-// Font size (below) are both CONFIRMED -- see docs/README.md §4.3-4.4 and
+// Font size (below) are both CONFIRMED -- see docs/content/format/index.md §4.3-4.4 and
 // src/kronos/PcgFile.cpp's readSlotParams() for the C++ side of the same
 // derivation.
 //
@@ -17,12 +17,12 @@
 // to exactly the bits Font size owns -- clearing only those bits before
 // OR-ing in the new value -- so this component never clobbers Color,
 // Transpose, or anything else packed into the same bytes.
-export const RECORD_SIZE = 542; // SBK1 song record stride (docs/README.md §4.2)
-const TYPE_COLOR_OFFSET = 12; // docs/README.md §4.3 -- bits6-7 are Font size's low 2 bits
+export const RECORD_SIZE = 542; // SBK1 song record stride (docs/content/format/index.md §4.2)
+const TYPE_COLOR_OFFSET = 12; // docs/content/format/index.md §4.3 -- bits6-7 are Font size's low 2 bits
 const FONT_SIZE_LOW_MASK = 0xc0; // bits 6-7 of +12
-const FONT_TRANSPOSE_OFFSET = 17; // docs/README.md §4.3 -- bit4 is Font size's high bit
+const FONT_TRANSPOSE_OFFSET = 17; // docs/content/format/index.md §4.3 -- bit4 is Font size's high bit
 const FONT_SIZE_HIGH_MASK = 0x10; // bit 4 of +17
-export const COMMENT_OFFSET = 18; // docs/README.md §4.3
+export const COMMENT_OFFSET = 18; // docs/content/format/index.md §4.3
 // Confirmed via docs/external/KORG/SetList.txt (2026-08-08) -- NOT
 // RECORD_SIZE - COMMENT_OFFSET (=524), this project's original assumption
 // before that source was available. The trailing 12 bytes of the record
@@ -34,7 +34,7 @@ export const COMMENT_OFFSET = 18; // docs/README.md §4.3
 export const COMMENT_MAX_LENGTH = 512;
 
 export const FONT_SIZES = ["XS", "S", "M", "L", "XL"]; // UI display order (small to large)
-// The real confirmed encoding value per size (docs/README.md §4.4) -- NOT
+// The real confirmed encoding value per size (docs/content/format/index.md §4.4) -- NOT
 // the same order as FONT_SIZES above: 0=S is the true baseline/default
 // (zero extra bits set), not XS.
 const FONT_SIZE_VALUE = { S: 0, XS: 1, M: 2, L: 3, XL: 4 };
@@ -88,7 +88,7 @@ export function encodeSetlistComment(bytes, state) {
   const commentBytes = latin1StringToBytes(state.comment || "");
   // Full field width, not reserving a byte for a NUL terminator -- a
   // full-length comment doesn't need one, same convention this format
-  // already uses for name fields (see docs/README.md's SDB1 section: "a
+  // already uses for name fields (see docs/content/format/index.md's SDB1 section: "a
   // full-length 24-character name has no terminator at all").
   const truncated = commentBytes.slice(0, COMMENT_MAX_LENGTH);
   out.fill(0, COMMENT_OFFSET, COMMENT_OFFSET + COMMENT_MAX_LENGTH);  // NOT RECORD_SIZE -- see COMMENT_MAX_LENGTH's own comment

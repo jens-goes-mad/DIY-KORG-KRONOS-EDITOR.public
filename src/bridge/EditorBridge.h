@@ -181,7 +181,7 @@ public:
     // NativeFileDialog.cpp doesn't support yet.
     choc::value::Value saveFileDialog(const choc::value::ValueView& args);
 
-    // Library browser (read-only) -- see docs/README.md and STATE.md's
+    // Library browser (read-only) -- see docs/content/format/index.md and STATE.md's
     // Program/Combi Library Editor plan for scope/roadmap.
     choc::value::Value listPrograms(const choc::value::ValueView& args);          // [datasetId]
     choc::value::Value listCombis(const choc::value::ValueView& args);            // [datasetId]

@@ -2,7 +2,8 @@
 
 Durable, project-level guidance for AI-assisted work on this repo. For current status,
 what's built, and open questions, read `STATE.md` first -- it's kept up to date and is
-more detailed than this file. For the file format itself, `docs/README.md`.
+more detailed than this file. For the file format itself, `docs/content/format/index.md`
+(`docs/README.md` is now just a short pointer to it, see below).
 
 ## The core method: no guessing, ever
 
@@ -38,11 +39,13 @@ against the raw file) against real bytes -- not just by reasoning about hex dump
   sample files, output inspected directly -- for both C++ and the frontend's pure codec
   functions (Node can run ES modules directly, or a quick CommonJS-adapted copy works
   around this environment's older Node version).
-- **Keep the docs in sync by hand.** `docs/README.md` (the canonical file-format
-  reference) and `docs/content/format/index.md` (its Hugo-site mirror) are two separate
-  files with no automated sync -- update both together. Same for the Hugo Overview page
-  (`docs/content/overview/_index.md`): keep its "what's confirmed" summary current after
-  refactors or new findings, not just STATE.md.
+- **Keep the docs in sync by hand.** `docs/content/format/index.md` is the single
+  canonical file-format reference (2026-08-09 -- `docs/README.md` used to be a second,
+  hand-maintained full copy; it drifted in practice, so it's now just a short pointer to
+  this file instead, not something to update in parallel). The Hugo Overview page
+  (`docs/content/overview/index.md`) is still its own separate summary, though -- keep
+  its "what's confirmed" section current after refactors or new findings, not just
+  STATE.md.
 - **Real Kronos data makes tests worth trusting.** Test fixtures (in JS component test
   harnesses, in C++ smoke tests) should be real bytes extracted from an actual backup
   file where possible, not invented data -- see `frontend/components/kronos/

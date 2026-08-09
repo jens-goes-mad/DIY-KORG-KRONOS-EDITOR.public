@@ -45,7 +45,7 @@ that exploration doesn't live only in chat history.
   Category/Sub-Category is known in either a Program or Combi record -- not in this
   project's own findings, not in the Synthify PCG File Structures spreadsheet, not in
   DaBlick's reverse-engineering notes. Same status as `GLB1` overall (see
-  docs/README.md's chunk tree): entirely unexplored. Two concrete, not-yet-started
+  docs/content/format/index.md's chunk tree): entirely unexplored. Two concrete, not-yet-started
   follow-ups this points at: locating Category's byte offset per record (needs the same
   purpose-built test file approach used for Font size/Transpose/Combi Timbre refs), and
   parsing `GLB1` itself, at minimum enough to extract the category name tables.
@@ -115,7 +115,7 @@ that exploration doesn't live only in chat history.
 - **Why it matters here**: these are Korg's own official SysEx parameter tables, not a
   third party's reverse-engineering -- and they turned out to describe the *same* records
   this project parses on disk, byte-for-byte, once the chunk-header fix above (§1.2's
-  12-byte header, `docs/README.md`) is accounted for. Already used to: confirm the 12-byte
+  12-byte header, `docs/content/format/index.md`) is accounted for. Already used to: confirm the 12-byte
   chunk header structure (cross-referenced against `Synthify-Kronos-PCG-File-Structures.xlsx`
   above); confirm the SBK1 slot "Performance Type" field is 2 bits (`prog/combi/song`), not
   the single bit this project's `isProgram` read assumed (`SetList.txt`); locate a strong
@@ -128,7 +128,7 @@ that exploration doesn't live only in chat history.
 - **Caution**: SysEx wire-format offsets are not automatically on-disk PCG offsets --
   every specific offset claim taken from these files needs the same real-byte
   cross-checking this project already applies to everything else before being marked
-  CONFIRMED in `docs/README.md`, not copied over at face value. Most of the material in
+  CONFIRMED in `docs/content/format/index.md`, not copied over at face value. Most of the material in
   this folder (Global, DrumKit, WaveSequence, Effect, SongControl, the per-engine
   SysExParams/VoiceModels files) hasn't been cross-checked against this project's own
   findings yet at all -- see STATE.md for what's been mined so far vs. what's still

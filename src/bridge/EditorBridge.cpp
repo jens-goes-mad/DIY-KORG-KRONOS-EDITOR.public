@@ -126,7 +126,7 @@ choc::value::Value EditorBridge::songToValue(const kronos::Song& song) {
     auto v = choc::value::createObject("SongEntry");
     v.setMember("index", song.index);
     v.setMember("label", song.name);
-    // From SBK1 -- see docs/README.md §4.3-4.4 for how these were decoded.
+    // From SBK1 -- see docs/content/format/index.md §4.3-4.4 for how these were decoded.
     v.setMember("paramsFound", song.params.found);
     v.setMember("isProgram", song.params.isProgram);
     v.setMember("bank", song.params.bank);
@@ -160,7 +160,7 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
     v.setMember("bank", combi.bank);
     v.setMember("number", combi.number);
     v.setMember("name", combi.name);
-    // Each Timbre's raw Program reference (see docs/README.md's "Combi
+    // Each Timbre's raw Program reference (see docs/content/format/index.md's "Combi
     // Timbre references" section) -- bankName is "" when this particular
     // raw code hasn't been identified yet, so the UI can fall back to
     // showing the numeric code honestly instead of a guessed name.

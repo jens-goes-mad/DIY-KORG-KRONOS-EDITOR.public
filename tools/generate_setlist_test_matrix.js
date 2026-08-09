@@ -40,7 +40,7 @@
 const TEST_MATRIX_SETLIST_INDEX = 0;
 const TEST_MATRIX_SOURCE_SLOT = 0;
 
-// The 5 confirmed Font size values (docs/README.md §4.4) and 5 representative
+// The 5 confirmed Font size values (docs/content/format/index.md §4.4) and 5 representative
 // Volume values (0/1 = the extremes past "silent", 10/100 = two ordinary
 // values, 127 = max) -- one each per group, in this fixed order.
 const TEST_MATRIX_FONT_SIZES = ["XS", "S", "M", "L", "XL"];

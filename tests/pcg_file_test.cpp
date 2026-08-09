@@ -7,7 +7,7 @@
 //
 // Real .PCG files are large and .gitignore'd (never committed), so this
 // builds a small synthetic file in memory instead, byte-for-byte matching
-// the confirmed chunk/record layout documented in docs/README.md -- enough
+// the confirmed chunk/record layout documented in docs/content/format/index.md -- enough
 // to exercise PcgFile::loadFromMemory() end-to-end (SDB1 Set List names,
 // SBK1 slot params incl. the Font size/Transpose bit-packing, PBK1 Program
 // banks, cross-referencing, duplicate detection, and decodeProgram()'s
@@ -56,7 +56,7 @@ void pushZeros(std::vector<uint8_t>& v, size_t n) { v.insert(v.end(), n, uint8_t
 
 // A 4-byte-prefix + 24-byte space/NUL-padded name field, the shape shared by
 // Set List/Song records (SDB1) and bank records (PBK1/CBK1) -- see
-// docs/README.md. `prefix` is arbitrary/unused data before the name.
+// docs/content/format/index.md. `prefix` is arbitrary/unused data before the name.
 void pushNameRecord(std::vector<uint8_t>& v, const std::string& name, size_t totalSize) {
     size_t start = v.size();
     pushZeros(v, totalSize);
@@ -65,7 +65,7 @@ void pushNameRecord(std::vector<uint8_t>& v, const std::string& name, size_t tot
 
 // One CBK1 Combi record: name at offset+4 (same shape as PBK1), plus a
 // couple of Timbre-to-Program references at the confirmed fixed stride
-// (docs/README.md's "Combi Timbre references" section) -- byte0=number,
+// (docs/content/format/index.md's "Combi Timbre references" section) -- byte0=number,
 // byte1=rawBankCode, byte2's top 3 bits=status. Timbres 0 and 1 are set
 // here; every other Timbre (2..15) stays all-zero, matching a genuinely
 // unassigned Timbre (isDefault=true).
@@ -104,7 +104,7 @@ void appendChunk(std::vector<uint8_t>& out, const char* tag, const std::vector<u
 
 // One 542-byte SBK1 song record with the given Program bank/number and
 // Comment, plus Font size/Transpose encoded via the confirmed bit-packing
-// (docs/README.md §4.4): Font size's low 2 bits and Type+Color share byte
+// (docs/content/format/index.md §4.4): Font size's low 2 bits and Type+Color share byte
 // +12, Font size's high bit and Transpose's low 3 bits share byte +17,
 // Transpose's high 3 bits share byte +13 with Bank. `colorField1based` and
 // `garbageLow4` deliberately poke bits Font size/Transpose/Bank/Color do
@@ -243,7 +243,7 @@ std::vector<uint8_t> buildSyntheticPcgFile() {
     auto combi0 = makeCbkCombiRecord("Test Combi", kCombiRecordSize);
     cbk1BankA.insert(cbk1BankA.end(), combi0.begin(), combi0.end());
 
-    // Real hierarchy (docs/README.md §2), not a flat sibling list: SDB1/SBK1
+    // Real hierarchy (docs/content/format/index.md §2), not a flat sibling list: SDB1/SBK1
     // nest inside SLS1, PBK1/MBK1 inside PRG1, CBK1 inside CMB1 -- each
     // wrapping chunk's own declared `size` is exactly the sum of its
     // children's full sizes (header + content each), the invariant

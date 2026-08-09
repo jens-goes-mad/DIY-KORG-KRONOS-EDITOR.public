@@ -7,7 +7,7 @@
 
 // Real SBK1 song record for "Rolling in the Deep" (Set List "emergency
 // exit", song 0), extracted directly from a real backup -- see
-// docs/README.md and docs/content/format/index.md for how. Byte 13/14
+// docs/content/format/index.md and docs/content/format/index.md for how. Byte 13/14
 // (bank=7, number=9) match this Combi's independently-confirmed location.
 export const ROLLING_IN_THE_DEEP_RECORD_HEX =
   "686520446565700000000000c00709067f00496e74726f202831293a205b612c20652c20672c206520675d2e2e2e0d0a4272" +

@@ -47,7 +47,7 @@ check("encodeSlotVolume clamps below 0 up to 0", decodeSlotVolume(encodeSlotVolu
 check("encodeSlotVolume clamps above 127 down to 127", decodeSlotVolume(encodeSlotVolume(realRecord, 200)), 127);
 
 // CRITICAL: Color shares byte+12 with isProgram (bit0), Font size (bits6-7),
-// and a still-unexplained bit1 (docs/README.md §4.3) -- a Color edit must
+// and a still-unexplained bit1 (docs/content/format/index.md §4.3) -- a Color edit must
 // never clobber those. Craft a record with arbitrary non-zero values in
 // exactly the bits Color does NOT own, confirm they survive a Color change.
 const craftedColor = new Uint8Array(realRecord);

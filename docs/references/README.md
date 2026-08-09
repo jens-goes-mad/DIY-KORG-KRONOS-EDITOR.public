@@ -16,5 +16,5 @@ copied from these -- they're cross-references, not a source of implementation co
   Program/Combi, and -- most usefully -- the Combi Timbre record layout, including a
   status byte this project had only seen as an unexplained value before). Cross-checked
   against this project's own real Combi samples before trusting any of it; see
-  `docs/README.md`'s Combi Timbre section for what was confirmed and what's still only
-  this source's claim, not independently re-derived.
+  `docs/content/format/index.md`'s Combi Timbre section for what was confirmed and what's
+  still only this source's claim, not independently re-derived.

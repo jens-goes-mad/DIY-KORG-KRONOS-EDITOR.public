@@ -7,7 +7,7 @@
 // directly (via a static file server, see setlist-comment.test.html's own
 // comment for why) to develop/test this file in isolation.
 //
-// Both fields are CONFIRMED -- see docs/README.md §4.3 and
+// Both fields are CONFIRMED -- see docs/content/format/index.md §4.3 and
 // src/kronos/PcgFile.cpp's readSlotParams()/kSbk* constants for the C++
 // side of the same derivation.
 //
@@ -21,10 +21,10 @@
 // +16 -- no masking needed, but still routed through the same
 // decode/encode shape as everything else here for a consistent editor
 // interface.
-export const RECORD_SIZE = 542; // SBK1 song record stride (docs/README.md §4.2), same as setlist-comment.js
-const TYPE_COLOR_OFFSET = 12; // docs/README.md §4.3 -- bits2-5 are Color's own bits
+export const RECORD_SIZE = 542; // SBK1 song record stride (docs/content/format/index.md §4.2), same as setlist-comment.js
+const TYPE_COLOR_OFFSET = 12; // docs/content/format/index.md §4.3 -- bits2-5 are Color's own bits
 const COLOR_MASK = 0x3c; // bits 2-5 of +12
-const VOLUME_OFFSET = 16; // docs/README.md §4.3 -- a plain byte, 0-127 MIDI-style
+const VOLUME_OFFSET = 16; // docs/content/format/index.md §4.3 -- a plain byte, 0-127 MIDI-style
 
 function checkLength(bytes, fnName) {
   if (bytes.length !== RECORD_SIZE) {

@@ -77,7 +77,7 @@
   // putSongRecordBytes() below need SOME 542-byte buffer that the real
   // frontend/components/kronos codecs can decode/encode against, so this
   // synthesizes one from a fake entry's own fields, close enough to the
-  // real byte layout (docs/README.md §4.3, src/kronos/PcgFile.cpp's kSbk*
+  // real byte layout (docs/content/format/index.md §4.3, src/kronos/PcgFile.cpp's kSbk*
   // constants) for Color (byte+12 bits2-5)/Volume (byte+16)/Font size
   // (byte+12 bits6-7 + byte+17 bit4)/Comment (byte+18..) to round-trip
   // correctly. Transpose/isProgram's other bits aren't reconstructed (mock
@@ -163,7 +163,7 @@
 
   // Mock-only Timbre references -- three "active" slots followed by 13
   // defaults, standing in for the real bridge's per-Combi Timbre array
-  // (see docs/README.md's "Combi Timbre references" section).
+  // (see docs/content/format/index.md's "Combi Timbre references" section).
   function makeFakeTimbres() {
     const timbres = [
       // number:0/rawBankCode:1 deliberately matches makeFakePrograms()'s own

@@ -18,9 +18,9 @@
 // Shortened form ("I-A"/"U-A") of Korg's own "INT-A"/"USER-A" naming --
 // used everywhere in the UI to save column width (see STATE.md); the full
 // "INT-"/"USER-" form is what's actually verified against ground truth
-// (docs/README.md, PcgFile.cpp's confirmed Timbre bank codes), so only the
+// (docs/content/format/index.md, PcgFile.cpp's confirmed Timbre bank codes), so only the
 // display layer abbreviates, never the underlying data.
-// Confirmed fixed count, real hardware and file format alike (docs/README.md
+// Confirmed fixed count, real hardware and file format alike (docs/content/format/index.md
 // §3.2/§4.2) -- every Set List always has exactly this many song slots, never
 // more or fewer. Used by the drag-and-drop "insert after the last entry"
 // gesture to clamp a target index to the last real slot.
@@ -1060,7 +1060,7 @@ function createSetlistPanel(
   // A-Z/Z-A: a REAL, immediate reorder of every one of this Set List's 128
   // slots -- not a display-only convenience. A Kronos has no notion of
   // "sorted" independent of a slot's own record position (confirmed
-  // against Korg's own SetList.txt, see docs/README.md §3.2 and
+  // against Korg's own SetList.txt, see docs/content/format/index.md §3.2 and
   // PcgFile::sortSetlist()'s own doc comment), so there's no lighter-
   // weight thing to change here than the actual bytes -- same "writes
   // immediately, no undo" contract as drag-and-drop and Copy all to
@@ -1291,7 +1291,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   // Program copies, ...) to a file via a native Save dialog. Built
   // specifically to let a sorted/reordered Set List actually be tested on
   // real Kronos hardware -- the app's own A-Z/Z-A sort buttons are display-
-  // only (STATE.md/docs/README.md §3.2), so seeing a REAL reorder reflected
+  // only (STATE.md/docs/content/format/index.md §3.2), so seeing a REAL reorder reflected
   // on the hardware needs an actual drag-and-drop move/copy (which does
   // write real bytes) followed by saving those bytes out to a file the unit
   // can load. `PcgFile::save()`'s own doc comment covers why no separate

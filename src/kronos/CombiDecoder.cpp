@@ -8,7 +8,7 @@ namespace {
 // this format (Program, and the rest of Combi's own record beyond just the
 // name) -- space/NUL-padded, NOT NUL-terminated, so a full-length
 // 24-character name has no terminator at all and trailing NUL/space must
-// be trimmed rather than scanned-for. See docs/README.md §5.
+// be trimmed rather than scanned-for. See docs/content/format/index.md §5.
 constexpr size_t kNameOffset = 4;
 constexpr size_t kNameLength = 24;
 
@@ -16,7 +16,7 @@ constexpr size_t kNameLength = 24;
 // starting 4806 bytes into the Combi's own record, byte 0 = number, byte 1
 // = raw bank code. Confirmed by the project owner providing real Combis
 // (with known Timbre->Program assignments) to diff against -- see
-// docs/README.md's "Combi Timbre references" section.
+// docs/content/format/index.md's "Combi Timbre references" section.
 constexpr size_t kTimbreBaseOffset = 4806;
 constexpr size_t kTimbreStride = 188;
 constexpr int kTimbreCount = 16;
