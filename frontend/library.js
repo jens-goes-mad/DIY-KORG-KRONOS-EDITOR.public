@@ -491,19 +491,25 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // can hold a real reference while switched off (status != Off is NOT the
   // same thing as isDefault -- see TimbreRef's doc comment in PcgFile.h),
   // so that's called out explicitly rather than hidden -- it still counts
-  // as "this Combi references that Program."
+  // as "this Combi references that Program." Only ever called for a
+  // non-default Timbre -- buildTimbreRow() below skips isDefault ones
+  // entirely before calling this, so there's no "--" case to handle here.
+  // Returns `{ref, name}` rather than one combined string -- buildTimbreRow()
+  // renders them as two separately-aligned columns, so the Program name
+  // isn't a plain divider/quote suffix hanging off a variable-length ref.
   function formatTimbreRef(t) {
-    if (t.isDefault) return "--";
     const programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
     const bank = t.bankName ? abbreviateBankName(t.bankName) : `code ${t.rawBankCode}`;
     let ref = `${bank} ${kronosNumber(t.number)}`;
+    let name = "";
     if (programBank !== null) {
       const bankType = getProgramBankType(programBank);
       if (bankType) ref += ` (${bankType})`;
       const program = programs.find((p) => p.bank === programBank && p.number === t.number);
-      if (program && program.name) ref += ` — "${program.name}"`;
+      if (program && program.name) name = program.name;
     }
-    return t.status === "Off" ? `${ref} (off)` : ref;
+    if (t.status === "Off") ref += " (off)";
+    return { ref, name };
   }
 
   function buildTimbreRow(combi) {
@@ -517,15 +523,43 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
     heading.textContent = "Timbre Program references:";
     td.appendChild(heading);
 
-    const list = document.createElement("ul");
-    list.className = "usage-list timbre-list";
-    combi.timbres.forEach((t, i) => {
-      const li = document.createElement("li");
-      li.className = t.isDefault ? "timbre-default" : t.status === "Off" ? "timbre-inactive-ref" : "";
-      li.textContent = `Timbre ${i + 1}: ${formatTimbreRef(t)}`;
-      list.appendChild(li);
-    });
-    td.appendChild(list);
+    // Default (unassigned, "--") Timbres are omitted entirely rather than
+    // listed dimmed -- a 16-Timbre Combi that only really uses 2 or 3
+    // doesn't need 13 "--" lines to scroll past. One Timbre per line (no
+    // multi-column packing -- see .timbre-list in style.css) so a long
+    // Program reference has the row's full width to wrap into instead of
+    // wrapping awkwardly inside a half-width column. `i` stays the
+    // Timbre's own ORIGINAL 1-16 slot number even with entries skipped --
+    // this must read as "which of the Combi's 16 physical Timbre slots",
+    // not a renumbered count of however many are shown.
+    const activeTimbres = combi.timbres.filter((t) => !t.isDefault);
+    if (activeTimbres.length === 0) {
+      const none = document.createElement("div");
+      none.className = "usage-empty";
+      none.textContent = "No Timbres assigned -- all 16 are unused defaults.";
+      td.appendChild(none);
+    } else {
+      const list = document.createElement("ul");
+      list.className = "usage-list timbre-list";
+      combi.timbres.forEach((t, i) => {
+        if (t.isDefault) return;
+        const li = document.createElement("li");
+        li.className = t.status === "Off" ? "timbre-inactive-ref" : "";
+        const label = document.createElement("span");
+        label.className = "timbre-label";
+        label.textContent = `Timbre ${i + 1}:`;
+        const { ref, name } = formatTimbreRef(t);
+        const refSpan = document.createElement("span");
+        refSpan.className = "timbre-ref";
+        refSpan.textContent = ref;
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "timbre-name";
+        nameSpan.textContent = name;
+        li.append(label, refSpan, nameSpan);
+        list.appendChild(li);
+      });
+      td.appendChild(list);
+    }
 
     const note = document.createElement("div");
     note.className = "usage-note";

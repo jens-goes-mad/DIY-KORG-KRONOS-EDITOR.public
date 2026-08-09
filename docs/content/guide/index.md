@@ -23,6 +23,8 @@ the app reads straight off disk) for a `.PCG`/`.SNG` Korg Kronos backup. Once lo
 file becomes an open **dataset** and lands in whichever of the two panes is empty; if both
 already show something, it's still available from either pane's dataset selector.
 
+![Norton-Commander is back](DIY-KE-001.png)
+
 Opening the same file path twice reuses the already-open dataset instead of loading a
 second copy -- both panes end up looking at the exact same in-memory data, so an edit made
 in one pane is visible in the other immediately.
@@ -35,6 +37,8 @@ The editor is a Norton-Commander-style dual pane. Each pane, independently:
 - Switches between five categories via its own tab bar: **Setlist**, **Programs**,
   **Combis**, **Duplicates**, **Internals**.
 
+![Functions](DIY-KE-002-Dataset.png)
+
 This means two panes can show the same dataset from two different angles (e.g. Setlist on
 the left, Duplicates on the right), two different Set Lists of the *same* dataset side by
 side, or two entirely different backup files for comparison -- whatever's useful for the
@@ -44,26 +48,35 @@ A small **⇄** button floats between the two panes and swaps which side each on
 on. This is a pure display swap -- nothing about either pane's own data changes, it just
 flips left and right.
 
+![Flip!](DIY-KE-003-FlipPanes.png)
+
 ## The Setlist pane
 
 Browse any one of the file's 128 Set Lists, 128 slots each, via the dropdown at the top.
 
-### Filter and sort
+![Filter and Sort](DIY-KE-004-FilterSort.png)
 
-The filter box does a live substring search against song names. The two buttons beside it,
-**A→Z** and **Z→A**, sort the visible rows by name -- click the active one again to go
-back to physical slot order.
+### Filter
 
-**Important**: both the filter and the sort buttons only change what's *displayed*. They
-never touch the underlying file. A Korg Kronos has no concept of "sorted" or "filtered" --
-it plays back Set List slots strictly in their physical position in the file (confirmed
-directly against Korg's own documentation, see [The file format](/format)), so re-sorting
-the on-screen list changes nothing about what the hardware will actually show when it loads
-the file. If you want to see a real Kronos display things in a different order, you need an
-actual reorder (next section), not just a sort.
+The filter box does a live substring search against song names. This is purely a display
+convenience -- it only changes which rows are currently *shown*, nothing about the
+underlying file.
 
-Empty slots always sort to the bottom in either direction, so they don't bury the songs
-you're actually looking for at the top of an A→Z sort.
+### Sort (A→Z / Z→A)
+
+These two buttons **physically reorder every one of the Set List's 128 slots** by name --
+writing real bytes immediately, exactly like drag-and-drop. This is not a display
+convenience: a Korg Kronos has no concept of "sorted" independent of where a slot's data
+actually sits in the file (confirmed directly against Korg's own documentation, see
+[The file format](/format)) -- it plays back Set List slots strictly in their physical
+record position, so the *only* way to make a real unit display things in a different order
+is to actually move that data. There's no undo once clicked, same as every other immediate
+write in this app.
+
+Sorting always acts on the **whole 128-slot Set List**, regardless of whether the filter
+box above is currently narrowing what's shown -- it's not limited to whatever rows happen
+to be visible at the time. Empty slots always end up at the bottom regardless of direction,
+so they don't get interleaved with the songs you're actually organizing.
 
 ### Reordering and copying slots by drag-and-drop
 
@@ -115,11 +128,13 @@ own collapsible section below the row -- several can be open on the same slot at
   as a live approximation of how the text will actually wrap on a real Kronos screen.
   Comments cap at 512 characters, matching the hardware's own limit.
 
+![Setlist edit](DIY-KE-005-SetlistItem.png)
+
 If both panes are showing the same slot of the same Set List, only one of them can have an
 editor open on it at a time -- the second attempt is blocked with a popup explaining why,
 rather than risking one pane's edit silently overwriting the other's.
 
-## Programs, Combis, and Duplicates
+## Programs, Combis, Duplicates, Internals
 
 These three tabs browse every Program and Combi actually stored on the unit, independent of
 which Set List slots reference them.
@@ -134,7 +149,19 @@ which Set List slots reference them.
   a Program's own bank/number isn't referenced by anything outside its own file the way a
   Setlist slot is.
 
-## Internals
+### Programs
+
+TBD
+
+### Combi
+
+![Combi References](DIY-KE-006-CombiReferences.png)
+
+### Duplicates
+
+TBD
+
+### Internals
 
 A read-only diagnostics view: which top-level chunks and which Program/Combi banks the
 currently-loaded dataset actually contains. This exists because a real backup can
@@ -144,19 +171,19 @@ looking for isn't showing up anywhere else either.
 
 ## Saving your changes
 
-Every edit above (drag-and-drop reorders/copies, Color/Volume/Comment, Program copies)
-writes straight into the dataset's own in-memory copy of the file's bytes. **Nothing is
-written to disk until you explicitly save.**
+Every edit above (Sort, drag-and-drop reorders/copies, Color/Volume/Comment, Program
+copies) writes straight into the dataset's own in-memory copy of the file's bytes.
+**Nothing is written to disk until you explicitly save.**
 
 Click **Save As...** next to a pane's dataset selector to write that pane's dataset to a
 file via a native Save dialog, pre-filled with its original filename. There's no
 autosave and no "unsaved changes" indicator yet, so if you close the app (or load a
 different file into that pane) without saving, whatever you did in that session is gone.
 
-This is also the way to actually test a reorder on real hardware: since the on-screen A-Z/
-Z-A sort is display-only (see above), get the *real* order you want by dragging slots
-(insert or copy-over), then Save As to a new file, then load that file onto a Kronos and
-scroll through the Set List to confirm it plays back in the order you built.
+This is also the way to test a real reorder on actual hardware: click A→Z (or Z→A, or
+build a custom order by hand with drag-and-drop), Save As to a new file, then load that
+file onto a Kronos and scroll through the Set List to confirm it plays back in the order
+you built.
 
 ## Current limitations
 

@@ -142,6 +142,18 @@ public:
     // itself doesn't know or care which pane called it.
     choc::value::Value copySetlistEntries(const choc::value::ValueView& args);
 
+    // [datasetId, setlistIndex, ascending] -> {ok} or {ok:false, error}.
+    // Physically reorders every one of a Set List's 128 slots into
+    // alphabetical order -- see PcgFile::sortSetlist()'s own doc comment
+    // for why this is a real, immediate, whole-Set-List rewrite rather
+    // than a display-only convenience: a Kronos has no notion of "sorted"
+    // independent of a slot's actual record position, so the app's own
+    // A-Z/Z-A buttons (frontend/pane.js) commit straight to the file's raw
+    // bytes, exactly like drag-and-drop -- there is no separate "undo the
+    // sort" once clicked, same as every other immediate-write edit in this
+    // app.
+    choc::value::Value sortSetlistEntries(const choc::value::ValueView& args);
+
     // [datasetId, path] -> {ok} or {ok:false, error}. Writes the dataset's
     // retained raw bytes straight to `path` via PcgFile::save() -- see that
     // method's own doc comment for why this needs no serialization step of

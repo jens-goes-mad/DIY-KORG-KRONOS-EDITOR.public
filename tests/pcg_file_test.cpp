@@ -783,6 +783,42 @@ void testPcgFileEndToEnd() {
         CHECK(pcg.putSongRecordBytes(1, 1, emptyParams));
         CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "copySetlist() restore round-trips cleanly");
     }
+
+    // sortSetlist(): a REAL, immediate, whole-Set-List rewrite -- not a
+    // display-only convenience, see its own doc comment for why (no
+    // separate "sorted view" a Kronos can show independent of a slot's
+    // actual record position). Setlist 0 is back in its original,
+    // restored state from the reorderSong() block above: songs[0]="Song
+    // Zero" ("Hello test"), songs[1]="Song One" ("second"), songs[2..127]
+    // empty.
+    {
+        // Rejected: out-of-range setlist index.
+        CHECK(!pcg.sortSetlist(99, true));
+
+        // Ascending: "Song One" ('O' < 'Z') sorts before "Song Zero";
+        // empty slots trail after both regardless of direction.
+        CHECK(pcg.sortSetlist(0, /*ascending=*/true));
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song One"),
+                 "sortSetlist() ascending: 'Song One' sorts before 'Song Zero'");
+        CHECK_EQ(pcg.setlists()[0].songs[0].comment, std::string("second"),
+                 "sortSetlist() ascending: song 0's params traveled with its name");
+        CHECK_EQ(pcg.setlists()[0].songs[1].name, std::string("Song Zero"),
+                 "sortSetlist() ascending: 'Song Zero' sorts second");
+        CHECK_EQ(pcg.setlists()[0].songs[1].comment, std::string("Hello test"),
+                 "sortSetlist() ascending: song 1's params traveled with its name");
+        CHECK(pcg.setlists()[0].songs[2].name.empty());  // empty slots stay trailing, not interleaved
+
+        // Descending, applied to the now-ascending state: restores the
+        // original order (Song Zero, Song One) since there were only two
+        // named slots -- also doubles as this block's own cleanup, no
+        // separate restore step needed.
+        CHECK(pcg.sortSetlist(0, /*ascending=*/false));
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song Zero"),
+                 "sortSetlist() descending: restores the original order");
+        CHECK_EQ(pcg.setlists()[0].songs[0].comment, std::string("Hello test"), "sortSetlist() descending: song 0 restored");
+        CHECK_EQ(pcg.setlists()[0].songs[1].name, std::string("Song One"), "sortSetlist() descending: song 1 restored");
+        CHECK_EQ(pcg.setlists()[0].songs[1].comment, std::string("second"), "sortSetlist() descending: song 1's params restored");
+    }
 }
 
 // save() is deliberately trivial (a verbatim write of data_, see its own doc

@@ -1333,21 +1333,16 @@ full rationale):
     abstraction, and the domain-specific parts (zone detection, accept
     rules, indicator positioning) would stay per-caller regardless, so the
     win is real but modest.
-  - **A-Z/Z-A sort buttons (2026-08-09, built)**: two buttons beside the filter
-    input, `frontend/pane.js`, toggle-style (`.is-link`, same "click again to
-    undo" idiom as the bank-filter buttons) -- sort the visible rows by name
-    ascending/descending, or back to physical slot order if the active one is
-    clicked again. Deliberately display-only, exactly like the existing
-    filter: a new `sortOrder` (`null`/`"asc"`/`"desc"`) is applied in
+  - **A-Z/Z-A sort buttons, FIRST VERSION (2026-08-09, built, then corrected
+    the same day -- see below)**: two buttons beside the filter input,
+    `frontend/pane.js`, toggle-style (`.is-link`) -- sorted the visible rows
+    by name ascending/descending, or back to physical slot order if the
+    active one was clicked again. Built display-only, exactly like the
+    existing filter: a `sortOrder` (`null`/`"asc"`/`"desc"`) applied in
     `renderRows()` on top of the filtered list, right before rendering --
-    never touches `entries`/any entry's own `.index` (the real Kronos slot
-    number), so drag-and-drop keeps acting on physical slot position exactly
-    as before regardless of what order the table is currently *shown* in.
-    Reset alongside the filter (both are view state) on every Set List/
-    dataset switch, and disabled/enabled together with the filter input too.
-    `frontend/style.css`: a `.filter-row` flex wrapper (filter input flexes,
-    Bulma's `.buttons.has-addons` group stays its own natural width) --
-    same pattern as `.setlist-info-row` right above it.
+    never touched `entries`/any entry's own `.index`. This turned out to be
+    the wrong call (see the next entry) and has been fully replaced, not
+    kept alongside the new behavior.
   - **Slot-position-IS-order confirmed directly against `docs/external/
     KORG/SetList.txt` (2026-08-09)**: Korg's own SysEx documentation lays
     out Slot 0 at a fixed record offset and states Slots 1-127 simply
@@ -1355,37 +1350,79 @@ full rationale):
     separate order/pointer field exists anywhere in the structure. Added to
     `docs/README.md`/`docs/content/format/index.md` §3.2 as confirmed
     ground truth: a slot's number IS its physical record position, nothing
-    else stores or could store it. Directly answers why the A-Z/Z-A sort
-    buttons above are necessarily display-only -- there's no lighter-weight
-    "order" field they could instead write to; only physically moving the
-    28+542-byte records (`reorderSong()`/`copySetlist()`) changes what a
-    real Kronos will actually play back.
-  - **"Save As..." button (2026-08-09, built)**: the concrete follow-up to
-    the above -- since sorting itself can't be tested on real hardware
-    (it's display-only by necessity), the project owner asked to actually
-    save a dataset's current bytes to disk so a REAL reorder (drag-and-drop
-    insert/copy-over, which does write real bytes) can be tested by loading
-    the result onto a physical Kronos and scrolling through it. The
-    underlying write path (`PcgFile::save()`, `EditorBridge::saveFileAs()`)
-    already existed from earlier real-hardware validation work, but was
-    only reachable via a devtools console script -- no UI. Added
-    `EditorBridge::saveFileDialog(datasetId)` (`src/bridge/EditorBridge.h`/
-    `.cpp`, bound in `src/main.cpp`): shows a native Save dialog
-    (`NativeFileDialog.h`'s `showSaveFileDialog()`, already existed but was
-    unused until now) pre-filled with the dataset's own filename, then
-    writes to wherever the user picks via the same `PcgFile::save()`
-    `saveFileAs()` already uses -- `saveFileAs()` itself is untouched, kept
-    as the lower-level path-supplied building block. `frontend/pane.js`: a
-    "Save As..." button next to each pane's own dataset selector (per-pane,
-    not global, since each pane already knows exactly which dataset it's
-    showing -- no ambiguity about which dataset to save the way a single
-    global button would have). `frontend/mock_bridge.js`: a
-    `window.saveFileDialog()` fake mirroring `openFileDialog()`'s existing
-    `window.prompt()` stand-in pattern, since mock/browser mode can't write
-    a real file either. Full `cmake --build build` clean, `ctest` clean
-    (no C++ test added specifically for this -- it's a thin dialog/path
-    wrapper around the already-tested `PcgFile::save()`/`saveFileAs()`);
-    `node --check` clean on both touched frontend files.
+    else stores or could store it.
+  - **Sort buttons corrected to a real reorder (2026-08-09, same day)**: the
+    first version's reasoning was backwards. Since a slot's number IS its
+    physical position (previous entry) and nothing else stores order, a
+    *display-only* sort can't mean anything to a real Kronos -- it never
+    even sees the app's UI state, only the file's bytes. The project owner
+    caught this directly: "DAD and SORTING is NOT [display-only]. It has to
+    change the underlying rawdata." Rebuilt accordingly:
+    - `src/kronos/PcgFile.h`/`.cpp`: new `sortSetlist(setlistIndex,
+      ascending)` -- computes the target alphabetical order for all 128
+      slots (empty-named slots always trail last, regardless of direction,
+      matching the old display convention), snapshots every slot's raw
+      name+params bytes up front (unlike `reorderSong()`'s single-range
+      shift, this touches all 128 slots in a non-contiguous new order, so
+      there's no safe read-then-write direction without snapshotting
+      first), then writes them back via the existing
+      `putNameRecordBytes()`/`putSongRecordBytes()`. Comparison is a plain
+      byte-wise `std::string` compare, not locale-aware -- fine for the
+      ASCII-range names seen so far, flagged in the doc comment as a
+      known simplification.
+    - `src/bridge/EditorBridge.h`/`.cpp`, `src/main.cpp`:
+      `sortSetlistEntries(datasetId, setlistIndex, ascending)` bound the
+      same way as the other Setlist bridge methods; a small `boolArg()`
+      helper added alongside the existing `stringArg()`/`intArg()`.
+    - `frontend/pane.js`: the entire client-side `sortOrder`/in-`renderRows()`
+      sort is gone. The two buttons now call `sortSetlistEntries()` and
+      `refreshEntries()` (re-reading the file's now-actually-different
+      physical order) -- a one-shot immediate action, not a toggleable view
+      mode, so the `.is-link` active-state styling is gone too (nothing to
+      indicate as "currently active" once there's no persistent mode).
+      Button tooltips rewritten to say plainly: real bytes, immediate,
+      whole Set List, no undo.
+    - `tests/pcg_file_test.cpp`: new `sortSetlist()` coverage on the
+      existing 2-song fixture (ascending puts "Song One" before "Song
+      Zero", empties trail; descending restores the original order, which
+      doubles as the test's own cleanup) -- deliberately broken (flipped
+      the empty-slots-trail-last comparison) then restored, confirming 8
+      real assertions catch the regression.
+    - `frontend/mock_bridge.js`: `sortSetlistEntries()` fake added (there
+      was nothing to replace here -- the old display-only sort never called
+      the bridge at all).
+    - `docs/README.md`/`docs/content/format/index.md` §3.2, and the new
+      Hugo User Guide's Setlist section, corrected to describe the sort
+      buttons as a real, immediate, whole-Set-List rewrite -- explicitly
+      flagged as a correction of the same day's earlier (wrong) claim that
+      they were necessarily display-only.
+    - Verified: full `cmake --build build` clean, `ctest` clean (including
+      the deliberate-break-then-restore above), `node --check` clean on
+      every touched frontend file.
+  - **"Save As..." button (2026-08-09, built)**: written just before the
+    sort-buttons correction above, to give the project owner a way to
+    actually write a dataset's current in-memory bytes to disk for
+    real-hardware testing. The underlying write path (`PcgFile::save()`,
+    `EditorBridge::saveFileAs()`) already existed from earlier real-
+    hardware validation work, but was only reachable via a devtools
+    console script -- no UI. Added `EditorBridge::saveFileDialog(datasetId)`
+    (`src/bridge/EditorBridge.h`/`.cpp`, bound in `src/main.cpp`): shows a
+    native Save dialog (`NativeFileDialog.h`'s `showSaveFileDialog()`,
+    already existed but was unused until now) pre-filled with the
+    dataset's own filename, then writes to wherever the user picks via the
+    same `PcgFile::save()` `saveFileAs()` already uses -- `saveFileAs()`
+    itself is untouched, kept as the lower-level path-supplied building
+    block. `frontend/pane.js`: a "Save As..." button next to each pane's
+    own dataset selector (per-pane, not global, since each pane already
+    knows exactly which dataset it's showing -- no ambiguity about which
+    dataset to save the way a single global button would have).
+    `frontend/mock_bridge.js`: a `window.saveFileDialog()` fake mirroring
+    `openFileDialog()`'s existing `window.prompt()` stand-in pattern, since
+    mock/browser mode can't write a real file either. Full `cmake --build
+    build` clean, `ctest` clean (no C++ test added specifically for this --
+    it's a thin dialog/path wrapper around the already-tested
+    `PcgFile::save()`/`saveFileAs()`); `node --check` clean on both touched
+    frontend files.
   - **Explicitly not committed to being final**: both the project owner and this
     assistant agreed to revisit/rethink this shape as each piece (Program decoder now
     done; chunk-based component wiring next) proves itself against real tests and the

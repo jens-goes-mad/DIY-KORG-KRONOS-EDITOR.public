@@ -811,19 +811,47 @@ td.has-comment {
   padding-left: 1.2em;
 }
 
-.timbre-list {
-  columns: 2;
+/* One Timbre per line, not packed into multiple CSS columns (a previous
+   `columns: 2` here squeezed a long Program reference into half the row's
+   width, forcing it to word-wrap awkwardly) -- library.js's buildTimbreRow()
+   already omits every unassigned ("--") Timbre before this ever renders, so
+   there's rarely 16 lines to fit anyway. */
+.timbre-list li {
+  display: flex;
+  gap: 6px;
   font-variant-numeric: tabular-nums;
 }
 
-.timbre-default {
+/* Fixed-width label column ("Timbre 16:") so every reference below it lines
+   up at the same left edge regardless of whether the Timbre number is one
+   or two digits -- flexbox rather than a real <table> since this is still
+   inside one <ul>/<li> per row, not a grid. */
+.timbre-label {
+  flex: 0 0 5.5em;
   color: var(--text-dim);
-  opacity: 0.6;
 }
 
-/* A real reference that's just currently switched off -- distinct from
-   .timbre-default (nothing stored here at all): still worth a visual
-   cue since it still counts as a reference for anything safety-related. */
+/* Fixed-width too, same reasoning as .timbre-label -- "INT-A 000 (HD-1)
+   (off)" varies in length (unconfirmed banks show as "code N", engine type
+   is only known for 8 banks, "(off)" only appears sometimes), but the
+   Program NAME after it (.timbre-name below) should still start at one
+   consistent column regardless. white-space: nowrap keeps a short value
+   from being stretched/wrapped inside this fixed box; a rare
+   longer-than-usual value just overflows into .timbre-name's space instead
+   of breaking the row's height. */
+.timbre-ref {
+  flex: 0 0 13em;
+  white-space: nowrap;
+}
+
+.timbre-name {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A real reference that's just currently switched off -- still worth a
+   visual cue since it still counts as a reference for anything safety-
+   related (e.g. "can this Program be deleted"), just visually muted. */
 .timbre-inactive-ref {
   color: var(--text-dim);
   font-style: italic;

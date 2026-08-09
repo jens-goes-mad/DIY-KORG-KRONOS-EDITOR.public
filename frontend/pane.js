@@ -267,8 +267,8 @@ function createSetlistPanel(
     <div class="filter-row">
       <input class="filter-input input is-small" type="text" placeholder="Filter / search..." disabled />
       <div class="buttons has-addons sort-buttons">
-        <button class="button is-small sort-asc-button" type="button" disabled title="Sort the list below by name, A to Z -- display order only, doesn't change the Set List's actual slot order (click again to go back to slot order)">A&#8594;Z</button>
-        <button class="button is-small sort-desc-button" type="button" disabled title="Sort the list below by name, Z to A -- display order only, doesn't change the Set List's actual slot order (click again to go back to slot order)">Z&#8594;A</button>
+        <button class="button is-small sort-asc-button" type="button" disabled title="Physically reorders all 128 slots of this Set List by name, A to Z -- writes real bytes immediately, just like drag-and-drop. Empty slots move to the end. No undo.">A&#8594;Z</button>
+        <button class="button is-small sort-desc-button" type="button" disabled title="Physically reorders all 128 slots of this Set List by name, Z to A -- writes real bytes immediately, just like drag-and-drop. Empty slots move to the end. No undo.">Z&#8594;A</button>
       </div>
     </div>
     <div class="entries-scroll">
@@ -330,13 +330,6 @@ function createSetlistPanel(
   let currentSetlistIndex = -1;
   let entries = [];         // [{index, label}], as returned by getEntries()
   let filterText = "";
-  // Display order only, exactly like filterText above -- never touches
-  // `entries`/each entry's own `.index` (the Kronos slot number), so
-  // drag-and-drop (which always acts on `.index`, see dropZoneForEvent()/
-  // the row builders below) keeps working the same way regardless of
-  // whether the table's currently showing physical slot order or a sort.
-  // null = natural slot order, "asc"/"desc" = by name (localeCompare).
-  let sortOrder = null;
   // Which slots currently show the editor panel at all -- a slot's panel,
   // once open, stays open (showing all three Color/Comment/Volume accordion
   // headers) until explicitly dismissed via its own Close button, regardless
@@ -806,20 +799,15 @@ function createSetlistPanel(
 
   function renderRows() {
     const needle = filterText.trim().toLowerCase();
-    const filtered = needle ? entries.filter((e) => e.label.toLowerCase().includes(needle)) : entries;
-    // Empty slots (label === "", shown as "(empty)" below) always sort to
-    // the bottom regardless of direction -- an empty slot has no real name
-    // to compare, and "" sorts before any letter under a plain
-    // localeCompare, which would otherwise flood the top of an A-Z sort
-    // with every unused slot instead of the songs actually being looked
-    // for (the main reason this button exists).
-    const visible = sortOrder
-      ? [...filtered].sort((a, b) => {
-          if (!a.label !== !b.label) return a.label ? -1 : 1;
-          if (!a.label) return 0;
-          return sortOrder === "asc" ? a.label.localeCompare(b.label) : b.label.localeCompare(a.label);
-        })
-      : filtered;
+    // Filter is the only remaining display-only view state here -- sorting
+    // used to be applied the same way (a client-side .sort() on top of
+    // this), but that's gone: a Kronos has no notion of "sorted"
+    // independent of a slot's actual record position (see PcgFile::
+    // sortSetlist()'s own doc comment), so the A-Z/Z-A buttons below now
+    // commit a REAL reorder through the bridge and this just re-renders
+    // whatever refreshEntries() reads back afterward, in physical slot
+    // order like always.
+    const visible = needle ? entries.filter((e) => e.label.toLowerCase().includes(needle)) : entries;
 
     tbody.innerHTML = "";
     for (const entry of visible) {
@@ -1056,8 +1044,6 @@ function createSetlistPanel(
     currentSetlistIndex = Number(setlistSelect.value);
     filterText = "";
     filterInput.value = "";
-    sortOrder = null;  // a sort from the previous Set List carrying over silently would be confusing
-    updateSortButtons();
     openPanels.clear();  // don't carry an open editor panel over to a different Set List's song at the same index
     expandedSections.clear();
     slotBytesCache.clear();
@@ -1071,28 +1057,29 @@ function createSetlistPanel(
     renderRows();
   });
 
-  // Reflects `sortOrder` on the two buttons' own active state -- Bulma's
-  // `.is-link` (real Bulma button state, same "currently selected" idiom
-  // the bank-filter buttons already use elsewhere in this app), not a
-  // hand-rolled class.
-  function updateSortButtons() {
-    sortAscButton.classList.toggle("is-link", sortOrder === "asc");
-    sortDescButton.classList.toggle("is-link", sortOrder === "desc");
+  // A-Z/Z-A: a REAL, immediate reorder of every one of this Set List's 128
+  // slots -- not a display-only convenience. A Kronos has no notion of
+  // "sorted" independent of a slot's own record position (confirmed
+  // against Korg's own SetList.txt, see docs/README.md §3.2 and
+  // PcgFile::sortSetlist()'s own doc comment), so there's no lighter-
+  // weight thing to change here than the actual bytes -- same "writes
+  // immediately, no undo" contract as drag-and-drop and Copy all to
+  // opposite. `sortSetlistEntries()` does the whole 128-slot rewrite in
+  // one native call; refreshEntries() afterward just re-reads the file's
+  // now-actually-different physical order, same as any other edit.
+  async function sortSetlistNow(ascending) {
+    const datasetId = getDatasetId();
+    if (datasetId == null || currentSetlistIndex < 0) return;
+    const result = await window.sortSetlistEntries(datasetId, currentSetlistIndex, ascending);
+    if (!result.ok) {
+      log(result.error);
+      return;
+    }
+    await refreshEntries();
+    showToast(`Set List sorted ${ascending ? "A-Z" : "Z-A"} -- slot order rewritten.`);
   }
-
-  // Clicking the already-active direction turns sorting off again (back to
-  // physical slot order) rather than being a one-way toggle -- same
-  // "click again to undo" affordance the bank-filter buttons already have.
-  sortAscButton.addEventListener("click", () => {
-    sortOrder = sortOrder === "asc" ? null : "asc";
-    updateSortButtons();
-    renderRows();
-  });
-  sortDescButton.addEventListener("click", () => {
-    sortOrder = sortOrder === "desc" ? null : "desc";
-    updateSortButtons();
-    renderRows();
-  });
+  sortAscButton.addEventListener("click", () => sortSetlistNow(true));
+  sortDescButton.addEventListener("click", () => sortSetlistNow(false));
 
   // Called by the shell whenever its shared dataset selection changes --
   // either a fresh dataset (displayName given) or the dataset this pane was
@@ -1108,8 +1095,6 @@ function createSetlistPanel(
       filterText = "";
       filterInput.value = "";
       filterInput.disabled = true;
-      sortOrder = null;
-      updateSortButtons();
       sortAscButton.disabled = true;
       sortDescButton.disabled = true;
       openPanels.clear();
@@ -1134,8 +1119,6 @@ function createSetlistPanel(
     // cache would be for the WRONG dataset's slot entirely).
     filterText = "";
     filterInput.value = "";
-    sortOrder = null;
-    updateSortButtons();
     openPanels.clear();
     expandedSections.clear();
     slotBytesCache.clear();

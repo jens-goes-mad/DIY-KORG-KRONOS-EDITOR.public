@@ -327,6 +327,23 @@
     return ok();
   };
 
+  // A-Z/Z-A (pane.js's setlistRow sort buttons) -- a REAL, immediate
+  // reorder now, not a display-only convenience (see PcgFile::
+  // sortSetlist()'s own doc comment for why). Mirrors its empty-slots-
+  // trail-last convention and reindexes `.index` 0..N-1 by new position,
+  // same pattern as reorderSongEntry()'s mock above.
+  window.sortSetlistEntries = (datasetId, setlistIndex, ascending) => {
+    const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
+    if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);
+    list.sort((a, b) => {
+      if (!a.label !== !b.label) return a.label ? -1 : 1;
+      if (!a.label) return 0;
+      return ascending ? a.label.localeCompare(b.label) : b.label.localeCompare(a.label);
+    });
+    list.forEach((e, i) => { e.index = i; });
+    return ok();
+  };
+
   window.setComment = (datasetId, setlistIndex, songIndex, newComment) => {
     const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
     if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);

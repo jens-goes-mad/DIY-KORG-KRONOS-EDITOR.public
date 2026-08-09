@@ -881,4 +881,43 @@ bool PcgFile::copySetlist(int srcSetlistIndex, int dstSetlistIndex) {
     return true;
 }
 
+bool PcgFile::sortSetlist(int setlistIndex, bool ascending) {
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= setlists_.size()) return false;
+
+    const auto& songs = setlists_[static_cast<size_t>(setlistIndex)].songs;
+    const int count = static_cast<int>(songs.size());
+
+    std::vector<int> order(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) order[static_cast<size_t>(i)] = i;
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+        const bool aEmpty = songs[static_cast<size_t>(a)].name.empty();
+        const bool bEmpty = songs[static_cast<size_t>(b)].name.empty();
+        if (aEmpty != bEmpty) return !aEmpty;  // non-empty always sorts before empty
+        if (aEmpty) return false;              // both empty -- keep their relative order
+        return ascending ? songs[static_cast<size_t>(a)].name < songs[static_cast<size_t>(b)].name
+                          : songs[static_cast<size_t>(a)].name > songs[static_cast<size_t>(b)].name;
+    });
+
+    // Snapshot every slot's raw bytes before writing any of them back --
+    // this touches all 128 slots in a new, non-contiguous order (unlike
+    // reorderSong()'s single-range shift), so there's no safe direction to
+    // read-then-write in without a slot's own bytes getting overwritten
+    // before something else has read them.
+    std::vector<std::vector<uint8_t>> names(static_cast<size_t>(count));
+    std::vector<std::vector<uint8_t>> params(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        auto name = nameRecordBytes(setlistIndex, i);
+        auto p = songRecordBytes(setlistIndex, i);
+        if (!name || !p) return false;
+        names[static_cast<size_t>(i)] = std::move(*name);
+        params[static_cast<size_t>(i)] = std::move(*p);
+    }
+    for (int i = 0; i < count; ++i) {
+        const size_t from = static_cast<size_t>(order[static_cast<size_t>(i)]);
+        if (!putNameRecordBytes(setlistIndex, i, names[from])) return false;
+        if (!putSongRecordBytes(setlistIndex, i, params[from])) return false;
+    }
+    return true;
+}
+
 }  // namespace kronos

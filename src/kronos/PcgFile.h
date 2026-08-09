@@ -461,6 +461,29 @@ public:
     // srcSetlistIndex == dstSetlistIndex.
     bool copySetlist(int srcSetlistIndex, int dstSetlistIndex);
 
+    // Physically reorders every one of a Set List's 128 slots (name AND
+    // params together) into alphabetical-by-name order -- `ascending` true
+    // for A-Z, false for Z-A. Empty slots (no name) always sort to the end
+    // regardless of direction, matching frontend/pane.js's own sort
+    // convention -- there's no real name to compare, and a byte-order
+    // comparison would otherwise put every unused slot before any named
+    // song. This is a REAL, immediate, whole-Set-List rewrite -- there is
+    // no separate "display order" a Kronos can show independent of a
+    // slot's actual record position (confirmed against
+    // docs/external/KORG/SetList.txt, see docs/README.md §3.2), so
+    // "sorted" only ever means "physically rearranged." Every slot's raw
+    // bytes are snapshotted up front before any write, so reading a slot
+    // that's about to be overwritten never races its own move (unlike
+    // reorderSong()'s shift, this touches every slot at once, not a
+    // contiguous range, so there's no safe "direction" to iterate in
+    // without snapshotting first). Comparison is a plain byte-wise
+    // std::string comparison, not locale-aware -- ASCII-range Kronos names
+    // sort the same way either way in practice, but see std::string::
+    // operator< if two names ever meaningfully disagree on this. Returns
+    // false (writes nothing) if setlistIndex is out of range or this Set
+    // List has no SBK1/SDB1 data.
+    bool sortSetlist(int setlistIndex, bool ascending);
+
 private:
     // Where one PRG1 sub-bank's (MBK1 or PBK1) records live within data_
     // -- retained so decodeProgram() can locate and re-decode a specific

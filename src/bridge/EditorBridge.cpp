@@ -14,6 +14,11 @@ int intArg(const choc::value::ValueView& args, size_t index, int fallback = -1) 
     return static_cast<int>(args[static_cast<uint32_t>(index)].getWithDefault<double>(fallback));
 }
 
+bool boolArg(const choc::value::ValueView& args, size_t index, bool fallback = false) {
+    if (!args.isArray() || args.size() <= index) return fallback;
+    return args[static_cast<uint32_t>(index)].getWithDefault<bool>(fallback);
+}
+
 // Reads args[index] as a nested JS array of numbers (e.g. a raw record's
 // bytes) into a std::vector<uint8_t>. Empty if the argument is missing or
 // isn't an array -- callers (getSongRecordBytes/putSongRecordBytes) treat an
@@ -420,6 +425,20 @@ choc::value::Value EditorBridge::copySetlistEntries(const choc::value::ValueView
 
     if (!file->copySetlist(srcSetlistIndex, dstSetlistIndex)) {
         return makeError("Couldn't copy that Set List (index out of range)");
+    }
+    return makeOk();
+}
+
+choc::value::Value EditorBridge::sortSetlistEntries(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+    const bool ascending = boolArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!file->sortSetlist(setlistIndex, ascending)) {
+        return makeError("Couldn't sort that Set List (index out of range, or no SBK1/SDB1 data)");
     }
     return makeOk();
 }
