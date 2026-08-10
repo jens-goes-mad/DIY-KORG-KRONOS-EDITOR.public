@@ -1,3 +1,16 @@
+# Shared layouts/assets/scss/assets/icons across the jens-goes-mad DIY-* docs sites --
+# see github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public's own README for what's actually
+# shared this way vs. what stays per-site config. Import order matters, and it's the
+# OPPOSITE of what you'd guess: Hugo resolves an overlapping file (layouts template
+# lookup AND resources.Get() asset lookup alike) to whichever import was declared
+# FIRST, not last -- confirmed by direct testing (2026-08-09), since this scaffold's
+# own layouts/custom.scss need to win over the theme's own defaults of the same name.
+# Declaring this import after the theme instead silently fell back to the theme's own
+# placeholder custom.scss and its own default layouts, with no build error at all --
+# verified via a before/after `diff -rq` of the built public/ output, not assumed.
+[[imports]]
+path = "github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public"
+
 [[imports]]
 path = "github.com/CaiJimmy/hugo-theme-stack/v3"
 

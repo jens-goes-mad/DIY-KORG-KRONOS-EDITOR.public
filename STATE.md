@@ -1451,6 +1451,59 @@ full rationale):
     every touched frontend file, and a local `hugo --minify` build clean
     (confirms the Hugo site itself, e.g. the `format`/`overview` pages'
     cross-links, wasn't broken by any of the file moves).
+  - **Shared Hugo scaffold extracted to `github.com/jens-goes-mad/
+    DIY-HUGO-SCAFFOLD.public` (2026-08-10)**: raised by the project owner --
+    `DIY-KRONOS-EDITOR`, `DIY-MIDI-METRONOME.public`, and
+    `DIY-PEDALBOARD.public` all run the same hand-copied Hugo/Stack-theme
+    site scaffolding (`docs/HUGO-SITE.md` already said as much). Direct
+    diffing confirmed `layouts/`, `assets/scss/`, `assets/icons/`, and
+    `config/_default/{module,permalinks,markup}.toml` were byte-identical
+    or near-identical across all three, and -- concretely -- that this
+    session's own `docker-compose.yml` local-dev `baseURL` bugfix was
+    already missing, unfixed, in the other two repos' copies. Planned
+    (see the plan file this session used) and executed as a real Hugo
+    Module import, the same mechanism already used for the Stack theme
+    itself:
+    - New repo populated from Kronos's own (already-bugfixed) copies of
+      the shared pieces, plus a reference-only `docker-compose.yml`/
+      `config/_default/{module,permalinks,markup}.toml` (Hugo's own config
+      loading never reads `config/` from an imported module, only the main
+      project -- these can't be truly shared the way layouts/assets can,
+      just copied by hand and kept small).
+    - **A real, verified-not-assumed gotcha caught before it shipped**:
+      importing the scaffold module *after* the theme (the intuitive
+      "site overrides come last" ordering) silently fell back to the
+      theme's own placeholder `custom.scss` and default layouts for every
+      overlapping file, with no build error at all -- caught only by
+      diffing the built `public/` output before/after against a saved
+      baseline, not by reading Hugo's docs. The fix, confirmed by that
+      same diff going clean: import the scaffold *before* the theme.
+      Hugo resolves an overlapping file to whichever import was declared
+      *first*. Documented prominently in both `config/_default/
+      module.toml`'s own comment and the scaffold repo's README, since
+      it's the opposite of what anyone would guess.
+    - `DIY-KRONOS-EDITOR/docs/go.mod` now imports the scaffold module
+      (`hugo mod get`, pinned to a real pseudo-version); Kronos's own
+      `layouts/`, `assets/scss/`, `assets/icons/` deleted, `config.toml`/
+      `params.toml`/`menu.toml`/`content/`/`docker-compose.yml` kept local
+      (genuinely per-project). `docs/HUGO-SITE.md` updated to explain the
+      new structure and the corrected local dev URL (needs the
+      `/DIY-KORG-KRONOS-EDITOR/` subpath, per the `--baseURL` fix from
+      earlier this session).
+    - Verified: `diff -rq` of the full built `public/` output against a
+      pre-migration snapshot is byte-identical; local dev server spot-
+      checked on `/`, `/overview/`, `/format/`, `/guide/`, `/building/`,
+      `/components/`, all 200; `cmake --build`/`ctest` unaffected (docs-
+      only change).
+    - **Explicitly deferred, not part of this pass**: migrating
+      `DIY-MIDI-METRONOME.public`/`DIY-PEDALBOARD.public` to the same
+      shared module (they'd pick up tonight's `baseURL` fix and the
+      missing `book.svg` icon for free) -- different repos, worth their
+      own verification pass rather than bundling into this one. Also
+      deferred: sharing `.github/workflows/hugo.yml` as a GitHub Actions
+      reusable workflow -- lower value (it's short, changes rarely) and
+      more risk (Metronome's workflow has one genuine extra build step) than
+      the scaffold itself, not blocking.
   - **Explicitly not committed to being final**: both the project owner and this
     assistant agreed to revisit/rethink this shape as each piece (Program decoder now
     done; chunk-based component wiring next) proves itself against real tests and the
