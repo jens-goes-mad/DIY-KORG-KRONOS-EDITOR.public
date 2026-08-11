@@ -2,3 +2,5 @@ github.com/CaiJimmy/hugo-theme-stack/v3 v3.30.0 h1:uITC7EKGyfPjyi3C5At++E0Uu1qQX
 github.com/CaiJimmy/hugo-theme-stack/v3 v3.30.0/go.mod h1:IPmCXiIxlFSLFYS0tOmYP6ySLviyeNVSabyvSuaxD+I=
 github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public v0.0.0-20260809235036-658e6ef6e7d7 h1:usTwys6+Y1XPrKKEbzKkAxaaHCO5xx88slFdfQD+sWE=
 github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public v0.0.0-20260809235036-658e6ef6e7d7/go.mod h1:A0VRtwXmu0Ra6m80oD9lOa4lzRBOULale4dTvh6FhfQ=
+github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public v0.0.0-20260810005546-505cbe62405b h1:2gyNe6m9HXjz1F2kvi4LJQneTTwp2zt7AcBmnYapLBs=
+github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public v0.0.0-20260810005546-505cbe62405b/go.mod h1:A0VRtwXmu0Ra6m80oD9lOa4lzRBOULale4dTvh6FhfQ=

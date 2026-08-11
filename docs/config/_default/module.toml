@@ -1,19 +1,30 @@
-# Shared layouts/assets/scss/assets/icons across the jens-goes-mad DIY-* docs sites --
-# see github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public's own README for what's actually
+# Shared layouts/assets/icons across the jens-goes-mad DIY-* docs sites -- see
+# github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public's own README for what's actually
 # shared this way vs. what stays per-site config. Import order matters, and it's the
 # OPPOSITE of what you'd guess: Hugo resolves an overlapping file (layouts template
 # lookup AND resources.Get() asset lookup alike) to whichever import was declared
-# FIRST, not last -- confirmed by direct testing (2026-08-09), since this scaffold's
-# own layouts/custom.scss need to win over the theme's own defaults of the same name.
-# Declaring this import after the theme instead silently fell back to the theme's own
-# placeholder custom.scss and its own default layouts, with no build error at all --
-# verified via a before/after `diff -rq` of the built public/ output, not assumed.
+# FIRST, not last -- confirmed by direct testing (2026-08-09).
+#
+# Explicit mounts below, restricted to layouts/ and assets/icons/ only -- NOT the
+# whole assets/ directory. assets/scss/custom.scss looked identical across all three
+# DIY-* sites at first glance (Kronos and Metronome really were byte-identical), but
+# Pedalboard's turned out to have real project-specific CSS (a MIDI/CC reference-table
+# styling block) that a same-directory import would have silently overridden with no
+# build error -- caught only by diffing a real Pedalboard build before/after against a
+# saved snapshot, the same way the import-order gotcha below was caught. custom.scss is
+# each site's own file to customize, not shared -- unlike layouts/assets/icons, which
+# really are the same generic scaffolding everywhere, verified file-by-file.
 [[imports]]
 path = "github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public"
+  [[imports.mounts]]
+  source = "layouts"
+  target = "layouts"
+  [[imports.mounts]]
+  source = "assets/icons"
+  target = "assets/icons"
 
 [[imports]]
 path = "github.com/CaiJimmy/hugo-theme-stack/v3"
 
 # https://icons.hugomods.com/docs/vendors/
 # https://icons.hugomods.com/docs/installation/
-
