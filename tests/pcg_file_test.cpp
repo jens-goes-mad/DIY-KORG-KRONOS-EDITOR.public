@@ -78,7 +78,7 @@ std::vector<uint8_t> makeCbkCombiRecord(const std::string& name, size_t totalSiz
     rec[kTimbreBaseOffset] = 5;                                   // Timbre 0 -> Program number 5
     rec[kTimbreBaseOffset + 1] = 1;                               // Timbre 0 -> raw bank code 1 (INT-B)
     rec[kTimbreBaseOffset + 2] = static_cast<uint8_t>(1 << 5);     // status Internal
-    // Timbre 1 -> raw bank code 20 (USER-D, PBK1 file-order index 11 --
+    // Timbre 1 -> raw bank code 20 (USER-D, PBK1 file-order index 9 --
     // see kConfirmedTimbreBanks in PcgFile.cpp) -- exercises the raw-code
     // <-> file-order-index translation for a bank where the two numbers
     // differ, not just the INT-A..D range where they happen to coincide.
@@ -566,15 +566,34 @@ void testPcgFileEndToEnd() {
     // isConfirmedTimbreProgramBank()/timbreBankName()/combiUsagesForProgram()/
     // combiUsageCounts() -- the raw-code <-> file-order-index translation
     // (kConfirmedTimbreBanks in PcgFile.cpp) that lets Combi-usage counting
-    // cover USER-A/D/F/AA (PBK1 file-order indices 8/11/13/14) in addition
-    // to INT-A..D, where the two number spaces happen to coincide.
+    // cover USER-A/D/F/G/AA/GG (PBK1 file-order indices 6/9/11/12/13/19) in
+    // addition to INT-A..D, where the two number spaces happen to coincide.
     {
-        CHECK(kronos::isConfirmedTimbreProgramBank(1));   // INT-B -- coincides with its own raw code
-        CHECK(kronos::isConfirmedTimbreProgramBank(11));  // USER-D -- file-order index 11, raw code 20
+        CHECK(kronos::isConfirmedTimbreProgramBank(1));  // INT-B -- coincides with its own raw code
+        CHECK(kronos::isConfirmedTimbreProgramBank(9));  // USER-D -- file-order index 9, raw code 20
         CHECK(!kronos::isConfirmedTimbreProgramBank(4));  // INT-E -- not independently confirmed
         CHECK_EQ(kronos::timbreBankName(20), std::string("USER-D"), "timbreBankName() for the confirmed USER-D raw code");
+        CHECK(kronos::isConfirmedTimbreProgramBank(12));  // USER-G -- file-order index 12, raw code 23
+        CHECK(kronos::isConfirmedTimbreProgramBank(19));  // USER-GG -- file-order index 19, raw code 30
+        CHECK_EQ(kronos::timbreBankName(23), std::string("USER-G"), "timbreBankName() for the confirmed USER-G raw code");
+        CHECK_EQ(kronos::timbreBankName(30), std::string("USER-GG"), "timbreBankName() for the confirmed USER-GG raw code");
 
-        auto usersD = pcg.combiUsagesForProgram(11, 7);  // USER-D file-order index, Timbre 1's number
+        // kConfirmedTimbreBankNamesOnly -- raw codes confirmed by name against
+        // real hardware (2026-08-10) but without a matching PBK1 file-order
+        // index, so they only affect timbreBankName(), not the index<->code
+        // translation functions above.
+        CHECK_EQ(kronos::timbreBankName(5), std::string("INT-F"), "timbreBankName() for the name-only-confirmed INT-F raw code");
+        CHECK_EQ(kronos::timbreBankName(18), std::string("USER-B"), "timbreBankName() for the name-only-confirmed USER-B raw code");
+        CHECK_EQ(kronos::timbreBankName(19), std::string("USER-C"), "timbreBankName() for the name-only-confirmed USER-C raw code");
+        CHECK_EQ(kronos::timbreBankName(26), std::string("USER-CC"), "timbreBankName() for the name-only-confirmed USER-CC raw code");
+        CHECK_EQ(kronos::timbreBankName(27), std::string("USER-DD"), "timbreBankName() for the name-only-confirmed USER-DD raw code");
+        // Confirming a raw code's NAME doesn't also confirm a PBK1 index for
+        // it -- isConfirmedTimbreProgramBank() takes a PBK1 index, a
+        // different number space, and 5/26 were never added there.
+        CHECK(!kronos::isConfirmedTimbreProgramBank(5));
+        CHECK(!kronos::isConfirmedTimbreProgramBank(26));
+
+        auto usersD = pcg.combiUsagesForProgram(9, 7);  // USER-D file-order index, Timbre 1's number
         CHECK_EQ(usersD.size(), static_cast<size_t>(1), "combiUsagesForProgram() finds Timbre 1 via the translated raw code");
         if (usersD.size() == 1) {
             CHECK_EQ(usersD[0].bank, 0, "combiUsagesForProgram() result's Combi bank");
@@ -584,7 +603,7 @@ void testPcgFileEndToEnd() {
                  "combiUsagesForProgram() returns nothing for an unconfirmed bank rather than guessing");
 
         auto counts = pcg.combiUsageCounts();
-        CHECK(counts.size() > 11 && counts[11].size() > 7 && counts[11][7] == 1);
+        CHECK(counts.size() > 9 && counts[9].size() > 7 && counts[9][7] == 1);
     }
 
     // Internals accessors (topLevelChunkTags()/programBankInfo()/

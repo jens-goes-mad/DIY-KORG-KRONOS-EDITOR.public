@@ -2468,5 +2468,41 @@ App/UI:
       explicitly marked cosmetic/not worth chasing further right now.
       Revisit by comparing the two sections directly in the real app if it
       resurfaces.
+  20. **RESOLVED (2026-08-10)**: USER-A/D/F/AA's `kConfirmedTimbreBanks`
+      file-order indices (PcgFile.cpp and its frontend mirror,
+      `library.js`'s `CONFIRMED_TIMBRE_BANKS`) were wrong -- 8/11/13/14
+      instead of the real 6/9/11/13. Root cause: the original indices
+      assumed `INT-A..G` was 7 letters (indices 0-6) with `USER-A` starting
+      at 8; the project owner checked real hardware and confirmed there is
+      no `INT-G` bank at all (what's shown after `INT-F` is `GM` then
+      `g(d)`, neither stored per-file) and that `USER-A..G` is genuinely 7
+      single-letter banks, not 6 -- so USER-A starts right after INT-F, at
+      index 6. This is what had been causing Combi U-A 016 Timbre 2 (raw
+      bank 17/USER-A, raw program 47) to resolve to the wrong Program
+      ("Xfade StagePianoATK Kn5" instead of the correct "EXi Overdrive
+      Organ") -- not a Program-number translation issue as first suspected,
+      just the bank index. Confirmed via `setlist_test_2.PCG`: file-order
+      index 6/record 47 reads "EXi Overdrive Organ" exactly; the project
+      owner independently confirmed index 6/9/11/13's record 0 names
+      ("Doubled Screamer"/"Vibraphone 2"/"Harmonic Bass/Lead"/"The Temple
+      SW1") against real hardware too, plus index 6/record 16 = "Big
+      Sleep". Also resolves the previously-flagged USER-G contradiction
+      (docs/content/format/index.md §6.2/§8#8): it's a real 7th
+      single-letter USER bank -- the project owner confirmed its position 0
+      is "JB: Africa Drum" on real hardware, matching file-order index 12
+      exactly, so `USER-G` (raw code 23) got a full index+code+name entry
+      in `kConfirmedTimbreBanks`, promoted out of the name-only table.
+      Raw code 30 was also resolved the same day: with `USER-AA..GG`
+      understood to run file-order index 13-19, code 30 = `USER-GG`
+      (index 19) -- confirmed two independent ways, both landing on "JMJ
+      Theremin": the raw Combi Timbre bytes for Combi U-A 016 Timbre 3
+      (program 15) point at index 19/record 15 in `setlist_test_2.PCG`,
+      and the project owner separately confirmed by browsing directly to
+      Program bank `USER-GG` position 15 on real hardware. `USER-GG` also
+      got a full `kConfirmedTimbreBanks` entry. Fixed in `PcgFile.cpp`,
+      `library.js`, `tests/pcg_file_test.cpp`, and docs/content/format/
+      index.md §5.2/§6.2/§8. **Still open**: `USER-B/C/E` and
+      `USER-BB/EE/FF` still lack independent file-order-index confirmation
+      even though B/C are already name-confirmed.
 
 === END STATE BLOCK ===

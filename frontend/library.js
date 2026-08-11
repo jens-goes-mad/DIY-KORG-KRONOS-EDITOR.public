@@ -84,12 +84,18 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   let combis = [];
   let duplicateGroups = [];
   let expandedProgramKey = null;  // `${bank}-${number}` of the one expanded usage row, if any
-  let expandedCombiKey = null;    // `${bank}-${number}` of the one expanded Timbre row, if any
+  // `${bank}-${number}` keys of every expanded Timbre row -- several can be
+  // open at once (unlike expandedProgramKey above). Safe to allow here in a
+  // way Setlist rows can't: every Combi row is read-only, so there's no
+  // in-flight-edit data-corruption risk multi-open needs to guard against
+  // (see pane.js's openPanels/openSlotEditors for that guard, which only
+  // matters once a row can actually be written to).
+  const expandedCombiKeys = new Set();
   // Joined `${bank}-${number}` lists identifying which duplicate groups are
-  // expanded -- a Set, not a single key like expandedProgramKey/
-  // expandedCombiKey above, since several groups can usefully be compared
-  // open at once (same independently-toggleable model as the Internals
-  // pane's expandedTopics / a Setlist row's own accordion sections).
+  // expanded -- a Set, not a single key like expandedProgramKey, same
+  // multi-open model as expandedCombiKeys above (same independently-
+  // toggleable model as the Internals pane's expandedTopics / a Setlist
+  // row's own accordion sections).
   const expandedDuplicateKeys = new Set();
   // Bank-filter state, per category -- `present` is which bank indices
   // actually have entries in the current dataset (recomputed on every
@@ -455,22 +461,32 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // §6.2), kept as one small table here too so this mirror can't drift out
   // of sync with the backend's own list as more codes get confirmed later.
   // INT-A..D coincide (both number spaces use 0..3); USER-A/D/F/AA use a
-  // *different* number in each space (e.g. USER-D is Program bank index 11
+  // *different* number in each space (e.g. USER-D is Program bank index 9
   // but Timbre code 20) -- a Timbre's rawBankCode must be translated to a
   // Program bank index before it can be compared against ProgramInfo.bank
   // (getProgramBankType()'s map, the `programs` array's own .bank field)
   // at all; outside this table, rawBankCode isn't known to mean the same
   // thing as a Program's own .bank field, so looking up its type/name
   // would be a guess, not a lookup -- exactly what this project doesn't do.
+  //
+  // CORRECTED 2026-08-10: USER-A/D/F/AA's indices were 8/11/13/14, an
+  // extrapolation later contradicted by real hardware -- see
+  // kConfirmedTimbreBanks's own doc comment in PcgFile.cpp for the full
+  // derivation (GM/g(d) aren't stored PBK1/MBK1 chunks, USER-A..G is 7
+  // banks not 6, so everything from USER-A onward sits 2 indices earlier).
+  // USER-G/USER-GG added the same day once independently confirmed by name
+  // against real hardware too.
   const CONFIRMED_TIMBRE_BANKS = [
     { programBankIndex: 0, rawBankCode: 0 },
     { programBankIndex: 1, rawBankCode: 1 },
     { programBankIndex: 2, rawBankCode: 2 },
     { programBankIndex: 3, rawBankCode: 3 },
-    { programBankIndex: 8, rawBankCode: 17 },
-    { programBankIndex: 11, rawBankCode: 20 },
-    { programBankIndex: 13, rawBankCode: 22 },
-    { programBankIndex: 14, rawBankCode: 24 },
+    { programBankIndex: 6, rawBankCode: 17 },
+    { programBankIndex: 9, rawBankCode: 20 },
+    { programBankIndex: 11, rawBankCode: 22 },
+    { programBankIndex: 12, rawBankCode: 23 },
+    { programBankIndex: 13, rawBankCode: 24 },
+    { programBankIndex: 19, rawBankCode: 30 },
   ];
 
   // The confirmed Program bank index for a Timbre's raw bank code, or null
@@ -600,14 +616,15 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
 
       const key = `${c.bank}-${c.number}`;
       tr.dataset.entryKey = key;  // lets jumpToEntry() find this exact row after a re-render
-      if (key === expandedCombiKey) tr.classList.add("is-selected");
+      if (expandedCombiKeys.has(key)) tr.classList.add("is-selected");
       tr.addEventListener("click", () => {
-        expandedCombiKey = expandedCombiKey === key ? null : key;
+        if (expandedCombiKeys.has(key)) expandedCombiKeys.delete(key);
+        else expandedCombiKeys.add(key);
         renderCombisPanel();
       });
       tbody.appendChild(tr);
 
-      if (key === expandedCombiKey && c.timbres) tbody.appendChild(buildTimbreRow(c));
+      if (expandedCombiKeys.has(key) && c.timbres) tbody.appendChild(buildTimbreRow(c));
     }
 
     panel.appendChild(table);
@@ -681,9 +698,9 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
     // Same Entry-row + `.editor-row` expand/collapse shape as the Programs/
     // Combis usage rows just above (buildUsageRow()/buildTimbreRow()) --
     // one row per duplicate group, click to reveal its copies. Several
-    // groups can be open at once (expandedDuplicateKeys, a Set), unlike
-    // expandedProgramKey/expandedCombiKey's single-selection model above --
-    // see the Set's own declaration comment for why.
+    // groups can be open at once (expandedDuplicateKeys, a Set), same
+    // multi-open model as expandedCombiKeys above -- unlike
+    // expandedProgramKey's single-selection one, see its own comment.
     const table = document.createElement("table");
     table.className = "table is-fullwidth is-hoverable is-narrow";
     table.innerHTML = colgroupHtml([8, 4]) + "<thead><tr><th>Name</th><th>Copies</th></tr></thead><tbody></tbody>";
@@ -772,7 +789,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // already reflect that by the time this is called).
   function onDatasetChanged() {
     expandedProgramKey = null;
-    expandedCombiKey = null;
+    expandedCombiKeys.clear();
     expandedDuplicateKeys.clear();
     load();
   }
@@ -790,7 +807,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       programBankFilter.add(bank);
       refreshProgramBankButtons();
     } else {
-      expandedCombiKey = key;
+      expandedCombiKeys.add(key);
       combiBankFilter.add(bank);
       refreshCombiBankButtons();
     }

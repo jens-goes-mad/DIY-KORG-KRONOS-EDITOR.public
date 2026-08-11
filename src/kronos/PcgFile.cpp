@@ -208,33 +208,86 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
 // sample but the project owner had misremembered the Program number for).
 // See docs/content/format/index.md's "Combi Timbre references" section for the full
 // derivation. Every entry below is a directly-verified byte value, from one
-// source or the other -- not an extrapolation. That said, the two anchors
-// on each side (INT-A..D=0..3, USER-A=17/USER-D=20/USER-F=22/USER-AA=24)
-// strongly imply a contiguous INT-A..G=0..6 / USER-A..G=17..23 scheme;
-// deliberately not added below until each individual code is confirmed the
-// same way as these.
+// source or the other -- not an extrapolation.
 //
 // `programBankIndex` is this project's own PBK1 file-order Program bank
 // index (ProgramInfo::bank, see docs/content/format/index.md §5.2); `rawBankCode` is the
 // completely separate number a Combi Timbre slot's own byte actually
 // stores (TimbreRef::rawBankCode). The two coincide for INT-A..D (both use
-// 0..3) but diverge for every other confirmed bank (e.g. USER-D is
-// file-order index 11 but Timbre code 20) -- one shared table so
+// 0..3) but diverge for every other confirmed bank -- one shared table so
 // timbreBankName()/isConfirmedTimbreProgramBank() and the two Combi-usage
 // functions below can't drift out of sync with each other as more codes
 // get confirmed later.
+//
+// CORRECTED 2026-08-10: USER-A/D/F/AA's programBankIndex values below were
+// originally 8/11/13/14 -- an extrapolation from the INT-A..D anchors that
+// assumed INT ran A..G (7 banks, indices 0..6) with USER-A starting at
+// index 8. Real hardware + a real file both contradicted this: the project
+// owner confirmed GM and g(d) are NOT stored PBK1/MBK1 chunks at all (no
+// "INT-G" bank exists), and confirmed real Program names at file-order
+// index 6 ("Doubled Screamer") and index 9/11/13 ("Vibraphone 2"/"Harmonic
+// Bass/Lead"/"The Temple SW1") match USER-A/D/F/AA position 0 on real
+// hardware -- see setlist_test_2.PCG, index 6 record 47 = "EXi Overdrive
+// Organ", exactly the Program the project owner said Combi U-A 016 Timbre 2
+// (raw bank 17, raw number 47) should resolve to (the app had been showing
+// "Xfade StagePianoATK Kn5", index 8 record 47, before this fix). The real
+// scheme is 6 INT-A..F (index 0..5) + 7 USER-A..G (index 6..12, raw code
+// 17..23) + 7 USER-AA..GG (index 13..19, raw code 24..30) = 20 banks total
+// -- USER-A..G is 7 letters, not 6, which also resolves
+// kConfirmedTimbreBankNamesOnly's old USER-G contradiction (now removed
+// from that table -- see below): USER-G is a real 7th single-letter USER
+// bank. Confirmed by name (real hardware, "JB: Africa Drum" at position 0)
+// for file-order index 12, and USER-GG (raw code 30 -- previously a live
+// hypothesis, now confirmed) at file-order index 19 ("JMJ Theremin" at
+// position 15, matching both a direct Program-bank browse on real hardware
+// and the raw Combi Timbre byte data in setlist_test_2.PCG). USER-B/C/E's
+// indices (7/8/10) and the rest of USER-AA..GG=13..19 (other than GG)
+// follow the same now-understood +11 offset pattern but are NOT added
+// below until each is independently confirmed by name against real
+// hardware, same standard as the rest of this table.
 struct ConfirmedTimbreBank {
     int programBankIndex;
     int rawBankCode;
     const char* name;
 };
 constexpr ConfirmedTimbreBank kConfirmedTimbreBanks[] = {
-    {0, 0, "INT-A"},    {1, 1, "INT-B"},    {2, 2, "INT-C"},    {3, 3, "INT-D"},
-    {8, 17, "USER-A"},  {11, 20, "USER-D"}, {13, 22, "USER-F"}, {14, 24, "USER-AA"},
+    {0, 0, "INT-A"},    {1, 1, "INT-B"},     {2, 2, "INT-C"},    {3, 3, "INT-D"},
+    {6, 17, "USER-A"},  {9, 20, "USER-D"},   {11, 22, "USER-F"}, {12, 23, "USER-G"},
+    {13, 24, "USER-AA"}, {19, 30, "USER-GG"},
+};
+
+// Confirmed raw Timbre code -> bank name, the SAME way as
+// kConfirmedTimbreBanks above (checked a real Combi's Timbre against real
+// Kronos hardware) -- but the matching PBK1 file-order Program bank index
+// is NOT (yet) independently confirmed, so these can't go into
+// kConfirmedTimbreBanks itself (which needs both numbers together, see its
+// own doc comment -- adding an index here would be exactly the kind of
+// "strongly implied by the pattern" guess that comment already warns
+// against). timbreBankName() checks this table as a fallback;
+// isConfirmedTimbreProgramBank() and the two index<->code translation
+// functions below deliberately do NOT -- they operate on PBK1 index, and
+// there isn't a confirmed one here to give them.
+//
+// USER-G and USER-GG have since gained full index confirmation and moved
+// up to kConfirmedTimbreBanks above (2026-08-10) -- see its own doc
+// comment.
+struct ConfirmedTimbreBankName {
+    int rawBankCode;
+    const char* name;
+};
+constexpr ConfirmedTimbreBankName kConfirmedTimbreBankNamesOnly[] = {
+    {5, "INT-F"},     // confirmed 2026-08-10: real Combi U-A 002, Timbre 2 -> code 5, verified INT-F on real hardware
+    {18, "USER-B"},   // confirmed 2026-08-10 against real hardware
+    {19, "USER-C"},   // confirmed 2026-08-10 against real hardware
+    {26, "USER-CC"},  // confirmed 2026-08-10: real Combi U-A 000, Timbre 0 -> code 26, verified USER-CC on real hardware
+    {27, "USER-DD"},  // confirmed 2026-08-10 against real hardware
 };
 
 std::string timbreBankName(int rawBankCode) {
     for (const auto& b : kConfirmedTimbreBanks) {
+        if (b.rawBankCode == rawBankCode) return b.name;
+    }
+    for (const auto& b : kConfirmedTimbreBankNamesOnly) {
         if (b.rawBankCode == rawBankCode) return b.name;
     }
     // Unconfirmed code -- the UI shows the raw numeric code instead of a
