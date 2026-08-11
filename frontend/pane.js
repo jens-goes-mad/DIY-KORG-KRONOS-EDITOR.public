@@ -218,8 +218,9 @@ function loadSlotCodecs() {
     slotCodecsPromise = Promise.all([
       import("./components/kronos/setlist-comment.js"),
       import("./components/kronos/setlist-slot-params.js"),
-    ]).then(([comment, slotParams]) => {
-      resolvedSlotCodecs = { ...comment, ...slotParams };
+      import("./components/kronos/setlist-slot-name.js"),
+    ]).then(([comment, slotParams, slotName]) => {
+      resolvedSlotCodecs = { ...comment, ...slotParams, ...slotName };
       return resolvedSlotCodecs;
     });
   }
@@ -346,11 +347,11 @@ function createSetlistPanel(
   // from openPanels above (which row's editor is open) -- a row can be
   // multi-selected without its editor being open, and vice versa.
   const multiSelected = new Set();
-  // Which of an OPEN panel's three accordion sections are currently
-  // expanded (showing content, not just a header) -- songIndex -> Set of
-  // "comment"|"color"|"volume". A type absent here (or the whole songIndex
+  // Which of an OPEN panel's two accordion sections are currently expanded
+  // (showing content, not just a header) -- songIndex -> Set of
+  // "general"|"comment". A type absent here (or the whole songIndex
   // missing) shows as a collapsed header, not as absent -- once a panel is
-  // open all three headers are always shown, see buildEditorRow(). Several
+  // open both headers are always shown, see buildEditorRow(). Both
   // can be expanded on the SAME panel at once (per explicit request), and
   // independently across every OTHER row/pane too -- except the exact same
   // slot in another pane showing the same Set List of the same dataset,
@@ -366,6 +367,12 @@ function createSetlistPanel(
   // risk, not just a style choice. Populated lazily in getSlotBytes(),
   // dropped once the panel closes.
   let slotBytesCache = new Map();
+  // Same idea as slotBytesCache, but for a slot's separate 28-byte SDB1
+  // NAME record (General section's name input) -- a completely different
+  // chunk/stride from the 542-byte SBK1 params record above, see
+  // PcgFile.h's nameRecordBytes() doc comment for why they need independent
+  // caches/fetches rather than being one buffer.
+  let nameBytesCache = new Map();
 
   // Fetches (once per row) and caches this row's raw 542-byte SBK1 record.
   async function getSlotBytes(entry) {
@@ -377,6 +384,19 @@ function createSetlistPanel(
     }
     const bytes = Uint8Array.from(result.bytes);
     slotBytesCache.set(entry.index, bytes);
+    return bytes;
+  }
+
+  // Fetches (once per row) and caches this row's raw 28-byte SDB1 name record.
+  async function getNameBytes(entry) {
+    if (nameBytesCache.has(entry.index)) return nameBytesCache.get(entry.index);
+    const result = await window.getNameRecordBytes(getDatasetId(), currentSetlistIndex, entry.index);
+    if (!result.ok) {
+      log(`[Pane ${paneId}] ${result.error}`);
+      return null;
+    }
+    const bytes = Uint8Array.from(result.bytes);
+    nameBytesCache.set(entry.index, bytes);
     return bytes;
   }
 
@@ -404,8 +424,8 @@ function createSetlistPanel(
         return;
       }
 
-      const [bytes] = await Promise.all([getSlotBytes(entry), loadSlotCodecs()]);
-      if (bytes == null) return;  // getSlotBytes() already logged the error
+      const [bytes, nameBytes] = await Promise.all([getSlotBytes(entry), getNameBytes(entry), loadSlotCodecs()]);
+      if (bytes == null || nameBytes == null) return;  // already logged the error
 
       openPanels.add(entry.index);
       openSlotEditors.set(key, paneId);
@@ -427,6 +447,7 @@ function createSetlistPanel(
     openPanels.delete(entry.index);
     expandedSections.delete(entry.index);
     slotBytesCache.delete(entry.index);
+    nameBytesCache.delete(entry.index);
     if (openSlotEditors.get(key) === paneId) openSlotEditors.delete(key);
     renderRows();
   }
@@ -464,23 +485,37 @@ function createSetlistPanel(
     renderRows();
   }
 
+  // Same idea as commitSlotBytes() above, but for the slot's separate
+  // 28-byte SDB1 name record (General section's name input) -- its own
+  // write path since it's a completely different record/bridge call, see
+  // nameBytesCache's own comment.
+  async function commitNameBytes(entry, newBytes) {
+    const result = await window.putNameRecordBytes(getDatasetId(), currentSetlistIndex, entry.index, Array.from(newBytes));
+    if (!result.ok) {
+      log(`[Pane ${paneId}] ${result.error}`);
+      return;
+    }
+    nameBytesCache.set(entry.index, newBytes);
+    const codecs = await loadSlotCodecs();
+    entry.label = codecs.decodeSlotName(newBytes);
+    renderRows();
+  }
+
   // ONE editor <tr> per slot with an open panel (not one per open section)
   // -- a single "you're now editing this slot" panel inside one
   // <td colSpan=5> (a real <table> again, so a plain colSpan instead of a
-  // grid-column hack), containing all three Color/Comment/Volume accordion
-  // headers (buildAccordionSection() below) plus one Close button that's
-  // the only way to fully dismiss it (closePanel()) -- per explicit
-  // feedback, needing to re-click three separate distant table columns to
-  // get rid of everything was counterintuitive, and three separate look-
-  // alike orange-bordered <tr>s per slot read as unrelated table rows
-  // rather than one coherent panel. Column clicks (# -> Color, Vol ->
-  // Volume, Song/Type -> Comment) still expand/collapse their own section
-  // in place (openSection()) -- same as clicking that section's own header
-  // once the panel is already open -- they just don't close the panel
-  // itself anymore. Fixed section order (Color, Comment, Volume), matching
-  // the columns' own left-to-right order. Nothing to clean up on close:
-  // a closed slot's <tr> simply isn't rebuilt into the next renderRows()
-  // pass (tbody.innerHTML = "" there), so it's fully gone from the DOM the
+  // grid-column hack), containing both General/Comment accordion headers
+  // (buildAccordionSection() below) plus one Close button that's the only
+  // way to fully dismiss it (closePanel()). Two sections, not three --
+  // General bundles Name/Color/Volume together (per explicit request: they
+  // were three separate look-alike accordion items, General groups the
+  // slot's quick-glance identity/appearance fields into one). Column
+  // clicks (#/Vol -> General, Song/Type -> Comment) still expand/collapse
+  // their own section in place (openSection()) -- same as clicking that
+  // section's own header once the panel is already open -- they just don't
+  // close the panel itself. Nothing to clean up on close: a closed slot's
+  // <tr> simply isn't rebuilt into the next renderRows() pass
+  // (tbody.innerHTML = "" there), so it's fully gone from the DOM the
   // moment it leaves openPanels -- no separate removal step.
   function buildEditorRow(entry, sections) {
     const editorTr = document.createElement("tr");
@@ -501,9 +536,8 @@ function createSetlistPanel(
 
     const stack = document.createElement("div");
     stack.className = "editor-row-stack";
-    stack.appendChild(buildAccordionSection(entry, "color", "Color", sections.has("color"), buildColorSection));
+    stack.appendChild(buildAccordionSection(entry, "general", "General", sections.has("general"), buildGeneralSection));
     stack.appendChild(buildAccordionSection(entry, "comment", "Comment", sections.has("comment"), buildCommentSection));
-    stack.appendChild(buildAccordionSection(entry, "volume", "Volume", sections.has("volume"), buildVolumeSection));
     panel.appendChild(stack);
 
     td.appendChild(panel);
@@ -512,10 +546,11 @@ function createSetlistPanel(
   }
 
   // One collapsible accordion item: a clickable header (chevron + title,
-  // title suffixed with the current value for Color/Volume so a collapsed
-  // section still shows a useful at-a-glance summary) that toggles this
-  // one section via openSection(), and -- only when `isOpen` -- its content
-  // (`buildContent(entry)`, one of the three section-builders below).
+  // title suffixed with the current value for General/Comment so a
+  // collapsed section still shows a useful at-a-glance summary) that
+  // toggles this one section via openSection(), and -- only when `isOpen`
+  // -- its content (`buildContent(entry)`, one of the section-builders
+  // below).
   function buildAccordionSection(entry, type, title, isOpen, buildContent) {
     const section = document.createElement("div");
     section.className = "accordion-section" + (isOpen ? " is-open" : "");
@@ -550,8 +585,7 @@ function createSetlistPanel(
   // header -- Comment's own text has no short summary worth showing (could
   // be long/multi-line), but its Font size is a quick, useful hint.
   function accordionSummary(type, entry) {
-    if (type === "color") return ` — ${setlistColorName(entry.color)}`;
-    if (type === "volume") return ` — ${entry.volume}`;
+    if (type === "general") return ` — ${setlistColorName(entry.color)}, Vol ${entry.volume}`;
     if (type === "comment") return entry.fontSize ? ` — Font ${entry.fontSize}` : "";
     return "";
   }
@@ -723,12 +757,69 @@ function createSetlistPanel(
     return section;
   }
 
-  // Color editor -- click a row's # cell to expand a row of 16 buttons, one
-  // per real Kronos Set List color (SETLIST_COLOR_NAMES/_HEX above).
-  // Immediate-apply, no Apply button (per explicit request): each click
-  // decodes/re-encodes through setlist-slot-params.js's masked Color codec
-  // and commits straight away.
-  function buildColorSection(entry) {
+  // General section -- click a row's # or Vol cell to expand it. Bundles
+  // three quick-glance fields that used to be three separate accordion
+  // items (per explicit request: Name/Color/Volume all changed together
+  // often enough that three look-alike headers just added clicks). Name
+  // first (per explicit request), then Color, then Volume.
+  function buildGeneralSection(entry) {
+    const section = document.createElement("div");
+    section.className = "general-editor-section";
+    section.append(buildNameField(entry), buildColorSwatches(entry), buildVolumeSlider(entry));
+    return section;
+  }
+
+  // Name editor -- a slot's name lives in its own separate 28-byte SDB1
+  // record (nameBytesCache/commitNameBytes), not the SBK1 params record
+  // Color/Volume below write into. Commits on blur or Enter, not on every
+  // keystroke (matches Volume's release-not-drag commit point below) --
+  // a text field mid-edit isn't a "confirmed" value the way a color click
+  // or a slider release is. `maxLength` gives immediate, native browser-
+  // level validation against the format's real 24-byte cap
+  // (setlist-slot-name.js's NAME_MAX_LENGTH) -- backed up by the encoder's
+  // own truncation either way, so an oversized paste can't slip through.
+  function buildNameField(entry) {
+    const labelEl = document.createElement("label");
+    labelEl.className = "name-label";
+    labelEl.textContent = "Name";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "input is-small name-input";
+    input.maxLength = resolvedSlotCodecs.NAME_MAX_LENGTH;
+    input.value = entry.label || "";
+    input.placeholder = "(empty)";
+
+    const counter = document.createElement("span");
+    counter.className = "name-length-counter";
+    const updateCounter = () => {
+      counter.textContent = `${input.value.length}/${resolvedSlotCodecs.NAME_MAX_LENGTH}`;
+    };
+    updateCounter();
+    input.addEventListener("input", updateCounter);
+
+    async function commitIfChanged() {
+      if (input.value === (entry.label || "")) return;  // nothing to write
+      const current = nameBytesCache.get(entry.index);
+      const encoded = resolvedSlotCodecs.encodeSlotName(current, input.value);
+      await commitNameBytes(entry, encoded);
+    }
+    input.addEventListener("blur", commitIfChanged);
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") input.blur();  // triggers commitIfChanged() above
+    });
+
+    const row = document.createElement("div");
+    row.className = "name-editor-row";
+    row.append(labelEl, input, counter);
+    return row;
+  }
+
+  // Color editor -- one of 16 real Kronos Set List colors
+  // (SETLIST_COLOR_NAMES/_HEX above). Immediate-apply, no Apply button (per
+  // explicit request): each click decodes/re-encodes through
+  // setlist-slot-params.js's masked Color codec and commits straight away.
+  function buildColorSwatches(entry) {
     const section = document.createElement("div");
     section.className = "color-editor-section";
     for (let color = 1; color <= 16; color++) {
@@ -747,13 +838,13 @@ function createSetlistPanel(
     return section;
   }
 
-  // Volume editor -- click a row's Vol cell to expand a 0-127 slider.
-  // Immediate-apply on release (per explicit request: "color on press and
-  // slider on release") -- `change` fires on release/blur, not on every
-  // `input` tick during drag, so this doesn't spam a write per pixel of
-  // drag movement. The live numeric label still updates on every `input`
-  // tick for feedback, it just doesn't commit until `change`.
-  function buildVolumeSection(entry) {
+  // Volume editor -- a 0-127 slider. Immediate-apply on release (per
+  // explicit request: "color on press and slider on release") -- `change`
+  // fires on release/blur, not on every `input` tick during drag, so this
+  // doesn't spam a write per pixel of drag movement. The live numeric label
+  // still updates on every `input` tick for feedback, it just doesn't
+  // commit until `change`.
+  function buildVolumeSlider(entry) {
     const labelEl = document.createElement("label");
     labelEl.className = "volume-label";
     labelEl.textContent = "Volume";
@@ -940,13 +1031,14 @@ function createSetlistPanel(
         });
         bankTd.appendChild(bankButton);
         volTd.textContent = String(entry.volume);
-        // Vol cell opens the Volume editor instead of the row's own
-        // Comment-editor fallback -- stopPropagation keeps the row-level
-        // listener above from also firing (same pattern as bankButton).
+        // Vol cell opens the General editor (Name/Color/Volume) instead of
+        // the row's own Comment-editor fallback -- stopPropagation keeps
+        // the row-level listener above from also firing (same pattern as
+        // bankButton).
         volTd.addEventListener("click", (ev) => {
           ev.stopPropagation();
           if (handleMultiSelectClick(ev, entry.index)) return;
-          openSection(entry, "volume");
+          openSection(entry, "general");
         });
         // Color used to be its own swatch column -- now shown as the "#"
         // cell's own background instead, freeing up a whole column. Real
@@ -955,12 +1047,12 @@ function createSetlistPanel(
         // against real hardware, see that array's own doc comment.
         idxTd.style.background = setlistColorHex(entry.color);
         idxTd.title = `Color ${entry.color} (${setlistColorName(entry.color)})`;
-        // # cell opens the Color editor instead of the row's own
-        // Comment-editor fallback -- same stopPropagation pattern as Vol.
+        // # cell opens the General editor too -- same stopPropagation
+        // pattern as Vol.
         idxTd.addEventListener("click", (ev) => {
           ev.stopPropagation();
           if (handleMultiSelectClick(ev, entry.index)) return;
-          openSection(entry, "color");
+          openSection(entry, "general");
         });
       }
 

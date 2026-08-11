@@ -115,14 +115,16 @@ Set List keeps its own name; only its song slots are replaced.
 Click a slot's **Bank** cell to jump straight to that exact Program or Combi in the same
 pane's Programs/Combis view.
 
-### Editing a slot: Color, Volume, Comment
+### Editing a slot: General and Comment
 
-Click a slot's **#** for its Color (one of the 16 real Kronos Set List colors), its **Vol**
-column for Volume (0-127), or its Song/Type cell for Comment and Font size. Each opens its
-own collapsible section below the row -- several can be open on the same slot at once.
+Click a slot's **#** or **Vol** cell for **General** (Name, Color, Volume), or its Song/Type
+cell for **Comment** (and Font size). Each opens its own collapsible section below the row --
+both can be open on the same slot at once.
 
-- **Color and Volume apply immediately** -- no Apply button, no confirmation, the change is
-  live the moment you click a color swatch or release the volume slider.
+- **Name, Color, and Volume all apply immediately** -- no Apply button, no confirmation.
+  Color applies the moment you click a swatch, Volume the moment you release the slider,
+  and Name the moment you leave the field (click elsewhere, Tab away, or press Enter).
+  The name field caps at 24 characters (the format's own real limit), enforced as you type.
 - **Comment and Font size use an Apply button** -- type/pick, then click Apply to commit.
   The Comment box scales its own on-screen font to match whichever Font size is selected,
   as a live approximation of how the text will actually wrap on a real Kronos screen.

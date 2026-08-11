@@ -419,6 +419,14 @@ body {
   position: sticky;
   top: 0;
   background: var(--panel);
+  /* Without an explicit z-index, a sticky element only gets the DEFAULT
+     stacking order (same as position: relative) -- with both this header
+     and the scrolling body rows at the implicit z-index: auto, later-
+     painted DOM content (tbody rows, e.g. the Bank cell's button) wins
+     ties and renders on top of the header once scrolled underneath it,
+     instead of the header staying above everything as sticky headers are
+     expected to. */
+  z-index: 1;
 }
 
 /* Below this point: Setlist-only. Combis/Duplicates rows aren't draggable
@@ -675,6 +683,37 @@ td.has-comment {
    1.5em under its header, unlike the old full-width panel this rule was
    first written for). Buttons just shrink to fit their 1/8th share of the
    row instead of wrapping unevenly. */
+/* General section (pane.js's buildGeneralSection()) -- Name/Color/Volume
+   stacked vertically, each its own row, in that order. */
+.general-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.name-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.name-label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.name-input {
+  flex: 1;
+}
+
+.name-length-counter {
+  min-width: 3em;
+  text-align: right;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .color-editor-section {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
