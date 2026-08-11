@@ -16,7 +16,8 @@ toc: true
 
 Welcome to the build log for a from-scratch reverse-engineering of the Korg Kronos `.PCG`/`.SNG` backup file format, and a cross-platform, cross-architecture editor built on top of what's been found. Korg never published a spec for the container/chunk format the `.PCG`/`.SNG` file itself is built from -- that part is entirely reverse-engineered here -- but Korg's own SysEx documentation does describe the bit-level layout of individual objects (Set Lists, Programs, Combis), and gets used as a real, independent cross-check wherever it exists. Every byte offset documented here was derived the same way, over and over: get a real backup file with known ground truth (a Set List with real song names, a Combi with known Timbre assignments, ...), diff it against what's expected, and only trust what round-trips correctly against at least one independent anchor -- Korg's own documentation being one of them where available, not a replacement for verifying against real files.
 
-![Main View](DIY-KE-006-CombiReferences.png)
+![Korg Kronos 3](korg_kronos-1.jpg)
+*Photo: [Korg](https://www.korg.com/de/products/synthesizers/kronos3/)*
 
 ## What a Kronos backup actually holds
 
@@ -75,6 +76,8 @@ Kits/Wave Sequences/Global settings, and exactly which of the 20 Program banks
 corresponds to which on-screen label beyond the ones directly confirmed above.
 
 ## The editor
+
+![Main View](DIY-KE-006-CombiReferences.png)
 
 - A Norton-Commander-style dual pane: each pane independently picks which already-open
   **dataset** (loaded file) to show from its own selector, and a per-pane category
