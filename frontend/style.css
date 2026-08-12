@@ -787,6 +787,16 @@ td.has-comment {
   min-width: 4.5em;
 }
 
+/* Combis-only Set List filter dropdown, appended into the same
+   .select-control-row as the None/All/Invert buttons above (library.js's
+   buildSetlistFilterSelect()) -- a small left margin separates it from the
+   buttons instead of the row's own 4px inter-button gap, so it doesn't
+   read as a fourth button. */
+.setlist-filter-select-wrap {
+  margin-left: 8px;
+  min-width: 12em;
+}
+
 /* One toggle button per bank on the Programs/Combis panels -- now a sibling
    ABOVE .library-body (library.js), not nested inside its scrolling area,
    so it no longer scrolls out of view along with the table. A real grid,

@@ -484,15 +484,23 @@ in §6.2:
            12  USER-G     19  USER-GG
 ```
 
-Indices 0-6, 9, 11, 12, 13, and 19 (`INT-A..F`, `USER-A`, `USER-D`,
-`USER-F`, `USER-G`, `USER-AA`, `USER-GG`) are directly confirmed against
-real hardware, the same rigorous way Combi's §5.1 was -- `USER-G` via "JB:
-Africa Drum" at position 0, `USER-GG` via "JMJ Theremin" at position 15
-(confirmed independently both by a direct Program-bank browse on real
-hardware and by the raw Combi Timbre byte data, see §6.2's raw-code-30
-note). The rest (`USER-B/C/E` and `USER-BB/CC/DD/EE/FF` other than `AA`/
-`GG`) follow the same now-understood `+11` raw-code offset pattern but
-aren't each individually confirmed by index yet -- see §6.2.
+**All 20 indices confirmed 2026-08-11**: the project owner checked every
+single position-0 Program name in the app against the real Kronos's own
+on-screen bank browser, for the entire list above -- every one matched
+exactly (`INT-A..F`, `USER-A..G`, `USER-AA..GG`), including the ones this
+document previously listed as unconfirmed (`USER-B/C/E` and
+`USER-BB/CC/DD/EE/FF`). This confirms the bank *order/labels* fully -- it
+does not, on its own, confirm a raw Combi Timbre code for the codes still
+missing one (`USER-E`, `USER-BB/EE/FF`, see §6.2); those need their own
+independent raw-byte check against real hardware, same as `USER-B/C`
+already have (name only, no index needed for that -- see §6.2).
+`frontend/pane.js`'s `PROGRAM_BANK_NAMES` -- the app's single source of
+truth for this list (see below) -- had drifted out of sync with this
+correction until this same check caught it: index 6 read `"I-G"` and
+index 7 read `"G(d)"` there, an old leftover from the pre-2026-08-10
+scheme, so labels 6-19 were all still off by 2 in the actual UI even
+though `PcgFile.cpp`'s Combi-Timbre-code table had already been fixed --
+fixed the same day.
 
 Note `GM` itself is *not* one of these 20 stored banks -- bank values
 `>=20` seen in real slot data don't correspond to anything stored per-file
@@ -539,6 +547,13 @@ All out-of-range cases are left showing a raw `bank-number` rather than a
 guessed label, both for the name (empty, degrading gracefully) and the
 UI's bank label.
 
+Note this is a *different* number space from a Combi Timbre's own
+`rawBankCode` (§6.2) -- both ultimately point at the same real-world
+concept (`GM` being fixed MIDI-spec content, not stored per-file), but a
+Song/Program slot's `bank>=20` signal and a Combi Timbre's confirmed
+`rawBankCode=6="GM"` are two separate bytes in two separate record types,
+confirmed independently of each other. Don't conflate them.
+
 ## 6. Combi Timbre references — CONFIRMED (Program refs), status byte CONFIRMED
 
 Each Combi record (`CMB1 > CBK1`, §5.1) has 16 Timbre slots, each optionally
@@ -581,25 +596,31 @@ probably still count an Off-but-referenced Timbre as a real reference.
 ### 6.2 Confirmed raw bank codes
 
 ```
-0   INT-A       17  USER-A     23  USER-G
-1   INT-B       20  USER-D     24  USER-AA
-2   INT-C       22  USER-F     30  USER-GG
-3   INT-D
+0   INT-A       17  USER-A     24  USER-AA
+1   INT-B       18  USER-B     25  USER-BB
+2   INT-C       19  USER-C     26  USER-CC
+3   INT-D       20  USER-D     27  USER-DD
+4   INT-E       21  USER-E     28  USER-EE
+5   INT-F       22  USER-F     29  USER-FF
+                23  USER-G     30  USER-GG
 ```
+
+All 20 Program bank indices now have a confirmed raw Combi Timbre code
+(`USER-FF` was the last gap, resolved 2026-08-14 -- see below).
 
 Every code above is a directly-verified byte value (from a real Combi
 sample, the external reference, real hardware, or several of these
 together) -- not an extrapolation.
 
-These 10 codes are a *different number space* from this project's own PBK1
+These 20 codes are a *different number space* from this project's own PBK1
 file-order Program bank index (`ProgramInfo::bank`) -- they coincide for
-INT-A..D (both happen to use 0..3) but diverge for the other 6 (e.g.
+INT-A..F (all six happen to use 0..5) but diverge for the other 14 (e.g.
 USER-D is file-order index 9, but Timbre code 20). `PcgFile.cpp`'s
 `kConfirmedTimbreBanks` table pairs each confirmed code with its file-order
 index so Combi-usage counting (`combiUsagesForProgram()`/
 `combiUsageCounts()`, backing the Programs table's `#CMB` column, the
 Program usage panel, and Duplicates' per-copy reference counts) can
-translate between the two and cover all 10 confirmed banks correctly, not
+translate between the two and cover all 20 confirmed banks correctly, not
 just the INT-A..D range where the numbers happen to match (fixed
 2026-08-08 -- previously only INT-A..D actually fed into usage counting,
 even though USER-A/D/F/AA's codes were already sitting right here,
@@ -610,26 +631,25 @@ USER-A/D/F/AA's file-order indices were originally 8/11/13/14 -- see
 question below) were added the same day once independently confirmed by
 name against real hardware too.
 
-**Four more codes, name only, confirmed 2026-08-10** -- checked real Combis
-directly against real Kronos hardware:
-
-```
-5   INT-F
-18  USER-B
-19  USER-C
-26  USER-CC
-27  USER-DD
-```
-
-(Combi U-A 002, Timbre 2 -> code 5, verified INT-F on the unit; Combi U-A
-000, Timbre 0 -> code 26, verified USER-CC; USER-B/C/DD confirmed the same
-way against other real Combis.) These live in a *separate* table
-(`kConfirmedTimbreBankNamesOnly`), not `kConfirmedTimbreBanks` above -- the
-raw code and name are directly confirmed, but the matching PBK1 file-order
-index isn't, so `timbreBankName()` shows the right name for these codes but
-they deliberately don't participate in Combi-usage counting's index<->code
-translation the way the 10 above do (`isConfirmedTimbreProgramBank()`
-still returns false for them).
+**Promoted 2026-08-11**: `INT-F`/`USER-B`/`USER-C`/`USER-CC`/`USER-DD`
+(codes 5/18/19/26/27) used to sit in a separate name-only table -- their
+raw code was directly confirmed (checked real Combis against real Kronos
+hardware: Combi U-A 002 Timbre 2 -> code 5, verified `INT-F`; Combi U-A 000
+Timbre 0 -> code 26, verified `USER-CC`; `USER-B`/`USER-C`/`USER-DD`
+confirmed the same way against other real Combis), but the matching PBK1
+file-order index wasn't, so they didn't participate in Combi-usage
+counting's index<->code translation and their Program name never showed
+in the Combi Timbre list at all (`isConfirmedTimbreProgramBank()` returned
+false, so `library.js`'s `formatTimbreRef()` skipped the name lookup
+entirely -- e.g. Combi U-A 002 "Sex on Fire" Timbre 2, raw bank 5/`INT-F`,
+showed the bank label but no Program name). Once §5.2's full 20-bank order
+got independently confirmed against real hardware (below), all five turned
+out to already have a confirmed index too (5/7/8/15/16) -- promoted into
+`kConfirmedTimbreBanks` directly, and the reported bug fixed: index
+5/record 71 in `setlist_test_2.PCG` reads "Vokal Dancing", matching
+"Vocal Dancing" on the real unit for that exact Combi Timbre. The
+now-empty name-only table (`kConfirmedTimbreBankNamesOnly`) was removed
+entirely rather than left around empty.
 
 **Raw code 30 = `USER-GG`, RESOLVED 2026-08-10**: real bytes from
 `setlist_test_2.PCG` (Combi U-A 016, Timbre 3: raw program 15, raw bank
@@ -645,6 +665,121 @@ MSB/LSB were always 0x00 for both, no other byte anomaly) -- worth noting
 as a case where the *first* hypothesis tested was wrong, and only got
 resolved once a full round of ground-truth checking worked through the
 whole revised §5.2 bank order.
+
+**USER-BB/EE confirmed (2026-08-11); INT-E/USER-E RESOLVED, retracting an
+earlier misreading (2026-08-14)**: checked directly against real Combis in
+`setlist_test_2.PCG`. `USER-BB` (25) and `USER-EE` (28) fit the expected
+`+11`-offset pattern exactly (Combi I-A 000 "K-Lab: Katja's House" Timbre
+9/index 8 has raw program=29/bank=25; Combi U-A 014 "KARMA Org 1'2'3
+Piano 4" Timbre 7/index 6 has raw program=1/bank=28). This section briefly
+claimed `USER-E` was raw code 4 -- "a genuine surprise" breaking the
+contiguous 17-23 block every other single-letter USER bank sits in --
+based on the project owner's own real-hardware report for the same
+"K-Lab: Katja's House" Combi's Timbre 7/index 6 (raw program=61/bank=4).
+That report was a misreading of the unit's display: re-checking the exact
+same Timbre confirmed real hardware actually shows `INT-E`, not `USER-E`,
+for that reference. So there was no anomaly at all -- `INT-A..F` are
+simply raw codes 0-5 in order (index == code for all six, extending the
+same coincidence `INT-A..D` already had), exactly what the "obvious"
+extrapolation always said. `USER-E` is confirmed separately, via a
+different real Combi (I-A 001 "Stradivarius Goes POP" Timbre 7, raw
+program=73/bank=**21**) -- and 21 turns out to be exactly the "obvious"
+gap in `USER-A..G`'s 17-23 block after all (A=17,B=18,C=19,D=20,E=21,
+F=22,G=23, fully contiguous). Left as a methodology note rather than
+scrubbed from history: the original "genuine surprise" framing was itself
+the mistake, caught only because the project owner re-verified a specific
+real-hardware reading instead of trusting the first transcription --
+exactly the kind of double-check this project's whole method depends on.
+`USER-FF` was the one remaining unconfirmed double-letter code, and the
+*only* one of the 20 Program bank indices with no confirmed raw Combi
+Timbre code at all -- checked directly (not assumed at 29 just because the
+rest of the series fit `+11` cleanly, given the `INT-E`/`USER-E`
+precedent) via a real Combi (U-A 090 "Days like this" Timbre 1/2,
+program=87/bank=29, program=85/bank=29), **RESOLVED 2026-08-14**: it
+really is `USER-FF`, exactly as the pattern predicted this time. All 20
+Program bank indices now have a confirmed raw Combi Timbre code -- this
+table is complete.
+
+**One name, one place (2026-08-11)**: `kConfirmedTimbreBanks` used to also
+carry a `name` string per entry, redundant with §5.2's `PROGRAM_BANK_NAMES`
+for every index the two tables share -- which is exactly how they drifted
+apart on 2026-08-10 (this table's indices got corrected without anyone
+noticing `PROGRAM_BANK_NAMES` still had the old wrong order, since nothing
+forced the two to agree). Removed the `name` field instead of just
+re-syncing the strings: `library.js`'s `formatTimbreRef()` looks up
+`PROGRAM_BANK_NAMES[programBankIndex]` for every entry in
+`kConfirmedTimbreBanks` instead of reading a name off the bridge.
+`timbreBankName()` resolves a name only for a raw code confirmed by name
+but with NO PBK1 index (`kConfirmedTimbreBankNamesOnly`) -- removed on
+2026-08-11 as permanently empty (every entry in it at the time had gained
+a confirmed index once §5.2's full order was known), then reintroduced the
+next day once a genuine counterexample turned up (`GM`, below) --
+confirming the "unlikely but not structurally impossible" case really can
+happen. `frontend/mock_bridge.js`'s fake Timbre data matches this contract
+too, including one `GM` example.
+
+**`GM` (raw code 6), PERMANENTLY indexless, confirmed 2026-08-12**: Combi
+U-A 030 "Bad Name" Timbre 2 -- raw bytes program=91/bank=6 in
+`setlist_test_2.PCG`, matching the project owner's real-hardware report
+exactly ("code 6 - 091" -> `GM 092`). Unlike every other confirmed code
+above, `GM` is not "not yet" indexed -- it structurally can never be:
+`GM` is fixed MIDI-spec content, not one of the 20 stored PBK1/MBK1
+Program banks at all (§5.2/§5.4), so there is no PBK1 file-order index to
+ever confirm for it. Shown as a bare "GM" bank label with the raw number,
+no Program name -- there's nothing in this file's own `programs` array to
+look one up from (that would need a hardcoded General MIDI
+instrument-name table, a real but separate feature decision, not implied
+by just labeling the bank). No jump-to-Program button either, for the same
+reason -- `library.js`'s Timbre-bank-jump button only renders when a
+confirmed PBK1 index exists.
+
+**`G(1)`..`G(4)` (raw codes 7-10), same treatment, confirmed 2026-08-12**:
+Combi I-C 022 "Rainbow Bridge" (project owner's report said "Rainbow
+Brodge" -- a typo, not a different Combi; the real name matches exactly)
+Timbres 1-4 -- raw bytes program=122/bank=7, program=122/bank=8,
+program=122/bank=9, program=122/bank=10 in `setlist_test_2.PCG`, all four
+matching the project owner's real-hardware report exactly. These sit
+right after `GM` (6) as a contiguous block, consistent with §5.2's own
+note that the real Program bank browser shows "GM" then "g(d)" right
+after `INT-F` -- very likely that same "g(d)" family (four separate
+banks?), though this project doesn't know Korg's own official name or
+purpose for `G(1)`..`G(4)` specifically, and isn't guessing. Same
+permanently-indexless treatment as `GM`: no PBK1 index, no Program name,
+no jump button. The project owner also reported the specific Program
+names found there (program 122/"123": "Rain"/"Thunder"/"Wind"/"Stream" for
+`G(1)`/`G(2)`/`G(3)`/`G(4)` respectively) -- useful as confirmation these
+are real, distinct, content-bearing banks (and a suggestive hint they
+might be General MIDI Level 2's SFX/nature-sound kits), but these
+per-program names aren't stored anywhere in this codebase; showing them
+would be the same separate feature decision as `GM`'s own instrument names
+above.
+
+**`g(5)`/`g(6)`/`g(7)`/`g(9)` (raw codes 11/12/13/15), same treatment,
+confirmed 2026-08-13**: extend the same contiguous block right past
+`G(4)`, verified against real Combis in `setlist_test_2.PCG` (Combi I-B
+055 "Prehistoric Predator" Timbres 5/6, Combi I-B 039 "Planetary
+Explosion" Timbre 5, Combi I-A 096 "Guitar Hero" Timbre 4). `g(8)` (code
+14) has NOT been checked -- not assumed just because the run around it
+fits. Lowercase this time, matching exactly what the project owner
+reported (`G(1)`..`G(4)` were reported uppercase) -- kept verbatim rather
+than normalized, since it isn't confirmed which casing (if either
+consistently) the real Kronos UI uses. The reported Program names
+("Bubble"/"Seashore"/"Jetplane"/"Polyphonic Synth") continuing right after
+`G(4)`'s "Stream" in the same nature/SFX theme is suggestive of a General
+MIDI 2 SFX Kit note sequence (Rain/Thunder/Wind/Stream/Bubbles/... is a
+real, externally documented GM2 order) -- worth noting, not asserted as
+confirmed without checking that specific external spec directly.
+
+**`code 21` = `USER-E`, RESOLVED 2026-08-14** -- see the `INT-E`/`USER-E`
+entry above for the full story (this section briefly flagged a conflict
+between this and an earlier, mistaken `USER-E`=code-4 report; the
+mistaken report was retracted, not code 21). Worth noting as its own
+methodology lesson: code 21's sheer usage count (over 1,200 occurrences
+across the sample files, by far the most of any previously-unidentified
+code) was floated here as a hint it might be a heavily-used bank like the
+still-unconfirmed `INT-E` rather than a `USER-*` bank -- that guess was
+also wrong. Frequency alone isn't reliable evidence either; `USER-E`
+really is that common in practice.
 
 ### 6.3 A resolved "anomaly" (worth recording as a methodology note)
 
@@ -765,13 +900,10 @@ Recorded here for later, even though nothing below is wired into
    `0x08`). Not yet wired into `SlotParams`/decoded anywhere in the app
    (nothing needs it yet), and the remaining bits 0-2 of this same byte are
    still genuinely unaccounted for.
-4. Exactly which of the 20 PRG1 banks maps to which *display label* --
-   the lookup mechanism itself is confirmed (§5.3). §5.2's label order is
-   now directly confirmed for `INT-A..F` and `USER-A/D/F/G/AA/GG`
-   (2026-08-10); the remaining entries (`USER-B/C/E`, `USER-BB/CC/DD/EE/FF`
-   other than `AA`/`GG`) still follow the same now-understood offset
-   pattern without individual index confirmation. See #13 below for a more
-   fundamental version of the same uncertainty.
+4. Exactly which of the 20 PRG1 banks maps to which *display label* -- the
+   lookup mechanism itself is confirmed (§5.3), and §5.2's label order is
+   now fully confirmed for all 20 indices (2026-08-11). See #13 below for a
+   more fundamental version of the same uncertainty.
 5. `DKT1` (Drum Kits), `WSQ1` (Wave Sequences), `GLB1`, `DPI1`, and `INI1`
    (§7, tag observed once, never by this project directly) -- entirely
    unexplored. Unknown whether Set List slots can reference these
@@ -785,20 +917,16 @@ Recorded here for later, even though nothing below is wired into
    Comment text somewhere in a round-trip through the app. Neither the
    read nor write path does any trimming in code, so the cause -- if
    real -- isn't obvious from inspection alone.
-8. The remaining Combi Timbre bank codes (§6.2): `INT-E` and `USER-E` are
-   strongly implied by the confirmed codes either side of them, but not
-   independently verified the same rigorous way. (`INT-F`/`USER-B`/
-   `USER-C`, codes 5/18/19, confirmed 2026-08-10 -- name only, see §6.2's
-   own note; `USER-G`, code 23, confirmed the same day with a full
-   file-order index too, see #4 above; removed from this list. There is no
-   `INT-G` -- confirmed 2026-08-10 that the real bank after `INT-F` is
-   `USER-A`, see §5.2.) Separately, the double-letter `USER-AA..GG` series
-   (distinct banks from single-letter `USER-A..G`, e.g. `USER-CC` !=
-   `USER-C`) now has `USER-AA` (24), `USER-CC` (26), `USER-DD` (27), and
-   `USER-GG` (30, with a full file-order index, resolved 2026-08-10 -- see
-   §6.2) confirmed by name -- `USER-BB/EE/FF` remain open, following the
-   same `+11` offset pattern (codes 25/28/29) without individual
-   confirmation yet.
+8. **FULLY RESOLVED (2026-08-14)**: all 20 Program bank indices now have a
+   confirmed raw Combi Timbre code (§6.2) -- `INT-E`=4, `USER-E`=21, both
+   exactly the "obvious" extrapolation from their neighbors, after a brief
+   2026-08-11 misreading had them swapped (`USER-E` reported as code 4, an
+   apparent "genuine surprise" that turned out to just be a mistaken
+   transcription of the real unit's display -- see §6.2's `INT-E`/`USER-E`
+   entry for the full correction); `USER-FF`=29, the last gap, confirmed
+   the same day and exactly matching the `+11`-offset pattern this time.
+   This entire table (§6.2's `kConfirmedTimbreBanks`) is now complete --
+   no remaining Combi Timbre bank codes to identify.
 9. **Bit layout RESOLVED (2026-08-08)**, real occurrence still unconfirmed:
    the third SBK1 slot type ("Song", §7) is now correctly readable (Type
    is 2 bits, not the 1 this project originally decoded) -- see §4.3. No

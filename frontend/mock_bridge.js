@@ -164,19 +164,33 @@
   // Mock-only Timbre references -- three "active" slots followed by 13
   // defaults, standing in for the real bridge's per-Combi Timbre array
   // (see docs/content/format/index.md's "Combi Timbre references" section).
+  // bankName is "" for all of these on purpose, matching the real bridge's
+  // contract exactly (kronos::timbreBankName()'s own doc comment in
+  // PcgFile.cpp, EditorBridge.cpp's combiToValue()): rawBankCode 0/1/20 all
+  // have a confirmed PBK1 index, so the real backend leaves bankName blank
+  // and expects the frontend to derive the name from
+  // PROGRAM_BANK_NAMES[programBank] itself (library.js's formatTimbreRef())
+  // -- hardcoding "INT-B"/"USER-D" here would just be a second copy of that
+  // same fact, exactly the kind of drift-prone duplication removed
+  // elsewhere (2026-08-11).
   function makeFakeTimbres() {
     const timbres = [
       // number:0/rawBankCode:1 deliberately matches makeFakePrograms()'s own
       // bank1/number0 ("Berlin Grand SW2 U.C.") -- exercises the new name/
       // engine-type lookup in mock mode too, not just the real bridge.
-      { number: 0, rawBankCode: 1, bankName: "INT-B", status: "Internal", isDefault: false },
-      { number: 15, rawBankCode: 20, bankName: "USER-D", status: "Internal", isDefault: false },
+      { number: 0, rawBankCode: 1, bankName: "", status: "Internal", isDefault: false },
+      { number: 15, rawBankCode: 20, bankName: "", status: "Internal", isDefault: false },
       // A real reference that's currently switched off -- exercises the
       // "referenced but inactive" display case in mock mode too.
-      { number: 90, rawBankCode: 0, bankName: "INT-A", status: "Off", isDefault: false },
+      { number: 90, rawBankCode: 0, bankName: "", status: "Off", isDefault: false },
+      // GM (raw code 6, confirmed 2026-08-12) -- permanently indexless, so
+      // bankName IS populated here (unlike the entries above) -- exercises
+      // the "confirmed by name, no jump-to-Program button, no Program
+      // name" display case in mock mode too.
+      { number: 91, rawBankCode: 6, bankName: "GM", status: "Internal", isDefault: false },
     ];
     for (let i = timbres.length; i < 16; i++) {
-      timbres.push({ number: 0, rawBankCode: 0, bankName: "INT-A", status: "Off", isDefault: true });
+      timbres.push({ number: 0, rawBankCode: 0, bankName: "", status: "Off", isDefault: true });
     }
     return timbres;
   }

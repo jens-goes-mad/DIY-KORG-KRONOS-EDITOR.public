@@ -161,9 +161,16 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
     v.setMember("number", combi.number);
     v.setMember("name", combi.name);
     // Each Timbre's raw Program reference (see docs/content/format/index.md's "Combi
-    // Timbre references" section) -- bankName is "" when this particular
-    // raw code hasn't been identified yet, so the UI can fall back to
-    // showing the numeric code honestly instead of a guessed name.
+    // Timbre references" section) -- bankName is "" when this raw code
+    // hasn't been identified yet, non-empty for a raw code confirmed by
+    // name but with NO PBK1 file-order index (kronos::timbreBankName()'s
+    // own doc comment -- e.g. GM, permanently indexless), and "" again for
+    // a code that DOES have a confirmed index: for that last case,
+    // library.js's formatTimbreRef() derives the name from
+    // rawBankCode/PROGRAM_BANK_NAMES itself rather than reading it from
+    // here, so there's exactly one place that name is spelled out. "" from
+    // the first case falls back to showing the numeric code honestly
+    // instead of a guessed name.
     auto timbres = choc::value::createEmptyArray();
     for (const auto& t : combi.timbres) {
         auto tv = choc::value::createObject("TimbreRef");

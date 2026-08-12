@@ -2504,5 +2504,197 @@ App/UI:
       index.md §5.2/§6.2/§8. **Still open**: `USER-B/C/E` and
       `USER-BB/EE/FF` still lack independent file-order-index confirmation
       even though B/C are already name-confirmed.
+  21. **RESOLVED (2026-08-11)**: entry 20 above turned out to be
+      incomplete -- it fixed `PcgFile.cpp`'s `kConfirmedTimbreBanks` (used
+      for Combi-usage counting and a Timbre's own bank-code lookup) but
+      missed a second, independent hardcoded Program-bank-name list,
+      `frontend/pane.js`'s `PROGRAM_BANK_NAMES` -- the array the Programs
+      panel/bank filters/Internals pane actually use to label a Program's
+      *own* bank. It still had the old wrong order (`"I-G"`/`"G(d)"` at
+      index 6/7, everything from 6 onward off by 2), so the UI kept
+      showing wrong bank labels even after entry 20 shipped. The project
+      owner caught this by checking position-0 names for literally all 20
+      Program banks against real hardware at once, which also fully
+      confirms §5.2's bank order/labels end to end (not just the specific
+      indices individually verified before -- see docs/content/format/
+      index.md §5.2). Root-caused as an actual duplicate-mapping bug (two
+      hardcoded name lists, C++ and JS, that could disagree with no test
+      or build error catching it) and fixed structurally, not just
+      re-synced: `kConfirmedTimbreBanks` no longer has a `name` field at
+      all (removed, not just corrected) -- `frontend/library.js`'s
+      `formatTimbreRef()` now derives a Timbre's bank label from
+      `PROGRAM_BANK_NAMES[programBankIndex]` for any code with a confirmed
+      index, and `PcgFile.cpp`'s `timbreBankName()` only ever resolves a
+      name for the handful of codes that have NO confirmed index
+      (`kConfirmedTimbreBankNamesOnly`) -- there is now exactly one place
+      ("index 6 = USER-A") each fact is spelled out, never two. Also
+      updated `frontend/mock_bridge.js`'s fake Timbre data (`bankName: ""`
+      for confirmed-index codes) so mock-mode dev/testing exercises the
+      same contract as the real bridge, and `EditorBridge.cpp`'s own doc
+      comment. Fixed in `PcgFile.cpp`, `EditorBridge.cpp`, `library.js`,
+      `pane.js`, `mock_bridge.js`, `tests/pcg_file_test.cpp`, and
+      docs/content/format/index.md §5.2/§6.2.
+  22. **RESOLVED (2026-08-11)**: reported immediately after entry 21 shipped
+      -- Combi U-A 002 "Sex on Fire" Timbre 2 (raw bank 5/`INT-F`, raw
+      number 71) showed the bank label but no Program name at all, even
+      though the Programs panel itself showed "Vocal Dancing" for that
+      exact bank/number. Cause: `INT-F` was one of five raw codes
+      (`INT-F`/`USER-B`/`USER-C`/`USER-CC`/`USER-DD`) confirmed by name
+      against real hardware but with no matching PBK1 file-order index, so
+      `isConfirmedTimbreProgramBank()`/`programBankForConfirmedTimbreCode()`
+      returned false/null for them and `library.js`'s `formatTimbreRef()`
+      skipped its Program-name lookup entirely (that lookup is gated on a
+      confirmed index, entry 21's fix). Once §5.2's full 20-bank order got
+      confirmed (entry 21), all five turned out to already have a confirmed
+      index too (5/7/8/15/16) -- promoted into `kConfirmedTimbreBanks`
+      directly rather than just patching `INT-F` alone, since `USER-B/C/
+      CC/DD` had the identical latent bug, just not yet reported. Verified
+      against real bytes: index 5/record 71 in `setlist_test_2.PCG` reads
+      "Vokal Dancing", matching "Vocal Dancing" on the real unit. The
+      now-permanently-empty `kConfirmedTimbreBankNamesOnly` table was
+      removed entirely (not left around empty) -- `timbreBankName()` is now
+      a stub returning `""` always, kept only in case a future raw code is
+      confirmed by name without landing on one of the 20 known bank
+      positions. Fixed in `PcgFile.cpp`, `tests/pcg_file_test.cpp`,
+      `library.js`, and docs/content/format/index.md §6.2.
+  23. **BUILT (2026-08-12), not yet committed**: two Combi-panel UI
+      features, both requested directly. (a) A Set List filter dropdown
+      next to the Combis panel's None/All/Invert buttons
+      (`library.js`'s `selectedSetlistIndex`/`buildSetlistFilterSelect()`)
+      -- filters the Combi table to only Combis referenced by a chosen Set
+      List, reusing `c.setlistUsages` (already loaded per Combi for the
+      existing "Set Lists"/"#STL" columns, `PcgFile::setlistUsageCounts()`)
+      with no new backend work -- purely a client-side re-slice of
+      already-loaded data, not performance-sensitive even at max file size
+      (16,384 Set List slots / 1,792 Combis). (b) A Combi Timbre row's bank
+      reference (e.g. "I-A 017") is now a `.bank-jump-button`, same look as
+      the Setlist table's own Bank button, only when the raw code has a
+      confirmed Program-bank index -- clicking it reuses `pane.js`'s
+      existing `jumpToInstrument`/`onJumpToInstrument` mechanism (already
+      built for the Setlist table's Bank button) to switch that SAME pane
+      to Programs and scroll to the entry -- no new navigation plumbing
+      needed, just threading the existing per-pane closure into
+      `createLibraryPanels()` too. Fixed a real edge case the Set List
+      filter (a) introduced for existing Setlist-to-Combi jumps:
+      `jumpToEntry()` now resets `selectedSetlistIndex` on any Combi jump,
+      so an active filter can't hide the entry someone just navigated to.
+      Verified via `node --check` and a headless page-load smoke test only
+      -- no browser-automation tool (Puppeteer/jsdom/CDP client) available
+      in this environment, so full interactive click-through hasn't been
+      done; flagged explicitly rather than claimed. Files: `library.js`,
+      `pane.js`, `style.css`.
+  24. **RESOLVED (2026-08-12)**: three more Combi Timbre raw bank codes
+      confirmed directly against real Combis in `setlist_test_2.PCG` --
+      `USER-BB` (25) and `USER-EE` (28) fit the expected pattern exactly.
+      `USER-E` did NOT: every other single-letter USER bank (A/B/C/D/F/G)
+      sits contiguously at 17-23, so 21 was the obvious guess for E and was
+      deliberately left unconfirmed rather than assumed -- real hardware
+      says it's actually raw code **4**, confirmed via Combi I-A 000
+      "K-Lab: Katja's House" Timbre 7 (program=61/bank=4, exact byte match).
+      Why E alone breaks the pattern isn't understood -- recorded as an
+      open oddity in docs/content/format/index.md §6.2, not explained away;
+      explicitly flagged there that `USER-FF` (the one remaining
+      unconfirmed double-letter code) shouldn't be assumed at 29 on pattern
+      alone given this precedent. `kConfirmedTimbreBanks` now has 18
+      entries. Fixed in `PcgFile.cpp`, `tests/pcg_file_test.cpp`,
+      `library.js`, and docs/content/format/index.md §6.2/§8.
+  25. **RESOLVED (2026-08-12)**: a genuinely new category of Combi Timbre
+      raw bank code confirmed -- `GM` (raw code 6), via Combi U-A 030
+      "Bad Name" Timbre 2 (program=91/bank=6 in `setlist_test_2.PCG`,
+      exact match for the project owner's real-hardware report). Unlike
+      every code in entries 20/21/22/24 above, `GM` is not "unconfirmed
+      pending an index" -- it structurally can NEVER get one: `GM` is
+      fixed MIDI-spec content, not one of the 20 stored PBK1/MBK1 Program
+      banks (§5.2/§5.4), confirming the exact scenario entry 21's removed
+      `kConfirmedTimbreBankNamesOnly` table had flagged as "unlikely but
+      not structurally impossible." Reintroduced that table (now correctly
+      documented as permanently-indexless, not temporary) with just this
+      one entry -- `timbreBankName(6)` returns `"GM"`,
+      `isConfirmedTimbreProgramBank()`/`kConfirmedTimbreBanks` correctly
+      never gain an entry for it. No Program name is shown for a GM
+      reference (nothing in this file's own data to look one up from --
+      a real General-MIDI-instrument-name table would be a separate
+      feature decision) and no jump-to-Program button (only renders for a
+      confirmed index). Fixed in `PcgFile.cpp`, `EditorBridge.cpp`,
+      `tests/pcg_file_test.cpp`, `library.js`, `mock_bridge.js` (added a
+      GM fake-Timbre example), and docs/content/format/index.md §5.4/§6.2.
+  26. **RESOLVED (2026-08-12)**: four more permanently-indexless Combi
+      Timbre raw bank codes confirmed the same way as `GM` (entry 25) --
+      `G(1)`/`G(2)`/`G(3)`/`G(4)` at raw codes 7/8/9/10, via Combi I-C 022
+      "Rainbow Bridge" Timbres 1-4 (program=122/bank=7..10 in
+      `setlist_test_2.PCG`, exact match for the project owner's
+      real-hardware report -- also caught a typo in how the Combi name was
+      reported, "Brodge" vs the real "Bridge"). These sit right after `GM`
+      (6) as a contiguous block, consistent with §5.2's own note that the
+      real Program bank browser shows "GM" then "g(d)" right after
+      `INT-F` -- likely that same "g(d)" family, though this project
+      doesn't know Korg's own official name/purpose for `G(1)`..`G(4)`
+      and isn't guessing. `kConfirmedTimbreBankNamesOnly` now has 5
+      entries. The project owner also reported specific Program names at
+      each ("Rain"/"Thunder"/"Wind"/"Stream", suggestive of a GM2 SFX/
+      nature-sound kit) -- not stored anywhere in this codebase, same
+      "separate feature decision" as GM's own instrument names. No JS
+      changes needed -- `library.js`'s name-only fallback path already
+      handled this generically. Fixed in `PcgFile.cpp`,
+      `tests/pcg_file_test.cpp`, and docs/content/format/index.md §6.2.
+  27. **Diagnostic pass (2026-08-13)**: scanned every Combi Timbre in all 5
+      real sample `.PCG` files for raw bank codes not yet in
+      `kConfirmedTimbreBanks`/`kConfirmedTimbreBankNamesOnly` (throwaway
+      probe, not committed). Only 5 distinct codes turned up: 21 (1,228
+      occurrences -- overwhelmingly the most common, across ordinary
+      orchestral/guitar/brass Combis, suggestive of a heavily-used normal
+      bank like the still-unconfirmed `INT-E`) and 11/12/13/15 (2-6
+      occurrences each). Reported back to the project owner with examples
+      to check on hardware.
+  28. **RESOLVED (partial) 2026-08-13**: `g(5)`/`g(6)`/`g(7)`/`g(9)` (codes
+      11/12/13/15) confirmed the same permanently-indexless way as `GM`/
+      `G(1)`..`G(4)` (entries 25/26) -- extend that same contiguous block
+      with no gap (`g(8)`, code 14, not checked, not assumed).
+      `kConfirmedTimbreBankNamesOnly` now has 9 entries. **FLAGGED, NOT
+      resolved**: the project owner also reported `code 21 = USER-E`, but
+      `USER-E` was already independently confirmed as raw code **4** in
+      entry 24 (verified against real bytes at the time). Two codes can't
+      both be `USER-E` under a consistent scheme -- neither code 4 nor
+      code 21 was touched pending clarification; code 21's own real bytes
+      (Combi I-A 001 "Stradivarius Goes POP" Timbre 7, program=73) and its
+      unusually high occurrence count (1,228 -- see entry 27) are recorded
+      in docs/content/format/index.md §6.2 as a clue for whoever resolves
+      this next. Fixed in `PcgFile.cpp`, `tests/pcg_file_test.cpp`, and
+      docs/content/format/index.md §6.2.
+  29. **RESOLVED (2026-08-14), RETRACTING entry 24's `USER-E`=code-4
+      finding**: the project owner re-checked the exact same real Combi
+      (I-A 000 "K-Lab: Katja's House" Timbre 7, raw bytes byte-identical to
+      before -- program=61/bank=4) and confirmed real hardware actually
+      shows `INT-E`, not `USER-E`, for that reference. Entry 24's "genuine
+      surprise" framing was itself the mistake -- a first-transcription
+      error, caught only by re-verifying the specific hardware reading
+      rather than trusting it. Corrected: `INT-E` is raw code 4 (index ==
+      code, same coincidence as `INT-A..D`, no anomaly after all); `USER-E`
+      is raw code 21 (entry 28's own flagged conflict), confirmed via a
+      different real Combi (I-A 001 "Stradivarius Goes POP" Timbre 7,
+      program=73) -- also exactly the "obvious" gap in `USER-A..G`'s 17-23
+      block, resolving entry 28's flag too. Also fixed a real formatting
+      bug in docs/content/format/index.md §6.2 from an earlier edit (a
+      duplicated "Raw code 30" heading had orphaned the "One name, one
+      place" section's own heading, leaving its body floating under the
+      wrong title). `kConfirmedTimbreBanks` now has 19 entries, covering
+      every one of the 20 Program bank indices except 18 (`USER-FF`) --
+      the only remaining gap. Fixed in `PcgFile.cpp`,
+      `tests/pcg_file_test.cpp`, `library.js`, and docs/content/format/
+      index.md §5.2/§6.2/§8. Left as a methodology note rather than
+      scrubbed from history, per this project's own standing practice
+      (see §6.3's "A resolved anomaly" note) -- catching your own mistake
+      is exactly what the verify-everything discipline is for.
+  30. **RESOLVED (2026-08-14)**: `USER-FF` (raw code 29) confirmed via a
+      real Combi (U-A 090 "Days like this" Timbre 1/2, program=87/bank=29,
+      program=85/bank=29 in `setlist_test_2.PCG`), exactly matching the
+      `+11`-offset pattern the rest of the double-letter series follows --
+      unlike `INT-E`/`USER-E` (entry 29), this pattern-completion turned
+      out correct, checked directly rather than assumed either way. This
+      completes `kConfirmedTimbreBanks`: all 20 Program bank indices now
+      have a confirmed raw Combi Timbre code, closing out the whole
+      "unidentified codes" thread that started with entry 27's diagnostic
+      scan. Fixed in `PcgFile.cpp`, `tests/pcg_file_test.cpp`,
+      `library.js`, and docs/content/format/index.md §6.2/§8.
 
 === END STATE BLOCK ===

@@ -566,32 +566,77 @@ void testPcgFileEndToEnd() {
     // isConfirmedTimbreProgramBank()/timbreBankName()/combiUsagesForProgram()/
     // combiUsageCounts() -- the raw-code <-> file-order-index translation
     // (kConfirmedTimbreBanks in PcgFile.cpp) that lets Combi-usage counting
-    // cover USER-A/D/F/G/AA/GG (PBK1 file-order indices 6/9/11/12/13/19) in
-    // addition to INT-A..D, where the two number spaces happen to coincide.
+    // cover all 20 Program bank indices now (INT-A..F, USER-A..G/AA..GG,
+    // fully confirmed as of 2026-08-14), not just INT-A..D where the two
+    // number spaces happen to coincide.
     {
         CHECK(kronos::isConfirmedTimbreProgramBank(1));  // INT-B -- coincides with its own raw code
         CHECK(kronos::isConfirmedTimbreProgramBank(9));  // USER-D -- file-order index 9, raw code 20
-        CHECK(!kronos::isConfirmedTimbreProgramBank(4));  // INT-E -- not independently confirmed
-        CHECK_EQ(kronos::timbreBankName(20), std::string("USER-D"), "timbreBankName() for the confirmed USER-D raw code");
+        CHECK(!kronos::isConfirmedTimbreProgramBank(99));  // out-of-range index -- all 20 real ones are
+                                                            // confirmed now (2026-08-14), see below
         CHECK(kronos::isConfirmedTimbreProgramBank(12));  // USER-G -- file-order index 12, raw code 23
         CHECK(kronos::isConfirmedTimbreProgramBank(19));  // USER-GG -- file-order index 19, raw code 30
-        CHECK_EQ(kronos::timbreBankName(23), std::string("USER-G"), "timbreBankName() for the confirmed USER-G raw code");
-        CHECK_EQ(kronos::timbreBankName(30), std::string("USER-GG"), "timbreBankName() for the confirmed USER-GG raw code");
-
-        // kConfirmedTimbreBankNamesOnly -- raw codes confirmed by name against
-        // real hardware (2026-08-10) but without a matching PBK1 file-order
-        // index, so they only affect timbreBankName(), not the index<->code
-        // translation functions above.
-        CHECK_EQ(kronos::timbreBankName(5), std::string("INT-F"), "timbreBankName() for the name-only-confirmed INT-F raw code");
-        CHECK_EQ(kronos::timbreBankName(18), std::string("USER-B"), "timbreBankName() for the name-only-confirmed USER-B raw code");
-        CHECK_EQ(kronos::timbreBankName(19), std::string("USER-C"), "timbreBankName() for the name-only-confirmed USER-C raw code");
-        CHECK_EQ(kronos::timbreBankName(26), std::string("USER-CC"), "timbreBankName() for the name-only-confirmed USER-CC raw code");
-        CHECK_EQ(kronos::timbreBankName(27), std::string("USER-DD"), "timbreBankName() for the name-only-confirmed USER-DD raw code");
-        // Confirming a raw code's NAME doesn't also confirm a PBK1 index for
-        // it -- isConfirmedTimbreProgramBank() takes a PBK1 index, a
-        // different number space, and 5/26 were never added there.
-        CHECK(!kronos::isConfirmedTimbreProgramBank(5));
-        CHECK(!kronos::isConfirmedTimbreProgramBank(26));
+        // Promoted 2026-08-11 -- were name-only confirmed (kConfirmedTimbreBankNamesOnly,
+        // now removed), gained a confirmed index once §5.2's full 20-bank
+        // order was confirmed against real hardware.
+        CHECK(kronos::isConfirmedTimbreProgramBank(5));   // INT-F -- file-order index 5, raw code 5
+        CHECK(kronos::isConfirmedTimbreProgramBank(7));   // USER-B -- file-order index 7, raw code 18
+        CHECK(kronos::isConfirmedTimbreProgramBank(8));   // USER-C -- file-order index 8, raw code 19
+        CHECK(kronos::isConfirmedTimbreProgramBank(15));  // USER-CC -- file-order index 15, raw code 26
+        CHECK(kronos::isConfirmedTimbreProgramBank(16));  // USER-DD -- file-order index 16, raw code 27
+        // CORRECTED 2026-08-14, retracting a 2026-08-11 misreading: this
+        // project briefly had raw code 4 = USER-E (index 10), reported as
+        // "a genuine surprise" -- the project owner re-checked the exact
+        // same real Combi and confirmed real hardware actually shows
+        // INT-E for that reference, not USER-E. INT-E is raw code 4
+        // (coincides with its own index, same as INT-A..D/F -- no anomaly
+        // after all); USER-E is raw code 21 (confirmed separately via a
+        // different real Combi), also exactly the "obvious" gap in
+        // USER-A..G's 17-23 block. See kConfirmedTimbreBanks's own doc
+        // comment in PcgFile.cpp for the full story.
+        CHECK(kronos::isConfirmedTimbreProgramBank(4));   // INT-E -- file-order index 4, raw code 4
+        CHECK(kronos::isConfirmedTimbreProgramBank(10));  // USER-E -- file-order index 10, raw code 21
+        CHECK(kronos::isConfirmedTimbreProgramBank(14));  // USER-BB -- file-order index 14, raw code 25
+        CHECK(kronos::isConfirmedTimbreProgramBank(17));  // USER-EE -- file-order index 17, raw code 28
+        // USER-FF -- confirmed 2026-08-14, the last of the 20 Program bank
+        // indices to get a confirmed raw code. Every one is covered now.
+        CHECK(kronos::isConfirmedTimbreProgramBank(18));  // USER-FF -- file-order index 18, raw code 29
+        // timbreBankName() returns "" for anything with a confirmed index
+        // (kConfirmedTimbreBanks has no `name` field, 2026-08-11, see its
+        // own doc comment): the frontend derives the name from
+        // PROGRAM_BANK_NAMES[programBankIndex] instead, so there's exactly
+        // one place ("index 6 = USER-A") that fact is spelled out, not two
+        // that could drift apart again.
+        CHECK_EQ(kronos::timbreBankName(20), std::string(""), "timbreBankName() leaves confirmed-index codes for the frontend to resolve");
+        CHECK_EQ(kronos::timbreBankName(5), std::string(""), "timbreBankName() leaves confirmed-index codes for the frontend to resolve");
+        CHECK_EQ(kronos::timbreBankName(999), std::string(""), "timbreBankName() returns \"\" for a genuinely unconfirmed code");
+        // GM (raw code 6) is the real counterexample kConfirmedTimbreBanks'
+        // dedup comment anticipated -- permanently indexless (not one of
+        // the 20 stored PBK1/MBK1 banks), confirmed 2026-08-12, see
+        // kConfirmedTimbreBankNamesOnly's own doc comment.
+        CHECK_EQ(kronos::timbreBankName(6), std::string("GM"), "timbreBankName() for the permanently indexless GM raw code");
+        // NOT `isConfirmedTimbreProgramBank(6)` here -- that takes a PBK1
+        // file-order INDEX, a different number space (index 6 = USER-A,
+        // genuinely confirmed), not GM's raw CODE 6. kConfirmedTimbreBanks
+        // has no entry pairing index-anything with raw code 6, by design --
+        // there's no direct C++-level assertion for "this raw code has no
+        // confirmed index" without exposing an internal helper, so this
+        // relies on kConfirmedTimbreBanks' own array contents (reviewed by
+        // hand, see its doc comment) plus timbreBankName()'s check above.
+        // G(1)..G(4) (codes 7-10) -- confirmed 2026-08-12 the same
+        // permanently-indexless way as GM, sitting right after it.
+        CHECK_EQ(kronos::timbreBankName(7), std::string("G(1)"), "timbreBankName() for the permanently indexless G(1) raw code");
+        CHECK_EQ(kronos::timbreBankName(8), std::string("G(2)"), "timbreBankName() for the permanently indexless G(2) raw code");
+        CHECK_EQ(kronos::timbreBankName(9), std::string("G(3)"), "timbreBankName() for the permanently indexless G(3) raw code");
+        CHECK_EQ(kronos::timbreBankName(10), std::string("G(4)"), "timbreBankName() for the permanently indexless G(4) raw code");
+        // g(5)/g(6)/g(7)/g(9) (codes 11/12/13/15) -- confirmed 2026-08-13,
+        // same contiguous block right past G(4). g(8) (code 14) is
+        // deliberately NOT checked here -- not confirmed yet.
+        CHECK_EQ(kronos::timbreBankName(11), std::string("g(5)"), "timbreBankName() for the permanently indexless g(5) raw code");
+        CHECK_EQ(kronos::timbreBankName(12), std::string("g(6)"), "timbreBankName() for the permanently indexless g(6) raw code");
+        CHECK_EQ(kronos::timbreBankName(13), std::string("g(7)"), "timbreBankName() for the permanently indexless g(7) raw code");
+        CHECK_EQ(kronos::timbreBankName(15), std::string("g(9)"), "timbreBankName() for the permanently indexless g(9) raw code");
+        CHECK_EQ(kronos::timbreBankName(14), std::string(""), "timbreBankName() returns \"\" for g(8) -- not yet confirmed");
 
         auto usersD = pcg.combiUsagesForProgram(9, 7);  // USER-D file-order index, Timbre 1's number
         CHECK_EQ(usersD.size(), static_cast<size_t>(1), "combiUsagesForProgram() finds Timbre 1 via the translated raw code");
@@ -599,8 +644,8 @@ void testPcgFileEndToEnd() {
             CHECK_EQ(usersD[0].bank, 0, "combiUsagesForProgram() result's Combi bank");
             CHECK_EQ(usersD[0].number, 0, "combiUsagesForProgram() result's Combi number");
         }
-        CHECK_EQ(pcg.combiUsagesForProgram(4, 7).size(), static_cast<size_t>(0),
-                 "combiUsagesForProgram() returns nothing for an unconfirmed bank rather than guessing");
+        CHECK_EQ(pcg.combiUsagesForProgram(99, 7).size(), static_cast<size_t>(0),
+                 "combiUsagesForProgram() returns nothing for an out-of-range bank rather than guessing");
 
         auto counts = pcg.combiUsageCounts();
         CHECK(counts.size() > 9 && counts[9].size() > 7 && counts[9][7] == 1);

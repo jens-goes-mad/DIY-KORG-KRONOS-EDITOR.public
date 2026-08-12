@@ -8,13 +8,18 @@
 // Korg's own bank naming, from a song slot's raw `bank` byte. Combi (14
 // banks, 0-13) is mechanically confirmed -- cross-referencing CBK1 by this
 // exact order reproduces known real Combi names exactly (see README.md).
-// Program (bank 0-19) is NOT independently confirmed the same way -- the
-// project owner gave us this label order, but we only know it maps onto
-// the file's 20 real PRG1 banks positionally, not that position-for-
-// position it's exactly this list (GM itself, per the project owner's own
-// list, doesn't get a stored bank at all -- real slot data references it
-// via bank values >=20, which have no corresponding stored bank and are
-// deliberately left showing a raw index rather than a guessed label).
+// Program (bank 0-19) is now directly confirmed the same rigorous way
+// (2026-08-11): the project owner checked every single position-0 Program
+// name in the app against the real Kronos's own on-screen bank browser,
+// for all 20 banks -- every one matched this order exactly. There is no
+// stored "I-G" or "G(d)" bank at all (real hardware shows those as
+// GM/g(d) content, not stored per-file, see docs/content/format/index.md
+// §5.2/§5.4) -- USER-A starts right after INT-F, and USER-A..G is 7
+// single-letter banks before the double-letter USER-AA..GG series starts.
+// This array used to have "I-G"/"G(d)" as real entries at index 6/7,
+// shifting everything below by 2 -- fixed the same day as
+// PcgFile.cpp's kConfirmedTimbreBanks (which had the identical bug for the
+// separate Combi-Timbre-raw-code lookup, see its own doc comment).
 // Shortened form ("I-A"/"U-A") of Korg's own "INT-A"/"USER-A" naming --
 // used everywhere in the UI to save column width (see STATE.md); the full
 // "INT-"/"USER-" form is what's actually verified against ground truth
@@ -32,9 +37,9 @@ const COMBI_BANK_NAMES = [
 ];
 
 const PROGRAM_BANK_NAMES = [
-  "I-A", "I-B", "I-C", "I-D", "I-E", "I-F", "I-G", "G(d)",
-  "U-A", "U-B", "U-C", "U-D", "U-E", "U-F",
-  "U-AA", "U-BB", "U-CC", "U-DD", "U-EE", "U-FF",
+  "I-A", "I-B", "I-C", "I-D", "I-E", "I-F",
+  "U-A", "U-B", "U-C", "U-D", "U-E", "U-F", "U-G",
+  "U-AA", "U-BB", "U-CC", "U-DD", "U-EE", "U-FF", "U-GG",
 ];
 
 // Applies the same "INT-"/"USER-" -> "I-"/"U-" shortening to a full bank
@@ -1315,13 +1320,16 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     tab.addEventListener("click", () => switchCategory(tab.dataset.category));
   });
 
-  // Called when a Setlist row's Bank button is clicked -- switches this
-  // pane to its Programs/Combis category and expands+scrolls to that exact
-  // entry, instead of just showing a bank/number label. (Note for later,
-  // per STATE.md's EXPLORATION section: once bank-filter buttons exist on
-  // the Programs/Combis panels, this needs to also make sure the target
-  // bank's filter is "pressed" first, or the jump could land on a filtered-
-  // out row.)
+  // Called when a Setlist row's Bank button, OR a Combi Timbre row's own
+  // bank-jump button (library.js's buildTimbreRow(), only shown for a
+  // confirmed Timbre bank code -- see formatTimbreRef()), is clicked --
+  // switches this pane to its Programs/Combis category and expands+scrolls
+  // to that exact entry, instead of just showing a bank/number label.
+  // Always this SAME pane, never the opposite one, by construction --
+  // `jumpToInstrument` is a closure over this one createPane() call's own
+  // `switchCategory`/`libraryPanels`, and is handed to both
+  // createSetlistPanel() and createLibraryPanels() as their own
+  // `onJumpToInstrument` prop.
   function jumpToInstrument({ isProgram, bank, number }) {
     switchCategory(isProgram ? "programs" : "combis");
     libraryPanels.jumpToEntry(isProgram, bank, number);
@@ -1343,6 +1351,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     getDatasetId: getCurrentDatasetId,
     getProgramBankType,
     onDropProgram,
+    onJumpToInstrument: jumpToInstrument,
   });
   const internalsPanel = createInternalsPanel(internalsContainer, {
     getDatasetId: getCurrentDatasetId,

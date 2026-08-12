@@ -215,9 +215,27 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
 // completely separate number a Combi Timbre slot's own byte actually
 // stores (TimbreRef::rawBankCode). The two coincide for INT-A..D (both use
 // 0..3) but diverge for every other confirmed bank -- one shared table so
-// timbreBankName()/isConfirmedTimbreProgramBank() and the two Combi-usage
-// functions below can't drift out of sync with each other as more codes
-// get confirmed later.
+// isConfirmedTimbreProgramBank() and the two Combi-usage functions below
+// can't drift out of sync with each other as more codes get confirmed
+// later.
+//
+// NO `name` FIELD, DELIBERATELY (2026-08-11): a bank's display name is a
+// pure function of its `programBankIndex` -- `frontend/pane.js`'s
+// PROGRAM_BANK_NAMES array is this project's one and only source of truth
+// for that (see its own doc comment, and PcgFile.h's note above
+// datasetInternals()). This table used to also carry a `name` string
+// per entry, redundant with PROGRAM_BANK_NAMES for every index that
+// appears in both -- which is exactly how the two drifted out of sync
+// this same day: this table's indices got corrected (USER-A/D/F/AA
+// 8/11/13/14 -> 6/9/11/13, see git history) without anyone noticing
+// PROGRAM_BANK_NAMES still had the old wrong order, since nothing forced
+// the two to agree. Removed the field instead of just re-syncing the
+// strings, so there is now exactly one place that spells out "index 6 =
+// USER-A" -- timbreBankName() below only resolves names that have NO
+// confirmed index (kConfirmedTimbreBankNamesOnly); for everything in this
+// table, `frontend/library.js`'s formatTimbreRef() looks up
+// PROGRAM_BANK_NAMES[programBankIndex] instead of reading a name sent over
+// the bridge.
 //
 // CORRECTED 2026-08-10: USER-A/D/F/AA's programBankIndex values below were
 // originally 8/11/13/14 -- an extrapolation from the INT-A..D anchors that
@@ -232,67 +250,148 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
 // (raw bank 17, raw number 47) should resolve to (the app had been showing
 // "Xfade StagePianoATK Kn5", index 8 record 47, before this fix). The real
 // scheme is 6 INT-A..F (index 0..5) + 7 USER-A..G (index 6..12, raw code
-// 17..23) + 7 USER-AA..GG (index 13..19, raw code 24..30) = 20 banks total
-// -- USER-A..G is 7 letters, not 6, which also resolves
-// kConfirmedTimbreBankNamesOnly's old USER-G contradiction (now removed
-// from that table -- see below): USER-G is a real 7th single-letter USER
-// bank. Confirmed by name (real hardware, "JB: Africa Drum" at position 0)
-// for file-order index 12, and USER-GG (raw code 30 -- previously a live
-// hypothesis, now confirmed) at file-order index 19 ("JMJ Theremin" at
-// position 15, matching both a direct Program-bank browse on real hardware
-// and the raw Combi Timbre byte data in setlist_test_2.PCG). USER-B/C/E's
-// indices (7/8/10) and the rest of USER-AA..GG=13..19 (other than GG)
-// follow the same now-understood +11 offset pattern but are NOT added
-// below until each is independently confirmed by name against real
-// hardware, same standard as the rest of this table.
+// 17..23) + 7 USER-AA..GG (index 13..19, raw code 24..30) = 20 banks total.
+//
+// ALL 20 PROGRAM BANK INDICES CONFIRMED (2026-08-11): the project owner
+// checked position-0 of every single one of the 20 Program banks against
+// real hardware at once (see PROGRAM_BANK_NAMES's own doc comment in
+// frontend/pane.js and docs/content/format/index.md §5.2), which is what
+// caught PROGRAM_BANK_NAMES's OWN copy of this same bug (it still had the
+// old 8/11/13/14-style indices, separately from this table -- see
+// kConfirmedTimbreBanks's "NO name FIELD" note below for the dedup fix
+// that followed). One side effect: every remaining entry that used to sit
+// in the now-removed kConfirmedTimbreBankNamesOnly table (INT-F/USER-B/C/
+// CC/DD -- confirmed by raw code via a real Combi Timbre check, but
+// without a confirmed index) now HAS a confirmed index too, since §5.2's
+// full order is known -- promoted here. INT-F=5 was double-checked
+// directly: Combi U-A 002 Timbre 2 (raw bank 5, raw number 71) had been
+// showing no Program name at all (the exact same "confirmed name, no
+// index" bug this promotion fixes) -- index 5/record 71 in
+// setlist_test_2.PCG reads "Vokal Dancing", matching what the project
+// owner found on the real unit ("Vocal Dancing").
+//
+// CORRECTED 2026-08-14, RETRACTING a 2026-08-11 misreading: this table
+// briefly had `{10, 4}` (claiming raw code 4 = USER-E, "a genuine
+// surprise" breaking every other single-letter USER bank's contiguous
+// 17-23 block). That was wrong -- the project owner re-checked the exact
+// same real Combi (I-A 000 "K-Lab: Katja's House" Timbre 7, raw bytes
+// program=61/bank=4, byte-identical to before) and confirmed real hardware
+// actually shows `INT-E`, not `USER-E`, for that reference. So there was
+// no anomaly at all: `INT-A..F` are simply raw codes 0-5 in order (index
+// == code for all six, the same coincidence as `INT-A..D`), exactly what
+// the "obvious" extrapolation always said. `USER-E` (raw code 21) is
+// confirmed separately, via a different real Combi (I-A 001 "Stradivarius
+// Goes POP" Timbre 7, program=73/bank=21) -- and 21 turns out to be
+// exactly the "obvious" gap in `USER-A..G`'s 17-23 block after all
+// (A=17,B=18,C=19,D=20,E=21,F=22,G=23, fully contiguous, no anomaly there
+// either). Left as a methodology note, not scrubbed from history: the
+// original "genuine surprise" framing was itself the actual mistake here,
+// caught only because the project owner re-verified a specific real
+// hardware reading rather than trusting the first transcription -- exactly
+// the kind of double-check this project's whole method depends on.
+//
+// USER-BB (raw code 25) and USER-EE (raw code 28) fit the expected `+11`-
+// offset double-letter pattern exactly and were confirmed independently,
+// via the same "K-Lab: Katja's House" Combi's Timbre 9 (program=29/bank=25)
+// and Combi U-A 014 "KARMA Org 1'2'3  Piano 4" Timbre 7 (program=1/bank=28).
+//
+// ALL 20 PROGRAM BANK INDICES NOW HAVE A CONFIRMED RAW CODE (2026-08-14):
+// USER-FF (index 18) was the last gap -- confirmed via Combi U-A 090 "Days
+// like this" Timbre 1/2 (program=87/bank=29, program=85/bank=29 in
+// setlist_test_2.PCG), fitting the expected `+11` offset exactly (this
+// time actually correct, unlike the INT-E/USER-E episode above). This
+// table is now complete: every Program bank has a known raw Combi Timbre
+// code, and vice versa.
 struct ConfirmedTimbreBank {
     int programBankIndex;
     int rawBankCode;
-    const char* name;
 };
 constexpr ConfirmedTimbreBank kConfirmedTimbreBanks[] = {
-    {0, 0, "INT-A"},    {1, 1, "INT-B"},     {2, 2, "INT-C"},    {3, 3, "INT-D"},
-    {6, 17, "USER-A"},  {9, 20, "USER-D"},   {11, 22, "USER-F"}, {12, 23, "USER-G"},
-    {13, 24, "USER-AA"}, {19, 30, "USER-GG"},
+    {0, 0},   {1, 1},   {2, 2},   {3, 3},   {4, 4},
+    {5, 5},   {6, 17},  {7, 18},  {8, 19},  {9, 20},
+    {10, 21}, {11, 22}, {12, 23}, {13, 24}, {14, 25},
+    {15, 26}, {16, 27}, {17, 28}, {18, 29}, {19, 30},
 };
 
-// Confirmed raw Timbre code -> bank name, the SAME way as
-// kConfirmedTimbreBanks above (checked a real Combi's Timbre against real
-// Kronos hardware) -- but the matching PBK1 file-order Program bank index
-// is NOT (yet) independently confirmed, so these can't go into
-// kConfirmedTimbreBanks itself (which needs both numbers together, see its
-// own doc comment -- adding an index here would be exactly the kind of
-// "strongly implied by the pattern" guess that comment already warns
-// against). timbreBankName() checks this table as a fallback;
-// isConfirmedTimbreProgramBank() and the two index<->code translation
-// functions below deliberately do NOT -- they operate on PBK1 index, and
-// there isn't a confirmed one here to give them.
-//
-// USER-G and USER-GG have since gained full index confirmation and moved
-// up to kConfirmedTimbreBanks above (2026-08-10) -- see its own doc
-// comment.
+// Was a `name` field, DELIBERATELY REMOVED (2026-08-11): a bank's display
+// name is a pure function of its `programBankIndex` --
+// `frontend/pane.js`'s PROGRAM_BANK_NAMES array is this project's one and
+// only source of truth for that (see its own doc comment, and PcgFile.h's
+// note above datasetInternals()). This table used to also carry a `name`
+// string per entry, redundant with PROGRAM_BANK_NAMES for every index that
+// appears in both -- which is exactly how the two drifted out of sync the
+// same day: this table's indices got corrected (USER-A/D/F/AA 8/11/13/14
+// -> 6/9/11/13, see git history) without anyone noticing PROGRAM_BANK_NAMES
+// still had the old wrong order, since nothing forced the two to agree.
+// Removed the field instead of just re-syncing the strings, so there is
+// now exactly one place that spells out "index 6 = USER-A" --
+// `frontend/library.js`'s formatTimbreRef() looks up
+// PROGRAM_BANK_NAMES[programBankIndex] for every entry in this table.
 struct ConfirmedTimbreBankName {
     int rawBankCode;
     const char* name;
 };
+// REINTRODUCED 2026-08-12 -- removed on 2026-08-11 as permanently empty
+// (every prior name-only entry had gained a confirmed index once §5.2's
+// full order was known), with a note that a code needing this again was
+// "unlikely but not structurally impossible." It happened: raw code 6 is
+// `GM`, confirmed via a real Combi (U-A 030 "Bad Name" Timbre 2,
+// program=91/bank=6 in setlist_test_2.PCG, matching the project owner's
+// hardware report exactly). Unlike every previous name-only entry, GM is
+// NOT "not yet confirmed" -- it's PERMANENTLY indexless: GM is fixed
+// MIDI-spec content, not one of the 20 stored PBK1/MBK1 Program banks at
+// all (§5.2/§5.4), so there is no PBK1 file-order index for it to ever
+// gain, and it must never move to kConfirmedTimbreBanks above no matter
+// how much more evidence accumulates. No Program NAME is shown for a GM
+// reference either (formatTimbreRef() in library.js only looks up a name
+// via the `programs` array, which has nothing for GM) -- showing one would
+// need a hardcoded General MIDI instrument-name table, a real but separate
+// feature decision, not implied by just labeling the bank.
+//
+// G(1)..G(4) (codes 7-10), confirmed 2026-08-12 the same way -- sit right
+// after GM (6) as a contiguous block, consistent with the project owner's
+// earlier real-hardware note that the Program bank browser shows "GM" then
+// "g(d)" right after INT-F (§5.2) -- these are very likely that "g(d)"
+// family, though this project doesn't know Korg's own official name/
+// meaning for G(1)..G(4) specifically (four separate GM-variant/drum-kit
+// banks? not guessing). Same permanently-indexless treatment as GM: no
+// Program name, no jump button. The project owner also reported the
+// specific Program names found there (program 122/"123": "Rain"/
+// "Thunder"/"Wind"/"Stream" for G(1)/G(2)/G(3)/G(4) respectively) --
+// useful as verification that these are real, distinct, content-bearing
+// banks, but NOT stored anywhere in this codebase (no per-program name
+// table exists for these -- same "separate feature decision" as GM's own
+// instrument names above).
+//
+// g(5)/g(6)/g(7)/g(9) (codes 11/12/13/15), confirmed 2026-08-13 the same
+// way -- extend the same contiguous block right past G(4), no gap (g(8),
+// code 14, hasn't been checked yet -- not assumed just because the rest of
+// the run fits). Lowercase here, matching exactly what the project owner
+// reported this time (G(1)..G(4) were reported uppercase) -- kept
+// verbatim rather than normalized, since neither this project nor the
+// project owner has confirmed which casing (if either consistently) the
+// real Kronos UI actually uses. The reported Program names ("Bubble"/
+// "Seashore"/"Jetplane"/"Polyphonic Synth") continuing right after G(4)'s
+// "Stream" in a nature/SFX theme is suggestive of a General MIDI 2 SFX
+// Kit note sequence (Rain/Thunder/Wind/Stream/Bubbles/... is a real,
+// externally documented GM2 order) -- worth noting, not asserted as
+// confirmed without checking that specific external spec directly.
 constexpr ConfirmedTimbreBankName kConfirmedTimbreBankNamesOnly[] = {
-    {5, "INT-F"},     // confirmed 2026-08-10: real Combi U-A 002, Timbre 2 -> code 5, verified INT-F on real hardware
-    {18, "USER-B"},   // confirmed 2026-08-10 against real hardware
-    {19, "USER-C"},   // confirmed 2026-08-10 against real hardware
-    {26, "USER-CC"},  // confirmed 2026-08-10: real Combi U-A 000, Timbre 0 -> code 26, verified USER-CC on real hardware
-    {27, "USER-DD"},  // confirmed 2026-08-10 against real hardware
+    {6, "GM"},      // confirmed 2026-08-12 against real hardware -- permanently indexless, see doc comment above
+    {7, "G(1)"},    // confirmed 2026-08-12 against real hardware -- permanently indexless, see doc comment above
+    {8, "G(2)"},    // confirmed 2026-08-12 against real hardware -- permanently indexless, see doc comment above
+    {9, "G(3)"},    // confirmed 2026-08-12 against real hardware -- permanently indexless, see doc comment above
+    {10, "G(4)"},   // confirmed 2026-08-12 against real hardware -- permanently indexless, see doc comment above
+    {11, "g(5)"},   // confirmed 2026-08-13 against real hardware -- permanently indexless, see doc comment above
+    {12, "g(6)"},   // confirmed 2026-08-13 against real hardware -- permanently indexless, see doc comment above
+    {13, "g(7)"},   // confirmed 2026-08-13 against real hardware -- permanently indexless, see doc comment above
+    {15, "g(9)"},   // confirmed 2026-08-13 against real hardware -- permanently indexless, see doc comment above
 };
 
 std::string timbreBankName(int rawBankCode) {
-    for (const auto& b : kConfirmedTimbreBanks) {
-        if (b.rawBankCode == rawBankCode) return b.name;
-    }
     for (const auto& b : kConfirmedTimbreBankNamesOnly) {
         if (b.rawBankCode == rawBankCode) return b.name;
     }
-    // Unconfirmed code -- the UI shows the raw numeric code instead of a
-    // guessed name (see the doc comment above for why the implied
-    // contiguous pattern isn't used here).
     return "";
 }
 

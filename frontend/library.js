@@ -17,7 +17,7 @@
 // dataset -- no cross-dataset dedup here, that's a real future idea, not
 // this pass. See STATE.md's "Program/Combi Library Editor" plan for the
 // phased roadmap this is Phase 1 of.
-function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDropProgram }) {
+function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDropProgram, onJumpToInstrument }) {
   root.innerHTML = `
     <input class="filter-input library-filter input is-small" type="text" placeholder="Filter / search..." />
     <div class="select-control-area">
@@ -107,6 +107,17 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   let programBankFilter = new Set();
   let combiPresentBanks = new Set();
   let combiBankFilter = new Set();
+
+  // Set List filter for the Combis panel only -- which Set List (if any) a
+  // shown Combi must be referenced by, via the same `c.setlistUsages` array
+  // already loaded for the "Set Lists"/"#STL" columns (EditorBridge::
+  // listCombis() computes this once per dataset load from
+  // PcgFile::setlistUsageCounts(), see its own doc comment in PcgFile.h --
+  // no new backend work needed, this filter just re-slices data already in
+  // memory). -1 means "no filter, show every Combi" (all bank-filtered rows
+  // still apply). Reset to -1 on every load() same as the bank filters.
+  let allSetlists = [];
+  let selectedSetlistIndex = -1;
 
   // scrollIntoView({block:"center"}) can leave a row still partly hidden
   // under the table's sticky <thead> (especially rows near the top of the
@@ -208,6 +219,47 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
     }
   }
 
+  // Combis-only Set List filter dropdown, sitting right beside the None/
+  // All/Invert buttons in the same row (appended into the same container,
+  // not a separate one -- per explicit request). Built once here, options
+  // repopulated on every load() (populateSetlistFilterSelect() below) since
+  // the Set List list is per-dataset, same lifecycle as
+  // combiPresentBanks/combiBankFilter above.
+  const setlistFilterSelect = document.createElement("select");
+  setlistFilterSelect.className = "setlist-filter-select";
+  function buildSetlistFilterSelect(container, { onChange }) {
+    const wrap = document.createElement("div");
+    wrap.className = "select is-small setlist-filter-select-wrap";
+    wrap.appendChild(setlistFilterSelect);
+    container.appendChild(wrap);
+    setlistFilterSelect.addEventListener("change", () => {
+      selectedSetlistIndex = Number(setlistFilterSelect.value);
+      onChange();
+    });
+  }
+
+  // Rebuilds the dropdown's <option>s from `allSetlists` (refreshed by
+  // load() below) -- a fixed "All Set Lists" option (value -1, the default/
+  // no-filter state) followed by one option per real Set List, same
+  // `kronosNumber(index) + name` label pane.js's own Set List selector
+  // uses (populateSetlistSelect()) for a consistent look across panes.
+  // Re-applies `selectedSetlistIndex` afterwards so a jumpToEntry() or
+  // in-place refresh() doesn't silently reset an already-chosen filter.
+  function populateSetlistFilterSelect() {
+    setlistFilterSelect.innerHTML = "";
+    const allOpt = document.createElement("option");
+    allOpt.value = "-1";
+    allOpt.textContent = "All Set Lists";
+    setlistFilterSelect.appendChild(allOpt);
+    for (const s of allSetlists) {
+      const opt = document.createElement("option");
+      opt.value = String(s.index);
+      opt.textContent = `${kronosNumber(s.index)}  ${s.name}`;
+      setlistFilterSelect.appendChild(opt);
+    }
+    setlistFilterSelect.value = String(selectedSetlistIndex);
+  }
+
   function refreshProgramBankButtons() {
     renderBankFilterRow(
       bankFilterRows.programs,
@@ -243,6 +295,9 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       refreshCombiBankButtons();
       renderCombisPanel();
     },
+  });
+  buildSetlistFilterSelect(selectControlRows.combis, {
+    onChange: () => renderCombisPanel(),
   });
 
   function filterByName(rows, needle) {
@@ -456,10 +511,13 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
     panel.appendChild(table);
   }
 
-  // Mirrors PcgFile.cpp's kConfirmedTimbreBanks -- the 8 individually-
-  // confirmed Program-bank <-> Combi-Timbre-raw-code pairs (docs/content/format/index.md
-  // §6.2), kept as one small table here too so this mirror can't drift out
-  // of sync with the backend's own list as more codes get confirmed later.
+  // Mirrors PcgFile.cpp's kConfirmedTimbreBanks -- all 20 Program bank
+  // indices now have a confirmed raw Combi Timbre code (2026-08-14,
+  // USER-FF was the last gap), one small table here too so this mirror
+  // can't drift out of sync with the backend's own list (docs/content/format/index.md
+  // §6.2).
+  // (No `name` field, unlike the old version of this table -- see
+  // formatTimbreRef() below for why.)
   // INT-A..D coincide (both number spaces use 0..3); USER-A/D/F/AA use a
   // *different* number in each space (e.g. USER-D is Program bank index 9
   // but Timbre code 20) -- a Timbre's rawBankCode must be translated to a
@@ -476,16 +534,52 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // banks not 6, so everything from USER-A onward sits 2 indices earlier).
   // USER-G/USER-GG added the same day once independently confirmed by name
   // against real hardware too.
+  //
+  // PROMOTED 2026-08-11: INT-F/USER-B/C/CC/DD used to be name-only
+  // confirmed (a raw code checked against real hardware, but no matching
+  // index) -- meaning `programBankForConfirmedTimbreCode()` returned null
+  // for them, so formatTimbreRef() below never looked up their actual
+  // Program name (reported bug: Combi U-A 002 "Sex on Fire" Timbre 2,
+  // raw bank 5/INT-F, showed the bank label but no Program name at all).
+  // Once §5.2's full 20-bank order got confirmed against real hardware,
+  // every one of them turned out to already have a confirmed index too --
+  // promoted here to match PcgFile.cpp.
+  //
+  // USER-BB/EE added 2026-08-11, checked directly against real Combis
+  // (setlist_test_2.PCG: Combi I-A 000 "K-Lab: Katja's House" Timbre 9,
+  // Combi U-A 014 "KARMA Org 1'2'3  Piano 4" Timbre 7).
+  //
+  // CORRECTED 2026-08-14, retracting a 2026-08-11 misreading: this array
+  // briefly had `{programBankIndex: 10, rawBankCode: 4}` (INT-E's own
+  // index paired with the wrong code) -- the project owner re-checked the
+  // same real Combi and confirmed real hardware actually shows `INT-E`
+  // for that reference, not `USER-E`. Fixed: `INT-E` is raw code 4
+  // (`{4, 4}`, the "obvious" extrapolation was right all along -- no
+  // anomaly), `USER-E` is raw code 21 (`{10, 21}`, confirmed separately
+  // via Combi I-A 001 "Stradivarius Goes POP" Timbre 7) -- also exactly
+  // the "obvious" gap in `USER-A..G`'s 17-23 block. See
+  // kConfirmedTimbreBanks' own doc comment in PcgFile.cpp for the full
+  // story -- kept as a methodology note, not scrubbed from history.
   const CONFIRMED_TIMBRE_BANKS = [
     { programBankIndex: 0, rawBankCode: 0 },
     { programBankIndex: 1, rawBankCode: 1 },
     { programBankIndex: 2, rawBankCode: 2 },
     { programBankIndex: 3, rawBankCode: 3 },
+    { programBankIndex: 4, rawBankCode: 4 },
+    { programBankIndex: 5, rawBankCode: 5 },
     { programBankIndex: 6, rawBankCode: 17 },
+    { programBankIndex: 7, rawBankCode: 18 },
+    { programBankIndex: 8, rawBankCode: 19 },
     { programBankIndex: 9, rawBankCode: 20 },
+    { programBankIndex: 10, rawBankCode: 21 },
     { programBankIndex: 11, rawBankCode: 22 },
     { programBankIndex: 12, rawBankCode: 23 },
     { programBankIndex: 13, rawBankCode: 24 },
+    { programBankIndex: 14, rawBankCode: 25 },
+    { programBankIndex: 15, rawBankCode: 26 },
+    { programBankIndex: 16, rawBankCode: 27 },
+    { programBankIndex: 17, rawBankCode: 28 },
+    { programBankIndex: 18, rawBankCode: 29 },
     { programBankIndex: 19, rawBankCode: 30 },
   ];
 
@@ -513,9 +607,26 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // Returns `{ref, name}` rather than one combined string -- buildTimbreRow()
   // renders them as two separately-aligned columns, so the Program name
   // isn't a plain divider/quote suffix hanging off a variable-length ref.
+  //
+  // Bank label source, deliberately not duplicated (2026-08-11): when
+  // `programBank` is confirmed, the name comes from PROGRAM_BANK_NAMES
+  // (pane.js's single source of truth for Program bank display names) --
+  // NOT from `t.bankName`, which the backend sends as "" for exactly that
+  // case (kronos::timbreBankName(), see its own doc comment in PcgFile.cpp).
+  // `t.bankName` IS populated for a raw code confirmed by name but with no
+  // PBK1 index at all -- GM (raw code 6, confirmed 2026-08-12) is the real
+  // case this was built for: permanently indexless (not one of the 20
+  // stored Program banks), so `programBank` stays null and this ref falls
+  // through to the `t.bankName` branch below, showing "GM" with no Program
+  // name (there's nothing in the `programs` array to look one up from).
   function formatTimbreRef(t) {
     const programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
-    const bank = t.bankName ? abbreviateBankName(t.bankName) : `code ${t.rawBankCode}`;
+    const bank =
+      programBank !== null
+        ? PROGRAM_BANK_NAMES[programBank]
+        : t.bankName
+          ? abbreviateBankName(t.bankName)
+          : `code ${t.rawBankCode}`;
     let ref = `${bank} ${kronosNumber(t.number)}`;
     let name = "";
     if (programBank !== null) {
@@ -525,7 +636,14 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       if (program && program.name) name = program.name;
     }
     if (t.status === "Off") ref += " (off)";
-    return { ref, name };
+    // `programBank` (not just `ref`) is returned too -- buildTimbreRow()
+    // below needs it to know both WHETHER a jump target exists (only for a
+    // confirmed bank -- an unidentified "code N" reference has no real
+    // Program bank/number to jump to) and, if so, which bank to jump to
+    // (this is a Timbre's own rawBankCode-derived index, not the same
+    // number PROGRAM_BANK_NAMES[programBank] is a label FOR -- see
+    // programBankForConfirmedTimbreCode()'s own doc comment).
+    return { ref, name, programBank };
   }
 
   function buildTimbreRow(combi) {
@@ -564,9 +682,29 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
         const label = document.createElement("span");
         label.className = "timbre-label";
         label.textContent = `Timbre ${i + 1}:`;
-        const { ref, name } = formatTimbreRef(t);
-        const refSpan = document.createElement("span");
-        refSpan.className = "timbre-ref";
+        const { ref, name, programBank } = formatTimbreRef(t);
+        // A button, same look/behavior as the Setlist table's own Bank
+        // button (pane.js) -- only when `programBank` is confirmed, since
+        // an unidentified "code N" reference has no real Program bank/
+        // number to jump to. Reuses `onJumpToInstrument`, the exact same
+        // per-pane closure the Setlist table's Bank button already calls
+        // (pane.js's jumpToInstrument()) -- always jumps within THIS pane,
+        // never the opposite one, by construction (see its own doc comment
+        // in pane.js).
+        let refSpan;
+        if (programBank !== null) {
+          refSpan = document.createElement("button");
+          refSpan.type = "button";
+          refSpan.className = "button is-small bank-jump-button timbre-ref";
+          refSpan.title = `Show Program ${ref} in this pane's Programs view`;
+          refSpan.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            onJumpToInstrument({ isProgram: true, bank: programBank, number: t.number });
+          });
+        } else {
+          refSpan = document.createElement("span");
+          refSpan.className = "timbre-ref";
+        }
         refSpan.textContent = ref;
         const nameSpan = document.createElement("span");
         nameSpan.className = "timbre-name";
@@ -581,8 +719,8 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
     note.className = "usage-note";
     note.textContent =
       "Some raw bank codes aren't identified yet -- shown as \"code N\" rather than guessed, and for the " +
-      "same reason engine type/Program name are only shown for the 8 individually-confirmed banks " +
-      "(INT-A..D, USER-A/D/F/AA). See STATE.md's Phase 2 notes.";
+      "same reason engine type/Program name/the jump-to-Program button are only shown for the 19 " +
+      "individually-confirmed banks (INT-A..F, USER-A..G, USER-AA/BB/CC/DD/EE/GG). See STATE.md's Phase 2 notes.";
     td.appendChild(note);
 
     tr.appendChild(td);
@@ -592,7 +730,11 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   function renderCombisPanel() {
     const panel = panelTables.combis;
     const needle = filterInput.value.trim().toLowerCase();
-    const rows = filterByName(combis, needle).filter((c) => combiBankFilter.has(c.bank));
+    const rows = filterByName(combis, needle)
+      .filter((c) => combiBankFilter.has(c.bank))
+      .filter(
+        (c) => selectedSetlistIndex < 0 || (c.setlistUsages || []).some((u) => u.setlistIndex === selectedSetlistIndex)
+      );
 
     panel.innerHTML = "";
     const table = document.createElement("table");
@@ -765,21 +907,27 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       programs = [];
       combis = [];
       duplicateGroups = [];
+      allSetlists = [];
     } else {
       programs = await window.listPrograms(datasetId);
       combis = await window.listCombis(datasetId);
       duplicateGroups = await window.findDuplicatePrograms(datasetId);
+      allSetlists = await window.listSetlists(datasetId);
       log(`[Library] Loaded dataset ${datasetId}: ${programs.length} Programs, ${combis.length} Combis, ${duplicateGroups.length} duplicate groups.`);
     }
     // Reset both bank filters to "show every bank actually present" -- a
     // fresh dataset's bank layout has nothing to do with whatever was
-    // toggled for a previous one.
+    // toggled for a previous one. Same for the Set List filter (below) --
+    // a fresh dataset's Set Lists have nothing to do with whichever index
+    // was selected for a previous one.
     programPresentBanks = new Set(programs.map((p) => p.bank));
     programBankFilter = new Set(programPresentBanks);
     combiPresentBanks = new Set(combis.map((c) => c.bank));
     combiBankFilter = new Set(combiPresentBanks);
+    selectedSetlistIndex = -1;
     refreshProgramBankButtons();
     refreshCombiBankButtons();
+    populateSetlistFilterSelect();
     renderCurrentTab();
   }
 
@@ -799,6 +947,11 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // Timbre row and scrolls it into view, same as clicking the row directly.
   // Clears any active text filter, and makes sure the target bank's filter
   // button is "pressed," so neither can hide the entry being jumped to.
+  // Same reasoning for the Combis-only Set List filter (selectedSetlistIndex,
+  // see its own doc comment above) -- reset to "All Set Lists" on a Combi
+  // jump so a filter chosen for browsing doesn't silently hide the exact
+  // entry someone just clicked through to from a Setlist row or a Combi
+  // Timbre reference.
   function jumpToEntry(isProgram, bank, number) {
     filterInput.value = "";
     const key = `${bank}-${number}`;
@@ -810,6 +963,8 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       expandedCombiKeys.add(key);
       combiBankFilter.add(bank);
       refreshCombiBankButtons();
+      selectedSetlistIndex = -1;
+      populateSetlistFilterSelect();
     }
     renderCurrentTab();
     const row = root.querySelector(`[data-entry-key="${key}"]`);
