@@ -39,6 +39,58 @@ data), **assumed** (mechanically plausible, not independently verified),
 
 ---
 
+## Status at a glance
+
+A quick summary before the full section-by-section reference below -- moved here from the
+[Overview](/overview) page, which now stays high-level and links here for the technical
+detail.
+
+- **Container format**: chunked, RIFF/IFF-like but big-endian -- every chunk has a
+  fixed 12-byte header, `[4-char tag][u32 size][4-byte unknown field "dwX"]`, followed
+  by exactly `size` bytes of content (a nested chunk's own size is counted in full
+  toward its parent's, all the way down). `PCG1` itself is a real top-level chunk
+  spanning the rest of the file, not implicit padding before the "real" content
+  starts. Top-level children of interest: `SLS1` (Set Lists), `PRG1` (Programs, 20
+  sub-banks), `CMB1` (Combis, 14 sub-banks) -- `DKT1`/`WSQ1`/`GLB1`/`DPI1` (Drum Kits,
+  Wave Sequences, Global settings, and one unidentified chunk) exist but are unexplored.
+  See §1-§2.
+- **Set Lists** (`SDB1`): all 128 Set Lists, 128 song slots each, extracted correctly --
+  verified against real user-named lists and real song titles given directly as ground
+  truth, not guessed. See §3.
+- **Per-slot parameters** (`SBK1`): Program-vs-Combi flag, bank, number, color, hold
+  time, volume, Font size, Transpose, and a free-text comment, all at confirmed fixed
+  offsets within a 542-byte-stride record -- Font size and Transpose are each a few bits
+  packed into bytes otherwise used by Color/Bank, confirmed via a purpose-built test file
+  that isolated each field one at a time. See §4.
+- **Instrument name cross-reference** (`CBK1`/`MBK1`/`PBK1`): every Set List slot's real
+  Program/Combi name, resolved and shown inline -- confirmed against three independent
+  named anchors. See §5.
+- **Combi Timbre-to-Program references**: each Combi's 16 Timbres sit at a fixed
+  188-byte stride starting 4806 bytes into the Combi's own record: byte 0 is the
+  referenced Program's number, byte 1 a raw bank code, byte 2 an on/off/engine-type
+  status (Internal/External/Ex2/Off). All 20 Program banks now have a confirmed raw
+  Combi Timbre bank code, plus 9 more permanently-indexless codes (`GM` and the "g(d)"
+  family) confirmed by name only -- an absolute, gapped numbering scheme (not simple
+  file order), fully mapped as of 2026-08-14. Independently cross-checked against a
+  third-party reverse-engineering of this same format,
+  [DaBlick/PCG-Tools](https://github.com/DaBlick/PCG-Tools) -- both sources agree at
+  every point they overlap, and it resolved what first looked like a gap in this
+  project's own model (turned out to be a Combi sample whose remembered state didn't
+  match what was actually saved in the file, not a parsing error). See §6.
+- **Factory "Init Program" template bytes**: the raw record Korg ships for every
+  untouched Program slot (`Init Program` for HD-1 banks, `Init EXi Program` for EXi),
+  extracted and cross-verified against two independent real backup files -- now used
+  directly by the Duplicates panel's "keep this one" feature to clear the other copies
+  of a duplicate back to a real blank slot. See §5.5.
+
+Deliberately **not** solved yet: a handful of reserved bytes whose purpose isn't known
+(byte +17 still has unexplained bits even after Font size/Transpose were found), Drum
+Kits/Wave Sequences/Global settings, and whether a real backup can omit a Program/Combi
+bank entirely (every file examined so far has had a complete, canonically-ordered set).
+See §8 for the full, numbered list of open questions.
+
+---
+
 ## 1. Container format
 
 The file uses a chunked container similar in spirit to RIFF/IFF/AIFF, but

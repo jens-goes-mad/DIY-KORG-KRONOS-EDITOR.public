@@ -2255,6 +2255,75 @@ base64-decode-and-parse-in-C++ step with no chunking at all).
     becomes fire-and-forget (returns immediately once a path is chosen) rather than
     blocking for the whole read. This is *not* built yet.
 
+--- EXPLORATION: PCG TOOLS FEATURE COMPARISON (2026-08-14, NOT DECIDED) ---
+
+The project's own Overview page now names the gap this app is meant to close: PCG Tools
+(Michel Keijzers, hosted at kronoshaven.com/pcgtools/) is a real, capable Windows-only
+librarian/editor that's effectively unmaintained. Worth actually checking the comparison
+holds up feature-for-feature, not just asserting it. Went through PCG Tools' own published
+feature list (kronoshaven.com/pcgtools/) point by point against what this app does today.
+Triaged into three buckets -- not a commitment to build anything, just recorded so the
+gaps are deliberate choices, not accidental blind spots.
+
+**Already have (some arguably better than a static list-based tool)**:
+  - Loading/navigating Programs, Combis, Set List slots -- plus live cross-link jump
+    buttons everywhere one references another, with per-pane Back/Forward history
+    (PCG Tools has no equivalent to this -- it's a list/editor, not a browser with
+    navigation).
+  - Set List slot moving/sorting -- real drag-and-drop reorder/insert AND A-Z/Z-A physical
+    sort, arguably more capable than PCG Tools' plain "move/sort."
+  - Copying Programs between files (drag-and-drop, cross-dataset).
+  - Editing Set List slot names/Comments, including multi-line Comments (`\r\n`) -- matches
+    PCG Tools' own "editing set list slot descriptions with use of Return characters."
+  - Opening multiple files simultaneously (any number of datasets, either pane can show
+    any of them).
+  - Finding duplicate Programs (byte-exact hash) -- and, unlike PCG Tools' list-only
+    approach, actually resolving a duplicate group in the UI (keep one, clear the rest,
+    repoint every reference) -- see entries 31-33 above.
+  - Basic `.SNG` file support (same parser, same UI).
+
+**Missing, worth looking at later** (real gaps, not obviously out of scope):
+  - **Renaming Programs and Combis** -- Set List slot names are editable; Program/Combi
+    names are not. A real, surprising gap given how core renaming is to cleanup work.
+  - **Combi duplicate detection** -- `findDuplicatePrograms()`/`CombiInfo` deliberately has
+    no `contentHash` field ("duplicate detection was only requested for Programs" --
+    `PcgFile.h`'s own comment). Same mechanism could extend to Combis if wanted.
+  - **Reordering Timbres within a Combi** (move up/down) -- Combi Timbres are read-only
+    except for the new duplicate-resolution repoint (which changes a reference, not
+    position). PCG Tools has this.
+  - **Moving/sorting Programs and Combis within their own banks** -- only Set List slots
+    have real reordering; Programs only have cross-slot *copy*, Combis have neither.
+  - **"Compact empty slots to the end"** for Program/Combi banks specifically -- Set Lists
+    already get this as a side effect of A-Z/Z-A sort; Program/Combi banks have no
+    equivalent operation at all.
+  - **List export** (CSV/text/HTML of bank usage, Program-to-Combi/Set-List cross-
+    references) -- the data already exists and is shown interactively (Program usage rows,
+    Combi Set List badges); exporting it as a static reference sheet is a relatively small
+    incremental step on top of what's already built, and fits this project's own stated
+    motivation (auditing/cleaning up a big backup) directly.
+  - **Cross-file Set List slot copy** -- currently deliberately blocked (a slot's Program/
+    Combi reference is a raw bank/number pointer, meaningless in a different file's bank
+    layout without translation) -- PCG Tools apparently allows this; would need real
+    thought about what "translate the reference" even means before attempting it, not a
+    quick fix.
+  - **Drum Kits** -- `DKT1` chunk exists in the container format but is entirely
+    unparsed/unexplored (see [The file format](/format)'s open questions). PCG Tools
+    navigates them; this app doesn't parse them at all yet.
+
+**Deliberately out of scope / not planned** (silently ignored until now -- now explicit):
+  - **Other Korg workstation models** (Krome, Oasys, etc. -- PCG Tools supports several;
+    this project's own name/scope is Kronos-specific, and nothing suggests broadening
+    that).
+  - **Cubase-specific patch list export** -- too tool/DAW-specific a format to be worth
+    building for this project's own stated goals, versus the more general list-export idea
+    above.
+  - **"Converting" Programs/Combis between models** -- PCG Tools explicitly does NOT do
+    this either ("Copying... not converting"), so there's no gap here at all, just
+    confirming the two projects agree on scope.
+
+Not acted on yet -- this is a triage/comparison record, not a build plan. Worth revisiting
+before picking the next feature to build.
+
 --- BLIND SPOTS / NOT YET TOUCHED ---
 
 Format:

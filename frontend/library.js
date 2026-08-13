@@ -111,9 +111,13 @@ function createLibraryPanels(
   // Bank-filter state, per category -- `present` is which bank indices
   // actually have entries in the current dataset (recomputed on every
   // load()), `filter` is which of those are currently "pressed" (shown),
-  // reset to match `present` (show everything) on every load() and then
   // independently user-toggleable. Buttons for banks NOT in `present` are
-  // disabled, per explicit request -- there's nothing to show there.
+  // disabled, per explicit request -- there's nothing to show there. Only
+  // reset to match `present` (show everything) when load() is told this is
+  // a genuinely new dataset (onDatasetChanged()) -- a same-dataset refresh
+  // (e.g. after resolving a duplicate, or the opposite pane's own write)
+  // keeps whatever the user had filtered to instead, see load()'s own doc
+  // comment.
   let programPresentBanks = new Set();
   let programBankFilter = new Set();
   let combiPresentBanks = new Set();
@@ -126,7 +130,8 @@ function createLibraryPanels(
   // PcgFile::setlistUsageCounts(), see its own doc comment in PcgFile.h --
   // no new backend work needed, this filter just re-slices data already in
   // memory). -1 means "no filter, show every Combi" (all bank-filtered rows
-  // still apply). Reset to -1 on every load() same as the bank filters.
+  // still apply). Reset to -1 only on a genuinely new dataset, same as the
+  // bank filters above -- see load()'s own doc comment.
   let allSetlists = [];
   let selectedSetlistIndex = -1;
 
@@ -984,7 +989,18 @@ function createLibraryPanels(
 
   filterInput.addEventListener("input", () => renderCurrentTab());
 
-  async function load() {
+  // `resetFilters` distinguishes two different reasons to call this:
+  // - true (onDatasetChanged() below): a genuinely NEW dataset is showing --
+  //   the previous filter selections belong to a different file's banks and
+  //   mean nothing here, so reset to "show everything."
+  // - false (the default -- every other caller, e.g. onDropProgram's
+  //   cross-pane refresh in app.js, or resolving a duplicate): the SAME
+  //   dataset just changed underneath this same view (a write happened
+  //   elsewhere) -- re-fetch the data, but keep whatever the user had
+  //   filtered to. Only drops a filter entry for a bank that no longer has
+  //   any rows at all, so a stale entry doesn't just silently do nothing
+  //   forever.
+  async function load({ resetFilters = false } = {}) {
     const datasetId = getDatasetId();
     if (datasetId == null) {
       programs = [];
@@ -998,16 +1014,16 @@ function createLibraryPanels(
       allSetlists = await window.listSetlists(datasetId);
       log(`[Library] Loaded dataset ${datasetId}: ${programs.length} Programs, ${combis.length} Combis, ${duplicateGroups.length} duplicate groups.`);
     }
-    // Reset both bank filters to "show every bank actually present" -- a
-    // fresh dataset's bank layout has nothing to do with whatever was
-    // toggled for a previous one. Same for the Set List filter (below) --
-    // a fresh dataset's Set Lists have nothing to do with whichever index
-    // was selected for a previous one.
     programPresentBanks = new Set(programs.map((p) => p.bank));
-    programBankFilter = new Set(programPresentBanks);
     combiPresentBanks = new Set(combis.map((c) => c.bank));
-    combiBankFilter = new Set(combiPresentBanks);
-    selectedSetlistIndex = -1;
+    if (resetFilters) {
+      programBankFilter = new Set(programPresentBanks);
+      combiBankFilter = new Set(combiPresentBanks);
+      selectedSetlistIndex = -1;
+    } else {
+      programBankFilter = new Set([...programBankFilter].filter((b) => programPresentBanks.has(b)));
+      combiBankFilter = new Set([...combiBankFilter].filter((b) => combiPresentBanks.has(b)));
+    }
     refreshProgramBankButtons();
     refreshCombiBankButtons();
     populateSetlistFilterSelect();
@@ -1017,12 +1033,14 @@ function createLibraryPanels(
   // Called by the shell (pane.js's createPane()) whenever its shared
   // dataset-select changes -- either a fresh selection, or the dataset this
   // pane was showing having been closed elsewhere (getDatasetId() will
-  // already reflect that by the time this is called).
+  // already reflect that by the time this is called). Always a genuinely
+  // new dataset -- see load()'s own doc comment for why this is the one
+  // caller that resets filters.
   function onDatasetChanged() {
     expandedProgramKey = null;
     expandedCombiKeys.clear();
     expandedDuplicateKeys.clear();
-    load();
+    load({ resetFilters: true });
   }
 
   // Called by the shell after it's already switched to this Program's/
