@@ -426,6 +426,74 @@ public:
     // Returns nullopt if the (bank, number) pair is out of range.
     std::optional<std::vector<uint8_t>> programRecordBytes(int bank, int number) const;
 
+    // Writes `bytes` straight into this file's retained data_ for one
+    // Program slot, then re-decodes programs()'s entry for that slot from
+    // the freshly-written bytes (refreshProgramInfo(), shared with
+    // copyProgramFrom()) -- same discipline as putSongRecordBytes(): a
+    // cached decoded field must never go stale after a direct data_ write.
+    // Returns false (writes nothing) if the (bank, number) pair is out of
+    // range, or `bytes.size()` doesn't match that bank's own record size.
+    bool putProgramRecordBytes(int bank, int number, const std::vector<uint8_t>& bytes);
+
+    // Same idea as programRecordBytes()/putProgramRecordBytes(), for one
+    // Combi's raw CBK1 record -- CombiDecoder.h's own doc comment used to
+    // note "no encoder yet, every current use of Combi data is read-only";
+    // this is the first one, needed to repoint a Combi Timbre's Program
+    // reference (see resolveDuplicates() below) without guessing at the
+    // Timbre byte layout a second time -- see CombiDecoder.h's
+    // writeTimbreProgramRef(), the actual byte-level writer these two
+    // read/write raw bytes for. Returns nullopt/false (write) if the
+    // (bank, number) pair is out of range, or (write only) `bytes.size()`
+    // doesn't match that bank's own record size.
+    std::optional<std::vector<uint8_t>> combiRecordBytes(int bank, int number) const;
+    bool putCombiRecordBytes(int bank, int number, const std::vector<uint8_t>& bytes);
+
+    // Why a duplicate-resolution attempt can be rejected -- see
+    // resolveDuplicates()'s own doc comment. Kept as a plain result struct
+    // (not an exception/optional-with-outparam) so EditorBridge can surface
+    // both the error and, on success, the three counts in one return.
+    struct ResolveDuplicatesResult {
+        bool ok = false;
+        std::string error;               // only set when !ok
+        int clearedPrograms = 0;         // OTHER duplicate slots overwritten with an Init Program template
+        int setlistRefsRepointed = 0;    // Set List Program slots repointed to (keepBank, keepNumber)
+        int combiRefsRepointed = 0;      // Combi Timbre references repointed
+        int combiRefsSkipped = 0;        // Combi Timbre references left alone -- see own doc comment below
+    };
+
+    // Makes (keepBank, keepNumber) "the" copy of its byte-exact duplicate
+    // group (see findDuplicatePrograms()): every OTHER Program in this file
+    // sharing its contentHash gets its raw record overwritten with
+    // `hd1InitBytes`/`exiInitBytes` (whichever matches THAT duplicate's own
+    // bank type, not the kept slot's -- see resources/Init-Program-HD1.raw/
+    // Init-Program-EXi.raw and programRecordBytes()'s own doc comment for
+    // where these come from and the still-open Tone Adjust caveat), and
+    // every Set List slot / Combi Timbre that referenced any of those
+    // now-cleared duplicates gets repointed to (keepBank, keepNumber)
+    // instead.
+    //
+    // All-or-nothing: every duplicate's own bank's record size is checked
+    // against the matching template BEFORE any write happens -- a size
+    // mismatch fails the whole call (ok=false, nothing written), never a
+    // partial clear. This app has no undo/rollback machinery anywhere else
+    // either, so "don't start a write that might not finish" is the only
+    // safety available.
+    //
+    // Combi Timbre repointing needs to translate a PBK1 file-order bank
+    // index to its raw Timbre bank code (see kConfirmedTimbreBanks in
+    // PcgFile.cpp) -- if a duplicate's own bank, or keepBank itself, has no
+    // confirmed code, those specific Combi Timbre references are left
+    // untouched (counted in combiRefsSkipped) rather than writing a
+    // guessed code. The Program clear and Set List repointing for that same
+    // duplicate still happen regardless -- only the Combi side depends on
+    // the translation being confirmed.
+    //
+    // Returns ok=false with `error` set if (keepBank, keepNumber) doesn't
+    // exist in this file, or on the record-size mismatch above.
+    ResolveDuplicatesResult resolveDuplicates(int keepBank, int keepNumber,
+                                               const std::vector<uint8_t>& hd1InitBytes,
+                                               const std::vector<uint8_t>& exiInitBytes);
+
     // Raw 542-byte SBK1 record for one Set List slot, straight from the
     // retained file bytes -- the same two-tier data-flow idea as
     // decodeProgram()/decodeCombi(), applied to Set List slots: a detail
@@ -438,14 +506,19 @@ public:
 
     // Writes `bytes` (must be exactly 542 bytes) straight into this file's
     // retained data_ for the given slot, then re-derives setlists()[setlistIndex]
-    // .songs[songIndex]'s params/comment from the freshly-written bytes via
-    // the same readSlotParams()/readComment() the initial load used -- a
-    // cached decoded field must never go stale after a direct data_ write,
-    // same discipline as copyProgramFrom(). Does NOT re-resolve
-    // instrumentName -- out of scope, since every editor using this path so
-    // far (Color/Volume/Comment) never touches bank/number. Returns false
-    // (writes nothing) if `bytes` isn't exactly 542 bytes, or the indices
-    // are out of range.
+    // .songs[songIndex]'s params/comment/instrumentName from the freshly-
+    // written bytes via the same readSlotParams()/readComment() the initial
+    // load used -- a cached decoded field must never go stale after a
+    // direct data_ write, same discipline as copyProgramFrom(). instrumentName
+    // re-resolution was ADDED 2026-08-13 (RESOLVED a real bug): this doc
+    // comment used to say "does NOT re-resolve instrumentName -- out of
+    // scope, since every editor using this path so far (Color/Volume/
+    // Comment) never touches bank/number" -- true until
+    // PcgFile::resolveDuplicates() became the first caller that DOES
+    // repoint bank/number through this same method, at which point the
+    // gap was a real, reproducible stale-name bug, not a hypothetical one.
+    // Returns false (writes nothing) if `bytes` isn't exactly 542 bytes, or
+    // the indices are out of range.
     bool putSongRecordBytes(int setlistIndex, int songIndex, const std::vector<uint8_t>& bytes);
 
     // A Set List slot's raw 28-byte NAME record (4-byte marker + 24-byte
@@ -519,6 +592,28 @@ public:
     bool sortSetlist(int setlistIndex, bool ascending);
 
 private:
+    // Re-decodes programs_'s/combis_'s entry for one slot from data_ as it
+    // stands right now -- the shared tail end of copyProgramFrom() and
+    // putProgramRecordBytes() (Program side) / putCombiRecordBytes() (Combi
+    // side), factored out so a cached decoded field being re-derived after
+    // a raw write is written in exactly one place, not copy-pasted per
+    // caller. Assumes the (bank, number) pair is already known in range --
+    // callers check bounds themselves before writing, same as everywhere
+    // else in this file.
+    void refreshProgramInfo(int bank, int number);
+    void refreshCombiInfo(int bank, int number);
+
+    // The Set List instrument-name cross-reference (§5 in docs/content/
+    // format/index.md), resolved on demand from programs_/combis_ rather
+    // than the load-time-only lookup table loadFromMemory() builds and
+    // discards -- used by putSongRecordBytes() to keep Song::instrumentName
+    // from going stale after a bank/number change. A linear scan, not a
+    // table lookup: only ever called for one slot at a time (an occasional
+    // single write, never the whole-file bulk load), so this is never
+    // hot. Returns "" if no Program/Combi exists at (bank, number), same
+    // as the load-time lookup's own out-of-range behavior.
+    std::string resolveInstrumentName(bool isProgram, int bank, int number) const;
+
     // Where one PRG1 sub-bank's (MBK1 or PBK1) records live within data_
     // -- retained so decodeProgram() can locate and re-decode a specific
     // record on demand, without re-scanning the whole file's chunk

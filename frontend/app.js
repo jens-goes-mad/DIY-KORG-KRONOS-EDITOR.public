@@ -247,6 +247,23 @@ function swapPanes() {
 
 document.querySelector(".swap-panes-button").addEventListener("click", swapPanes);
 
+// Left-only/Both/Right-only pane visibility (topbar-adjacent toolbar,
+// index.html) -- purely a display toggle via a class on .panes (see
+// style.css's structural :first-of-type/:last-of-type rules, which key off
+// visual position, not paneId, so this stays correct across swapPanes()
+// either order). "both" is the default/no-class state. Single-select, same
+// is-link-active-button convention as the bank-filter buttons
+// (library.js's renderBankFilterRow()) -- just three fixed buttons here,
+// not data-driven, so no need for that helper's full generality.
+const panesEl = document.querySelector(".panes");
+const visibilityButtons = document.querySelectorAll(".pane-visibility-button");
+function setPaneVisibility(visibility) {
+  panesEl.classList.toggle("show-only-left", visibility === "left");
+  panesEl.classList.toggle("show-only-right", visibility === "right");
+  visibilityButtons.forEach((btn) => btn.classList.toggle("is-link", btn.dataset.visibility === visibility));
+}
+visibilityButtons.forEach((btn) => btn.addEventListener("click", () => setPaneVisibility(btn.dataset.visibility)));
+
 refreshDatasets();  // so every pane's selectors have data as soon as the bridge is ready
 
 // A single, global Open button (topbar) rather than one per pane -- opening

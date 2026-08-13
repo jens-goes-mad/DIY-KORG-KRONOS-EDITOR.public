@@ -1498,6 +1498,20 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     pushNavHistory(from, to);
   }
 
+  // Refreshes the opposite pane's Library tables (Programs/Combis/
+  // Duplicates) if it happens to be showing the SAME dataset -- a write
+  // made through THIS pane's own bridge call (e.g. resolving a duplicate)
+  // only refreshes ITS OWN library view via load(); the opposite pane's
+  // separate in-memory programs/combis/duplicateGroups state has no other
+  // way to learn the underlying file just changed. Same "which pane(s)
+  // need refreshing" idea as app.js's onDropProgram(), just reached via
+  // getOpposite() (already available here for "copy Set List to opposite")
+  // instead of iterating every pane from the shell.
+  async function refreshOppositeLibrary(datasetId) {
+    const opposite = getOpposite();
+    if (opposite && opposite.getCurrentDatasetId() === datasetId) await opposite.refreshLibrary();
+  }
+
   const setlistPanel = createSetlistPanel(setlistContainer, {
     paneId,
     log,
@@ -1516,6 +1530,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     onDropProgram,
     onJumpToInstrument: jumpToInstrument,
     onJumpToSetlist: jumpToSetlistEntry,
+    onRefreshOppositeLibrary: refreshOppositeLibrary,
   });
   const internalsPanel = createInternalsPanel(internalsContainer, {
     getDatasetId: getCurrentDatasetId,

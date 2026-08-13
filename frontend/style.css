@@ -110,6 +110,40 @@ body {
   display: none;
 }
 
+/* Left/Both/Right pane-visibility toggle bar -- lives in the topbar's own
+   .level-right (index.html), right-aligned alongside the Open-file loading
+   indicator, same row as the Open button/title on the left. */
+.pane-visibility-bar {
+  display: flex;
+  align-items: center;
+}
+
+/* Structural (:first-of-type/:last-of-type among .panes' own <section>
+   children), not keyed to data-pane="A"/"B" -- swapPanes() (app.js)
+   physically reorders the two <section> elements, so "left"/"right" here
+   deliberately means "whichever pane is on that side right now," staying
+   correct regardless of whether a swap happened before or after this was
+   toggled. The swap button itself is a sibling <button> between them, not
+   a <section>, so it doesn't count as a "pane" for :first-of-type/
+   :last-of-type purposes either way. */
+.panes.show-only-left .pane:last-of-type,
+.panes.show-only-right .pane:first-of-type {
+  display: none;
+}
+
+.panes.show-only-left .pane:first-of-type,
+.panes.show-only-right .pane:last-of-type {
+  flex: 1 1 100%;
+  max-width: 100%;
+}
+
+/* Nothing to swap into view while the other pane is hidden -- swapping
+   would just reposition an invisible element with no visible effect. */
+.panes.show-only-left .swap-panes-button,
+.panes.show-only-right .swap-panes-button {
+  display: none;
+}
+
 /* Bulma's own real .columns/.column grid (index.html), not a hand-rolled
    one -- this is the actual "row/col concept" request. Both the inter-
    column gap AND each .column's own padding key off the single
@@ -193,7 +227,11 @@ body {
 
 /* Global Open button's loading indicator, in the topbar -- genuinely
    indeterminate (no byte-level progress callback exists yet, see STATE.md's
-   Blind Spot #15), so a spinner, not a percentage bar. */
+   Blind Spot #15), so a spinner, not a percentage bar. A plain child of
+   .level-right now (index.html), alongside .pane-visibility-bar, not a
+   second class on .level-right itself -- margin-left: auto here (rather
+   than gap on .level-right) keeps it pinned to the far right even if
+   .pane-visibility-bar's own width changes. */
 .topbar-loading {
   display: flex;
   align-items: center;
@@ -202,13 +240,17 @@ body {
 }
 
 .topbar-loading[hidden] {
-  /* !important: needed here specifically -- this element also carries
-     Bulma's .level-right, and since it lives inside .level.is-mobile,
-     Bulma's actual matching rule is `.level.is-mobile .level-right{display:
-     flex}` (3 combined classes, specificity 0,0,3,0), which beats this
-     rule's plain 0,0,2,0 outright. Without !important the spinner never
-     actually hides no matter what the `hidden` attribute says. */
-  display: none !important;
+  /* No longer needs !important -- that was only required while this
+     element also carried Bulma's own .level-right class (a 3-class Bulma
+     rule, `.level.is-mobile .level-right{display:flex}`, otherwise beat
+     this one on specificity). Now that .topbar-loading is a plain nested
+     div instead, a bare class+attribute selector already outranks the
+     UA stylesheet's own [hidden] rule (author origin beats user-agent
+     origin at equal specificity) -- see the .select-control-row[hidden]/
+     .bank-filter-row[hidden] comments below for the general pattern this
+     app runs into whenever [hidden] needs to beat unconditional author
+     CSS specifically, not just the UA default. */
+  display: none;
 }
 
 .topbar-loading-spinner {

@@ -2737,5 +2737,75 @@ App/UI:
           harmless on real hardware. Flagged in `PcgFile.h`'s
           `programRecordBytes()` doc comment so it isn't missed when that
           write path actually gets built.
+  32. **BUILT (2026-08-13)**: the Duplicates-panel write path entry 31
+      above was extracted for -- each duplicate copy's button (previously a
+      "not built yet" toast) now really works. Clicking a copy makes it the
+      only version: every OTHER duplicate in that group is cleared to its
+      own bank's factory Init Program template, and every Set List slot /
+      Combi Timbre that referenced a cleared duplicate is repointed to the
+      kept one.
+      - New `PcgFile::resolveDuplicates(keepBank, keepNumber, hd1InitBytes,
+        exiInitBytes)`, all-or-nothing (template size checked against every
+        affected bank before any write happens). Needed two new raw-record
+        write pairs to support it: `putProgramRecordBytes()` (mirrors
+        `putSongRecordBytes()`), and `combiRecordBytes()`/
+        `putCombiRecordBytes()` -- the first real Combi write path this
+        project has built (`CombiDecoder.h`'s own comment used to say "no
+        encoder yet, every use is read-only"). `CombiDecoder.h` gained
+        `timbreByteOffset()`/`writeTimbreProgramRef()` so the write side
+        reuses `decodeCombiFields()`'s one copy of the 4806-base/188-stride
+        derivation rather than a second one.
+      - Combi Timbre repointing needs the PBK1-index -> raw-Timbre-code
+        translation (`confirmedTimbreCodeForProgramBank()`, already used by
+        `combiUsagesForProgram()`) -- now that all 20 Program banks have a
+        confirmed code (entry 30), this basically never skips in practice,
+        but the skip path (`combiRefsSkipped`) is still real, defensive
+        code for a duplicate/kept bank without one.
+      - `EditorBridge::resolveDuplicateProgram()` reads the two template
+        files fresh off disk per call via a new `EDITOR_RESOURCES_DIR`
+        macro (mirrors `EDITOR_FRONTEND_DIR`'s Debug-build pattern) --
+        Release-build embedding via `tools/embed_resources.py` is a known,
+        deliberately deferred gap (no Release build is packaged/shipped
+        yet), not silently skipped.
+      - Applies immediately with a toast reporting the counts, same
+        convention as every other write in this app (drag-and-drop,
+        Program copy, A-Z sort) -- no confirm dialog, no undo, confirmed
+        directly rather than assumed.
+      - Verified: `tests/pcg_file_test.cpp` gained `testResolveDuplicates()`
+        (happy path incl. Set List + Combi repointing, no-such-keep-slot
+        rejection, size-mismatch rejection writes nothing); full
+        `pcg_file_test`/`kronos_editor`/`generate_setlist_test_matrix`
+        rebuild clean; a throwaway probe against the real 36MB
+        `setlist_test_2.PCG` resolved two genuine real duplicate groups
+        (including one with an actual Combi Timbre reference, correctly
+        repointed and confirmed via `combiUsagesForProgram()` before/after)
+        -- not just the synthetic fixture.
+  33. **RESOLVED (2026-08-14)**: two real bugs found after using entry 32's
+      feature for real: (a) resolving a duplicate only refreshed the pane
+      that triggered it -- the opposite pane's own separate copy of
+      programs/combis/duplicateGroups never learned the file changed.
+      Fixed with `refreshOppositeLibrary()` in `pane.js` (mirrors app.js's
+      existing `onDropProgram` cross-pane-refresh pattern). (b) a cleared
+      slot's Set List reference showed a stray/stale name after
+      repointing, not the expected one -- traced (via a real-file byte
+      dump, not guessed) to `Song::instrumentName`, a cross-reference
+      cached once at load and never refreshed by `putSongRecordBytes()`;
+      its own doc comment already flagged this as out-of-scope "since
+      every editor using this path so far never touches bank/number" --
+      `resolveDuplicates()` is the first one that does. Fixed by having
+      `putSongRecordBytes()` re-resolve it via a new
+      `PcgFile::resolveInstrumentName()` helper. Also: the Init Program
+      template's real Korg name field turned out too subtle in the UI (a
+      cleared slot looked identical to any other already-blank one) --
+      `resources/Init-Program-HD1.raw`/`Init-Program-EXi.raw`'s name field
+      now reads `"- Init Program (HD1) -"`/`"- Init Program (EXi) -"`
+      (22 characters, fits the hard 24-byte limit) instead of Korg's own
+      `"Init Program"`/`"Init EXi Program"` -- every other byte in both
+      files is still the real, cross-verified extracted content, see
+      docs/content/format/index.md §5.5. New pane-visibility toggle (Left
+      only/Both/Right only, topbar `.level-right`, useful on small
+      screens) added the same session, keyed to visual position
+      (`:first-of-type`/`:last-of-type`) so it stays correct across
+      `swapPanes()` either order.
 
 === END STATE BLOCK ===

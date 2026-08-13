@@ -1,8 +1,24 @@
 #include "EditorBridge.h"
 
+#include <fstream>
+
 #include "platform/NativeFileDialog.h"
 
 namespace {
+
+// Reads a small resource file (see EDITOR_RESOURCES_DIR in CMakeLists.txt)
+// straight into memory -- same read-the-whole-file-at-once shape as
+// PcgFile::load(), just for the couple-KB Init Program templates rather
+// than a whole .PCG. Returns an empty vector if the file can't be opened;
+// callers distinguish "empty" from "a real empty file" by checking size
+// against the destination bank's own record size anyway (see
+// PcgFile::resolveDuplicates()'s validation), so no separate ok/error
+// signal is needed here.
+std::vector<uint8_t> readResourceFile(const std::string& relativePath) {
+    std::ifstream file(std::string(EDITOR_RESOURCES_DIR) + "/" + relativePath, std::ios::binary);
+    if (!file) return {};
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
 
 std::string stringArg(const choc::value::ValueView& args, size_t index) {
     if (args.isArray() && args.size() > index) return args[static_cast<uint32_t>(index)].getWithDefault<std::string>({});
@@ -676,4 +692,29 @@ choc::value::Value EditorBridge::copyProgram(const choc::value::ValueView& args)
     auto error = dstFile->copyProgramFrom(*srcFile, srcBank, srcNumber, dstBank, dstNumber);
     if (error.has_value()) return makeError(programCopyErrorMessage(*error));
     return makeOk();
+}
+
+choc::value::Value EditorBridge::resolveDuplicateProgram(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int number = intArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    const auto hd1Bytes = readResourceFile("Init-Program-HD1.raw");
+    const auto exiBytes = readResourceFile("Init-Program-EXi.raw");
+    if (hd1Bytes.empty() || exiBytes.empty()) {
+        return makeError("Couldn't read the Init Program template files from " + std::string(EDITOR_RESOURCES_DIR));
+    }
+
+    auto result = file->resolveDuplicates(bank, number, hd1Bytes, exiBytes);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("clearedPrograms", result.clearedPrograms);
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    value.setMember("combiRefsRepointed", result.combiRefsRepointed);
+    value.setMember("combiRefsSkipped", result.combiRefsSkipped);
+    return value;
 }

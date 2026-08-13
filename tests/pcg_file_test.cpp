@@ -719,6 +719,26 @@ void testPcgFileEndToEnd() {
             CHECK_EQ(pcg.setlists()[0].songs[1].comment, std::string("second"),
                      "writing song 0's record doesn't disturb song 1's");
 
+            // instrumentName is a separate cached cross-reference (Song::
+            // instrumentName, resolved once at load) -- must follow a
+            // bank/number change through putSongRecordBytes() too, not
+            // just params. RESOLVED 2026-08-13: this used to be a real,
+            // reproducible stale-name bug (surfaced by
+            // PcgFile::resolveDuplicates(), the first caller that ever
+            // repoints bank/number through this same method) -- see
+            // putSongRecordBytes()'s own doc comment. bank1/number0
+            // ("Bank1 Program0") and bank1/number1 ("Bank1 Program1") are
+            // two DISTINCT real Programs, not duplicates, so this actually
+            // discriminates stale-vs-fresh instead of coincidentally
+            // passing either way.
+            CHECK_EQ(pcg.setlists()[0].songs[0].instrumentName, std::string("Bank1 Program0"),
+                     "instrumentName resolves correctly before any repoint");
+            auto repointed = *bytes0;
+            repointed[14] = 1;  // number -> 1 ("Bank1 Program1"), bank stays 1
+            CHECK(pcg.putSongRecordBytes(0, 0, repointed));
+            CHECK_EQ(pcg.setlists()[0].songs[0].instrumentName, std::string("Bank1 Program1"),
+                     "putSongRecordBytes() re-resolves instrumentName after a bank/number change");
+
             // Restore song 0's original bytes so nothing downstream in this
             // test (there is nothing after this block, but for hygiene) sees
             // a mutated fixture.
@@ -931,6 +951,151 @@ void testSaveRoundTrip() {
     CHECK(!empty.save(path, emptyError));
 }
 
+// Each block below builds its own fresh PcgFile from buildSyntheticPcgFile()
+// -- same "one function, one independent instance" pattern as
+// testSaveRoundTrip() above, so a write in one block (this is a real write
+// path -- resolveDuplicates() mutates data_) can never leak into another.
+void testResolveDuplicates() {
+    // --- Happy path: clear + repoint both a Set List slot and a Combi
+    // Timbre -----------------------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        // The fixture already has a real duplicate pair: PBK1 bank 0,
+        // numbers 0 and 1, both "Test Program A" (see
+        // buildSyntheticPcgFile()'s own comment). Point Setlist 0's slot 2
+        // (empty in the base fixture -- unused by any other test, each of
+        // which builds its own separate instance) and Combi 0's Timbre 2
+        // (also unassigned in the base fixture) at bank0/number1, the
+        // duplicate about to be cleared -- so this exercises real
+        // repointing, not just the Program-record clear.
+        {
+            auto bytes = pcg.songRecordBytes(0, 2);
+            CHECK(bytes.has_value());
+            if (bytes) {
+                (*bytes)[12] |= 0x01;  // Type bits0-1 = 1 (Program) -- see docs/content/format/index.md §4.3
+                (*bytes)[13] = 0;      // bank 0 (low 5 bits of byte+13)
+                (*bytes)[14] = 1;      // number 1
+                CHECK(pcg.putSongRecordBytes(0, 2, *bytes));
+            }
+        }
+        {
+            auto bytes = pcg.combiRecordBytes(0, 0);
+            CHECK(bytes.has_value());
+            if (bytes) {
+                kronos::writeTimbreProgramRef(bytes->data(), bytes->size(), /*timbreIndex=*/2, /*number=*/1,
+                                               /*rawBankCode=*/0);  // bank 0 = INT-A, confirmed raw code 0
+                // writeTimbreProgramRef() deliberately leaves the status
+                // byte alone -- set it directly here so this Timbre reads
+                // as a real active reference (Internal), not the all-zero
+                // Off state it started in.
+                size_t statusOff = kronos::timbreByteOffset(2) + 2;
+                (*bytes)[statusOff] = static_cast<uint8_t>(1 << 5);
+                CHECK(pcg.putCombiRecordBytes(0, 0, *bytes));
+            }
+        }
+
+        // Confirm the setup actually landed before testing resolveDuplicates() itself.
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.bank, 0, "setup: song 2 references bank 0");
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.number, 1, "setup: song 2 references number 1");
+        {
+            auto combi = pcg.decodeCombi(0, 0);
+            CHECK(combi.has_value());
+            if (combi) {
+                CHECK(!combi->timbres[2].isDefault);
+                CHECK_EQ(combi->timbres[2].number, 1, "setup: Timbre 2 references number 1");
+                CHECK_EQ(combi->timbres[2].rawBankCode, 0, "setup: Timbre 2 references raw code 0");
+            }
+        }
+
+        // bank0/number2 ("Unique Program") is exactly bank 0's own record
+        // size (kBankRecordSize=32 in this fixture) with a name distinct
+        // from "Test Program A" -- reused as this test's own stand-in
+        // "Init Program" template so a successful clear is easy to tell
+        // apart from the original duplicate content.
+        const auto hd1Template = pcg.programRecordBytes(0, 2);
+        CHECK(hd1Template.has_value());
+        if (!hd1Template) return;
+
+        auto result = pcg.resolveDuplicates(/*keepBank=*/0, /*keepNumber=*/0, *hd1Template, /*exiInitBytes=*/{});
+        CHECK(result.ok);
+        if (!result.ok) {
+            std::fprintf(stderr, "  resolveDuplicates() error: %s\n", result.error.c_str());
+            return;
+        }
+        CHECK_EQ(result.clearedPrograms, 1, "exactly one duplicate (bank0/number1) existed");
+        CHECK_EQ(result.setlistRefsRepointed, 1, "exactly one Set List slot referenced it");
+        CHECK_EQ(result.combiRefsRepointed, 1, "exactly one Combi Timbre referenced it");
+        CHECK_EQ(result.combiRefsSkipped, 0, "bank 0's raw Timbre code (INT-A=0) is confirmed");
+
+        auto cleared = pcg.decodeProgram(0, 1);
+        CHECK(cleared.has_value());
+        if (cleared) {
+            CHECK_EQ(cleared->name, std::string("Unique Program"), "cleared duplicate now holds the template's bytes");
+        }
+
+        auto kept = pcg.decodeProgram(0, 0);
+        CHECK(kept.has_value());
+        if (kept) CHECK_EQ(kept->name, std::string("Test Program A"), "kept slot's own bytes are untouched");
+
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.bank, 0, "Set List slot repointed: bank (already 0)");
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.number, 0, "Set List slot repointed: number now 0");
+        // Not a discriminating check on its own -- the kept and cleared
+        // slots share this exact name pre-resolve (that's what makes them
+        // duplicates), so this would read the same whether or not
+        // instrumentName actually re-resolved. See the dedicated
+        // putSongRecordBytes() test above (bank1/number0 -> number1, two
+        // DISTINCT Programs) for the real regression coverage of that fix.
+        CHECK_EQ(pcg.setlists()[0].songs[2].instrumentName, std::string("Test Program A"),
+                 "Set List slot repointed: instrumentName resolves to the kept slot's name");
+
+        auto combiAfter = pcg.decodeCombi(0, 0);
+        CHECK(combiAfter.has_value());
+        if (combiAfter) {
+            CHECK_EQ(combiAfter->timbres[2].number, 0, "Combi Timbre repointed: number now 0");
+            CHECK_EQ(combiAfter->timbres[2].rawBankCode, 0, "Combi Timbre repointed: raw code (already 0)");
+            CHECK(combiAfter->timbres[2].status == kronos::TimbreStatus::Internal);  // status byte untouched by the repoint
+        }
+    }
+
+    // --- Rejected: no such Program to keep -----------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.resolveDuplicates(99, 0, {}, {});
+        CHECK(!result.ok);
+    }
+
+    // --- Rejected: template size doesn't match the duplicate's own
+    // bank's record size -- all-or-nothing, writes nothing -------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        const std::vector<uint8_t> wrongSize(4, 0);  // real bank 0 record size in this fixture is 32
+        auto result = pcg.resolveDuplicates(0, 0, wrongSize, wrongSize);
+        CHECK(!result.ok);
+
+        auto stillDuplicate = pcg.decodeProgram(0, 1);
+        CHECK(stillDuplicate.has_value());
+        if (stillDuplicate) {
+            CHECK_EQ(stillDuplicate->name, std::string("Test Program A"),
+                     "size-mismatch rejection writes nothing -- duplicate untouched");
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -940,6 +1105,7 @@ int main() {
     testHashProgramRecord();
     testPcgFileEndToEnd();
     testSaveRoundTrip();
+    testResolveDuplicates();
 
     if (g_failures > 0) {
         std::fprintf(stderr, "\n%d check(s) FAILED\n", g_failures);

@@ -34,6 +34,13 @@ target_include_directories(kronos_editor PRIVATE
 
 target_compile_definitions(kronos_editor PRIVATE
     EDITOR_FRONTEND_DIR="${CMAKE_CURRENT_SOURCE_DIR}/frontend"
+    # Read live off disk, same as EDITOR_FRONTEND_DIR above -- resources/ is
+    # small (a couple of raw Program-record templates, see resources/
+    # Init-Program-HD1.raw/Init-Program-EXi.raw) and not yet wired into
+    # EDITOR_EMBED_RESOURCES' release-build embedding below. That's a known,
+    # deliberately deferred gap (no Release build is packaged/shipped yet),
+    # not an oversight -- see STATE.md.
+    EDITOR_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
 )
 
 if (EDITOR_EMBED_RESOURCES)

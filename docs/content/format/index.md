@@ -574,10 +574,23 @@ known-good template for a future "clear a Program slot" feature -- see
 `resources/Init-Program-HD1.raw`/`Init-Program-EXi.raw`, both 4960 bytes,
 extracted from a representative slot in `setlist_test_2.PCG` and confirmed
 byte-identical against the same two names' records in the independently-
-different `test_1.PCG`. No write path uses these yet; this was extraction
-only, for a planned Duplicates-panel feature (keep one copy of a duplicate
-Program, clear every other duplicate slot back to its bank's Init Program,
-repoint Combi/Set List references to the kept one -- see `STATE.md`).
+different `test_1.PCG`. That write path exists now (see `STATE.md`
+entries 32/33): the Duplicates panel's "keep this one" button clears every
+OTHER duplicate to the matching template and repoints Combi/Set List
+references to the kept slot.
+
+**Name field deliberately customized (2026-08-14)**: once the write path
+was real, the stored bytes' actual 24-byte name field (Korg's own real
+factory content, `"Init Program"`/`"Init EXi Program"`) turned out too
+subtle in the UI -- a cleared slot looked identical to any other
+already-blank one. `resources/Init-Program-HD1.raw`/`Init-Program-EXi.raw`
+now carry `"- Init Program (HD1) -"`/`"- Init Program (EXi) -"` in that same
+24-byte field instead (22 characters each, fits with room to spare -- the
+field is a hard 24-byte limit, confirmed, not a guess), so a cleared slot
+reads as unmistakably different at a glance. Every other byte in both
+files -- including the still-unresolved Tone Adjust value below -- is
+still the real, cross-verified extracted content; only the name field was
+touched.
 
 While verifying: every "Init Program"/"Init EXi Program" slot is byte-
 identical to every other slot of the same name **within its own bank**, but

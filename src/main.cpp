@@ -132,6 +132,9 @@ int main() {
         view.bind("getProgramBankTypes",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getProgramBankTypes(args); });
         view.bind("copyProgram", [&bridge](const choc::value::ValueView& args) { return bridge.copyProgram(args); });
+        view.bind("resolveDuplicateProgram", [&bridge](const choc::value::ValueView& args) {
+            return bridge.resolveDuplicateProgram(args);
+        });
         view.bind("getDatasetInternals",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getDatasetInternals(args); });
     };

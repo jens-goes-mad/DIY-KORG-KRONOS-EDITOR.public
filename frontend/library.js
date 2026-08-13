@@ -19,7 +19,15 @@
 // phased roadmap this is Phase 1 of.
 function createLibraryPanels(
   root,
-  { log, getDatasetId, getProgramBankType, onDropProgram, onJumpToInstrument, onJumpToSetlist }
+  {
+    log,
+    getDatasetId,
+    getProgramBankType,
+    onDropProgram,
+    onJumpToInstrument,
+    onJumpToSetlist,
+    onRefreshOppositeLibrary,
+  }
 ) {
   root.innerHTML = `
     <input class="filter-input library-filter input is-small" type="text" placeholder="Filter / search..." />
@@ -861,9 +869,30 @@ function createLibraryPanels(
       // Visible on the button itself, not just a hover-only title -- a
       // native app's tooltips are far less discoverable than a browser's.
       btn.textContent = `${label} (Combi ${combiText} / Set List #${p.setlistUsageCount})`;
-      btn.title = `${label} -- Combi: ${combiText} / Set List: #${p.setlistUsageCount}`;
-      btn.addEventListener("click", () => {
-        showToast(`Duplicate handling for "${label}" isn't built yet -- see STATE.md.`);
+      btn.title = `Keep ${label} as this group's only copy -- clears every OTHER duplicate to its bank's Init Program, and repoints their Combi/Set List references here.`;
+      // Applies immediately, no confirm step -- matches every other write
+      // in this app (drag-and-drop, Program copy, A-Z sort), per explicit
+      // request. See PcgFile::resolveDuplicates()'s own doc comment for
+      // the full behavior; combiRefsSkipped only shows up in the toast
+      // when non-zero, since it's 0 for the vast majority of real cases
+      // now that all 20 Program banks have a confirmed Combi Timbre code.
+      btn.addEventListener("click", async () => {
+        const result = await window.resolveDuplicateProgram(getDatasetId(), p.bank, p.number);
+        if (!result.ok) {
+          showToast(result.error);
+          return;
+        }
+        showToast(
+          `Kept ${label} -- cleared ${result.clearedPrograms} duplicate(s), ` +
+            `repointed ${result.setlistRefsRepointed} Set List slot(s), ${result.combiRefsRepointed} Combi Timbre(s)` +
+            (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
+        );
+        await load();  // duplicate group is gone (or shrunk); Programs/Combis tables also changed
+        // The opposite pane's own Library tables are a SEPARATE copy of
+        // this same data (each pane's createLibraryPanels() loads and
+        // caches independently) -- if it's showing this same dataset, it
+        // has no other way to learn the file just changed underneath it.
+        await onRefreshOppositeLibrary(getDatasetId());
       });
       row.appendChild(btn);
     }

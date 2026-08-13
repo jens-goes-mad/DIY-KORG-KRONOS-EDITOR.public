@@ -766,6 +766,104 @@ std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const {
     return groups;
 }
 
+PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int keepNumber,
+                                                              const std::vector<uint8_t>& hd1InitBytes,
+                                                              const std::vector<uint8_t>& exiInitBytes) {
+    ResolveDuplicatesResult result;
+
+    auto keepIt = std::find_if(programs_.begin(), programs_.end(), [&](const ProgramInfo& p) {
+        return p.bank == keepBank && p.number == keepNumber;
+    });
+    if (keepIt == programs_.end()) {
+        result.error = "No such Program to keep";
+        return result;
+    }
+    const uint64_t keepHash = keepIt->contentHash;
+
+    std::vector<ProgramInfo> duplicates;
+    for (const auto& p : programs_) {
+        if (p.bank == keepBank && p.number == keepNumber) continue;
+        if (p.contentHash == keepHash) duplicates.push_back(p);
+    }
+
+    // Validate every distinct bank type's template size BEFORE writing
+    // anything -- all-or-nothing, see this method's own doc comment.
+    for (const auto& dup : duplicates) {
+        const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
+        const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
+        if (templateBytes.size() != loc.bytesPerRecord) {
+            result.error = "Init Program template size (" + std::to_string(templateBytes.size()) +
+                            " bytes) doesn't match bank " + std::to_string(dup.bank) + "'s own record size (" +
+                            std::to_string(loc.bytesPerRecord) + " bytes)";
+            return result;
+        }
+    }
+
+    const int keepRawCode = confirmedTimbreCodeForProgramBank(keepBank);
+
+    for (const auto& dup : duplicates) {
+        const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
+        const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
+        putProgramRecordBytes(dup.bank, dup.number, templateBytes);
+        result.clearedPrograms++;
+
+        for (auto& setlist : setlists_) {
+            for (auto& song : setlist.songs) {
+                if (!song.params.found || !song.params.isProgram) continue;
+                if (song.params.bank != dup.bank || song.params.number != dup.number) continue;
+
+                auto bytes = songRecordBytes(setlist.index, song.index);
+                if (!bytes) continue;  // shouldn't happen -- this song was just read from setlists_ itself
+                (*bytes)[kSbkBankOffset] =
+                    static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (keepBank & kSbkBankMask));
+                (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(keepNumber);
+                putSongRecordBytes(setlist.index, song.index, *bytes);
+                result.setlistRefsRepointed++;
+            }
+        }
+
+        // dupRawCode<0 means dup.bank itself has no confirmed Timbre code --
+        // structurally impossible to know whether any Combi Timbre
+        // references it at all (same reasoning as combiUsagesForProgram()'s
+        // own early-return for an unconfirmed bank), so there's nothing to
+        // find, count, or repoint for this duplicate's Combi side. Nothing
+        // else here depends on Set List repointing above having already
+        // run -- Combi Timbre references are a completely separate byte
+        // range/record type, untouched by it.
+        const int dupRawCode = confirmedTimbreCodeForProgramBank(dup.bank);
+        if (dupRawCode < 0) continue;
+
+        for (const auto& combi : combis_) {
+            std::vector<int> matchingTimbres;
+            for (int i = 0; i < static_cast<int>(combi.timbres.size()); ++i) {
+                const auto& t = combi.timbres[static_cast<size_t>(i)];
+                if (!t.isDefault && t.rawBankCode == dupRawCode && t.number == dup.number) matchingTimbres.push_back(i);
+            }
+            if (matchingTimbres.empty()) continue;
+
+            // We KNOW these Timbres reference dup.bank/dup.number (dupRawCode
+            // is confirmed) but can't safely translate keepBank to its own
+            // raw code -- count them as skipped rather than writing a
+            // guessed destination code.
+            if (keepRawCode < 0) {
+                result.combiRefsSkipped += static_cast<int>(matchingTimbres.size());
+                continue;
+            }
+
+            auto bytes = combiRecordBytes(combi.bank, combi.number);
+            if (!bytes) continue;  // shouldn't happen -- this combi was just read from combis_ itself
+            for (int i : matchingTimbres) {
+                writeTimbreProgramRef(bytes->data(), bytes->size(), i, keepNumber, keepRawCode);
+                result.combiRefsRepointed++;
+            }
+            putCombiRecordBytes(combi.bank, combi.number, *bytes);
+        }
+    }
+
+    result.ok = true;
+    return result;
+}
+
 std::vector<PcgFile::ProgramBankTypeEntry> PcgFile::programBankTypes() const {
     std::vector<ProgramBankTypeEntry> result;
     result.reserve(programBankLocations_.size());
@@ -879,21 +977,42 @@ std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile&
     }
 
     std::copy(srcRecord, srcRecord + dstLoc.bytesPerRecord, data_.begin() + static_cast<long>(dstOff));
+    refreshProgramInfo(dstBank, dstNumber);
 
-    const uint8_t* dstRecord = &data_[dstOff];
-    ProgramFields fields = decodeProgramFields(dstRecord, dstLoc.bytesPerRecord, dstBank, dstNumber);
-    uint64_t hash = hashProgramRecord(dstRecord, dstLoc.bytesPerRecord);
-    ProgramInfo updated{fields.bank, fields.number, fields.name, hash, dstLoc.bankType};
+    return std::nullopt;
+}
+
+void PcgFile::refreshProgramInfo(int bank, int number) {
+    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
+    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
+    const uint8_t* record = &data_[off];
+    ProgramFields fields = decodeProgramFields(record, loc.bytesPerRecord, bank, number);
+    uint64_t hash = hashProgramRecord(record, loc.bytesPerRecord);
+    ProgramInfo updated{fields.bank, fields.number, fields.name, hash, loc.bankType};
 
     auto it = std::find_if(programs_.begin(), programs_.end(),
-                            [&](const ProgramInfo& p) { return p.bank == dstBank && p.number == dstNumber; });
+                            [&](const ProgramInfo& p) { return p.bank == bank && p.number == number; });
     if (it != programs_.end()) {
         *it = updated;
     } else {
         programs_.push_back(updated);
     }
+}
 
-    return std::nullopt;
+void PcgFile::refreshCombiInfo(int bank, int number) {
+    const auto& loc = combiBankLocations_[static_cast<size_t>(bank)];
+    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
+    const uint8_t* record = &data_[off];
+    CombiFields fields = decodeCombiFields(record, loc.bytesPerRecord, bank, number);
+    CombiInfo updated{fields.bank, fields.number, fields.name, fields.timbres};
+
+    auto it = std::find_if(combis_.begin(), combis_.end(),
+                            [&](const CombiInfo& c) { return c.bank == bank && c.number == number; });
+    if (it != combis_.end()) {
+        *it = updated;
+    } else {
+        combis_.push_back(updated);
+    }
 }
 
 std::optional<CombiInfo> PcgFile::decodeCombi(int bank, int number) const {
@@ -909,6 +1028,32 @@ std::optional<CombiInfo> PcgFile::decodeCombi(int bank, int number) const {
     return CombiInfo{fields.bank, fields.number, fields.name, fields.timbres};
 }
 
+std::optional<std::vector<uint8_t>> PcgFile::combiRecordBytes(int bank, int number) const {
+    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) return std::nullopt;
+    const auto& loc = combiBankLocations_[static_cast<size_t>(bank)];
+    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return std::nullopt;
+
+    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
+    if (off + loc.bytesPerRecord > data_.size()) return std::nullopt;
+
+    return std::vector<uint8_t>(data_.begin() + static_cast<long>(off),
+                                 data_.begin() + static_cast<long>(off + loc.bytesPerRecord));
+}
+
+bool PcgFile::putCombiRecordBytes(int bank, int number, const std::vector<uint8_t>& bytes) {
+    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) return false;
+    const auto& loc = combiBankLocations_[static_cast<size_t>(bank)];
+    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return false;
+    if (bytes.size() != loc.bytesPerRecord) return false;
+
+    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
+    if (off + loc.bytesPerRecord > data_.size()) return false;
+
+    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(off));
+    refreshCombiInfo(bank, number);
+    return true;
+}
+
 std::optional<std::vector<uint8_t>> PcgFile::programRecordBytes(int bank, int number) const {
     if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return std::nullopt;
     const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
@@ -919,6 +1064,20 @@ std::optional<std::vector<uint8_t>> PcgFile::programRecordBytes(int bank, int nu
 
     return std::vector<uint8_t>(data_.begin() + static_cast<long>(off),
                                  data_.begin() + static_cast<long>(off + loc.bytesPerRecord));
+}
+
+bool PcgFile::putProgramRecordBytes(int bank, int number, const std::vector<uint8_t>& bytes) {
+    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return false;
+    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
+    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return false;
+    if (bytes.size() != loc.bytesPerRecord) return false;
+
+    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
+    if (off + loc.bytesPerRecord > data_.size()) return false;
+
+    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(off));
+    refreshProgramInfo(bank, number);
+    return true;
 }
 
 std::optional<std::vector<uint8_t>> PcgFile::songRecordBytes(int setlistIndex, int songIndex) const {
@@ -953,7 +1112,23 @@ bool PcgFile::putSongRecordBytes(int setlistIndex, int songIndex, const std::vec
     Song& song = setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)];
     song.params = readSlotParams(data_.data(), songOff, data_.size());
     song.comment = readComment(data_.data(), songOff, data_.size());
+    song.instrumentName = song.params.found
+                               ? resolveInstrumentName(song.params.isProgram, song.params.bank, song.params.number)
+                               : std::string();
     return true;
+}
+
+std::string PcgFile::resolveInstrumentName(bool isProgram, int bank, int number) const {
+    if (isProgram) {
+        for (const auto& p : programs_) {
+            if (p.bank == bank && p.number == number) return p.name;
+        }
+    } else {
+        for (const auto& c : combis_) {
+            if (c.bank == bank && c.number == number) return c.name;
+        }
+    }
+    return {};
 }
 
 std::optional<std::vector<uint8_t>> PcgFile::nameRecordBytes(int setlistIndex, int songIndex) const {

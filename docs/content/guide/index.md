@@ -50,6 +50,15 @@ flips left and right.
 
 ![Flip!](DIY-KE-003-FlipPanes.png)
 
+### Showing only one pane
+
+The **Left only / Both / Right only** buttons in the top-right corner of the window hide
+the other pane and expand the remaining one to full width -- useful on a small screen where
+two half-width panes side by side feel cramped. This always means "whichever pane is
+currently on that side," not a fixed pane -- if you've swapped panes with **⇄** first,
+"Left only" still shows whatever is visually on the left afterward. Nothing about either
+pane's data changes; it's a display toggle only, same as the swap button.
+
 ## The Setlist pane
 
 Browse any one of the file's 128 Set Lists, 128 slots each, via the dropdown at the top.
@@ -110,10 +119,33 @@ handy for starting a gig's list from an existing prepared one and then only twea
 handful of slots that need to change, rather than dragging all 128 by hand. The destination
 Set List keeps its own name; only its song slots are replaced.
 
-### Jumping to a Program or Combi
+### Jumping to a Program, Combi, or Set List slot
 
-Click a slot's **Bank** cell to jump straight to that exact Program or Combi in the same
-pane's Programs/Combis view.
+Several places in the app cross-link to each other -- click a bank/number reference and the
+same pane switches to the right category, expands that exact row, and scrolls it into view:
+
+- A Setlist slot's **Bank** cell jumps to that exact Program or Combi.
+- A Combi's expanded Timbre list shows each Timbre's own Program reference as a button (when
+  that Timbre's raw bank code is one of the confirmed ones -- see
+  [The file format](/format) for what "confirmed" means here) -- click it to jump straight
+  to that Program.
+- A Program's expanded usage row lists every Set List slot and every Combi that reference
+  it, each as its own button -- click a Set List entry to jump to that exact slot (selecting
+  its Set List first if needed), or a Combi entry to jump to that Combi.
+- A Combi's own "Set Lists" column (in the Combis table) shows a pill per Set List that
+  references it -- click a pill to jump to that slot, same as above.
+
+Every jump always stays within the pane you clicked in -- it never affects the opposite
+pane, even if both are showing the same dataset.
+
+### Back and Forward
+
+Each pane keeps its own history of the last 10 jumps (any of the kinds above), with **←**/
+**→** buttons next to that pane's category tabs. Back returns you to the exact row you
+jumped *from*, not just its category -- e.g. jumping from a Setlist slot to a Program and
+clicking Back lands you back on that same Setlist slot, scrolled into view, not just the
+Setlist tab in general. A fresh jump made after going Back discards whatever was ahead in
+the history, the same way a browser's forward button works.
 
 ### Editing a slot: General and Comment
 
@@ -153,15 +185,35 @@ which Set List slots reference them.
 
 ### Programs
 
-TBD
+Expanding a Program row shows two lists: every **Set List slot** that references it, and
+(where confirmed -- see [The file format](/format) for which banks that covers) every
+**Combi** that references it through one of its Timbres. Each entry is its own jump button
+(see "Jumping to a Program, Combi, or Set List slot" above), so you can go straight from a
+Program to everywhere it's actually used.
 
 ### Combi
+
+Expanding a Combi row shows all 16 Timbre slots, each with its own referenced Program (when
+assigned) as a jump button, and its on/off/engine-type status.
 
 ![Combi References](DIY-KE-006-CombiReferences.png)
 
 ### Duplicates
 
-TBD
+Groups Programs that are byte-for-byte identical (a real hash of the raw record, not just a
+matching name), one row per group. Expand a group to see every copy as its own button.
+
+Clicking a copy's button makes it **the only version**: every *other* copy in that group is
+cleared back to a blank slot -- its bank's own factory-default template, HD-1 or EXi
+depending on that copy's engine type -- and every Set List slot or Combi Timbre that
+referenced any of the cleared copies is repointed to the one you clicked instead. A cleared
+slot's name reads `- Init Program (HD1) -` or `- Init Program (EXi) -` (deliberately more
+visible than Korg's own plain `Init Program`/`Init EXi Program`, so a cleared slot is
+unmistakable at a glance rather than looking like any other blank one).
+
+This applies immediately -- no confirmation step, no undo, same as every other write in
+this app -- and shows a toast reporting exactly what changed (how many duplicates were
+cleared, how many Set List slots and Combi Timbres were repointed).
 
 ### Internals
 
@@ -174,8 +226,8 @@ looking for isn't showing up anywhere else either.
 ## Saving your changes
 
 Every edit above (Sort, drag-and-drop reorders/copies, Color/Volume/Comment, Program
-copies) writes straight into the dataset's own in-memory copy of the file's bytes.
-**Nothing is written to disk until you explicitly save.**
+copies, resolving a duplicate) writes straight into the dataset's own in-memory copy of the
+file's bytes. **Nothing is written to disk until you explicitly save.**
 
 Click **Save As...** next to a pane's dataset selector to write that pane's dataset to a
 file via a native Save dialog, pre-filled with its original filename. There's no
@@ -194,7 +246,9 @@ you built.
   isn't yet part of what Save As writes out. Same-Set-List reorders/copies and Program
   copies are fully save-durable.
 - Multi-select (Ctrl/Cmd-click) doesn't have a bulk action wired up to it yet.
-- There's no way yet to delete a duplicate Program and repoint the Combis that referenced
-  it at the single kept copy -- Duplicates can find them, but cleanup is still manual.
+- Resolving a duplicate can only repoint a Combi Timbre reference to/from a Program bank
+  whose raw Timbre bank code is independently confirmed (see [The file format](/format) --
+  in practice this covers every real bank on a real backup, but if a reference can't be
+  safely repointed the toast says so explicitly rather than silently skipping it).
 - No dirty-tracking or autosave, as above -- save deliberately, and often, if you're doing
   a long editing session.

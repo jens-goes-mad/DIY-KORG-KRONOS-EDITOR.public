@@ -205,6 +205,18 @@ public:
     // than only mutating in-memory bookkeeping -- see STATE.md.
     choc::value::Value copyProgram(const choc::value::ValueView& args);
 
+    // [datasetId, bank, number] -> {ok, clearedPrograms, setlistRefsRepointed,
+    // combiRefsRepointed, combiRefsSkipped} or {ok:false, error}. Makes the
+    // given Program "the" copy of its byte-exact duplicate group (Duplicates
+    // panel) -- every OTHER duplicate gets cleared to its own bank's factory
+    // Init Program template, and every Set List/Combi reference to a cleared
+    // duplicate gets repointed to this one. See PcgFile::resolveDuplicates()'s
+    // own doc comment for the full behavior, including the Combi-repointing
+    // caveat (combiRefsSkipped). Reads resources/Init-Program-HD1.raw/
+    // Init-Program-EXi.raw fresh off disk on every call (small files, no
+    // caching needed) via EDITOR_RESOURCES_DIR -- see CMakeLists.txt.
+    choc::value::Value resolveDuplicateProgram(const choc::value::ValueView& args);
+
     // [datasetId] -> {ok, topLevelChunks:[...], programBanks:[{index,
     // bankType, numRecords, bytesPerRecord}...], combiBanks:[{index,
     // numRecords, bytesPerRecord}...]} or {ok:false, error}. Backs the

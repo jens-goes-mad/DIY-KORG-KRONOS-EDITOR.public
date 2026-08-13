@@ -452,7 +452,11 @@
       topLevelChunks: ["DIV1", "SLS1", "PRG1", "CMB1"],
       programBanks: [
         { index: 0, bankType: "HD-1", numRecords: 6, bytesPerRecord: 4960 },
-        { index: 1, bankType: "EXi", numRecords: 6, bytesPerRecord: 3706 },
+        // Real data (two independent backup files, checked 2026-08-13):
+        // EXi banks are ALSO 4960 bytes, not the 3706 this mock used to
+        // show -- see PcgFile.h's programRecordBytes()/copyProgramFrom()
+        // doc comments and STATE.md entry 31 for the correction.
+        { index: 1, bankType: "EXi", numRecords: 6, bytesPerRecord: 4960 },
       ],
       combiBanks: [
         { index: 0, numRecords: 3, bytesPerRecord: 4048 },
@@ -539,6 +543,56 @@
       });
     }
     return ok();
+  };
+
+  // Mirrors PcgFile::resolveDuplicates() -- see its own doc comment in
+  // PcgFile.h for the real behavior this reproduces in mock terms. Same
+  // mock simplifications as elsewhere in this file: `name` stands in for
+  // real byte-identical content (findDuplicatePrograms() below/
+  // copyProgram() above), and a Combi Timbre's rawBankCode is treated as
+  // directly equal to a Program's own `bank` (getProgramUsage()'s
+  // combiUsages computation above already makes this same simplification --
+  // mock mode has no real kConfirmedTimbreBanks translation table to
+  // replicate, so combiRefsSkipped is always 0 here).
+  window.resolveDuplicateProgram = (datasetId, bank, number) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+
+    const keep = dataset.programs.find((p) => p.bank === bank && p.number === number);
+    if (!keep) return fail("No such Program to keep");
+
+    const duplicates = dataset.programs.filter(
+      (p) => p.name && p.name === keep.name && !(p.bank === bank && p.number === number)
+    );
+
+    let clearedPrograms = 0;
+    let setlistRefsRepointed = 0;
+    let combiRefsRepointed = 0;
+
+    for (const dup of duplicates) {
+      dup.name = dup.bankType === "HD-1" ? "Init Program" : "Init EXi Program";
+      clearedPrograms++;
+
+      for (const setlistIndex of Object.keys(dataset.songs)) {
+        for (const song of dataset.songs[setlistIndex]) {
+          if (!song.isProgram || song.bank !== dup.bank || song.number !== dup.number) continue;
+          song.bank = bank;
+          song.number = number;
+          setlistRefsRepointed++;
+        }
+      }
+
+      for (const combi of dataset.combis) {
+        for (const t of combi.timbres) {
+          if (t.isDefault || t.rawBankCode !== dup.bank || t.number !== dup.number) continue;
+          t.rawBankCode = bank;
+          t.number = number;
+          combiRefsRepointed++;
+        }
+      }
+    }
+
+    return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
   window.findDuplicatePrograms = (datasetId) => {

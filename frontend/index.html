@@ -36,9 +36,27 @@
       <button class="button is-small mr-3 open-file-button" type="button" title="Open a .PCG/.SNG file via a native file picker -- lands in whichever pane is empty, or just becomes selectable from either pane's dropdown if both are occupied">Open...</button>
       <h1 class="title is-5 mb-0" title="Click &quot;Open...&quot; above to load a .PCG/.SNG file as a new dataset, or pick an already-open one from a pane's selector -- both panes on the same dataset share edits. Each pane's Setlist/Programs/Combis/Duplicates tabs browse whichever dataset it's showing. Setlist rows: drop directly on another row to copy it over, or between two rows to insert (shifting the rest down); drag across panes/datasets to copy a Program row.">DIY Kronos Editor</h1>
     </div>
-    <div class="level-right topbar-loading" hidden>
-      <div class="topbar-loading-spinner"></div>
-      <span class="topbar-loading-text">Loading...</span>
+    <div class="level-right">
+      <!-- Which pane(s) are visible -- "Both" (default) shows the normal
+           side-by-side split; "Left"/"Right" hides the other one and
+           expands the remaining pane to full width, useful on a narrow/
+           small screen where seeing two half-width panes at once is
+           cramped. Reflects whichever pane is currently on that VISUAL
+           side, not a fixed paneId -- see app.js's swapPanes()/
+           setPaneVisibility(): swapping panes and toggling this are
+           independent, so this always means "the pane currently shown on
+           the left/right," even after a swap. -->
+      <div class="pane-visibility-bar">
+        <div class="buttons has-addons">
+          <button class="button is-small pane-visibility-button" data-visibility="left" type="button" title="Show only the left pane">Left only</button>
+          <button class="button is-small is-link pane-visibility-button" data-visibility="both" type="button" title="Show both panes">Both</button>
+          <button class="button is-small pane-visibility-button" data-visibility="right" type="button" title="Show only the right pane">Right only</button>
+        </div>
+      </div>
+      <div class="topbar-loading" hidden>
+        <div class="topbar-loading-spinner"></div>
+        <span class="topbar-loading-text">Loading...</span>
+      </div>
     </div>
   </header>
 
