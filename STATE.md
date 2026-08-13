@@ -2696,5 +2696,46 @@ App/UI:
       "unidentified codes" thread that started with entry 27's diagnostic
       scan. Fixed in `PcgFile.cpp`, `tests/pcg_file_test.cpp`,
       `library.js`, and docs/content/format/index.md §6.2/§8.
+  31. **BUILT (2026-08-13)**: `resources/Init-Program-HD1.raw` and
+      `resources/Init-Program-EXi.raw` -- real, cross-verified raw PBK1/
+      MBK1 Program record bytes for a Kronos-factory "Init Program"/"Init
+      EXi Program" slot, meant as this app's own known-good template for a
+      future "clear a Program slot" write path (no such write path exists
+      yet -- extraction only, this pass). Backing new `PcgFile::
+      programRecordBytes(bank, number)` accessor (mirrors songRecordBytes()/
+      nameRecordBytes()'s shape). Extracted from `setlist_test_2.PCG`
+      (a representative HD-1 slot at bank 12/number 13, and EXi at bank
+      19/number 21 -- first match of each by file order), then confirmed
+      byte-identical against the same two names' records in the
+      independently-different `test_1.PCG` -- genuinely stable Korg factory
+      content, not something specific to one backup.
+      - **Two real findings surfaced while verifying, both checked against
+        two independent real files, neither yet acted on**:
+        - `copyProgramFrom()`'s doc comment previously claimed HD-1=4960
+          bytes / EXi=3706 bytes -- the EXi figure was never actually
+          confirmed. Real data: every one of the 20 PRG1 sub-banks, HD-1 or
+          EXi alike, uses 4960-byte records in both real files checked.
+          Comment corrected in `PcgFile.h` (RECORD SIZE CORRECTION, not
+          silently changed).
+        - Every "Init Program"/"Init EXi Program" slot is byte-identical to
+          every OTHER slot of the same name **within its own bank**, but
+          bytes 2632-2633 differ consistently **across** banks (e.g. bank 12
+          vs bank 17, both HD-1) -- first suspected as a per-bank identity
+          tag. **RESOLVED same day**: cross-checked against Korg's own
+          official parameter reference (`docs/external/KORG/Prog_HD-1.txt`
+          and `Prog_EXi_Common.txt`, identical entry in both) -- it's "Tone
+          Adjust" / "Switch8 On Value", a real Program parameter, nothing
+          bank-identity-related. Still an open practical question, directly
+          relevant to the actual reason this was asked for: a planned
+          Duplicates-panel feature where clicking one copy of a duplicate
+          Program keeps it and overwrites every OTHER duplicate slot with
+          "the init program (according to the bank)" plus repoints their
+          Combi/Set List references. A factory Init Program's Tone Adjust
+          value isn't identical across every bank, so writing one bank's
+          template into a different bank carries over whichever value the
+          SOURCE bank's Init Program had -- not yet checked whether that's
+          harmless on real hardware. Flagged in `PcgFile.h`'s
+          `programRecordBytes()` doc comment so it isn't missed when that
+          write path actually gets built.
 
 === END STATE BLOCK ===

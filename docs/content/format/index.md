@@ -27,7 +27,7 @@ blindly. Field names are our own working labels, not necessarily Korg's
 internal terminology, unless stated otherwise.
 
 Two files were used throughout: a real full backup (`20210504.PCG`,
-~47.9MB) and two purpose-built test files the project owner created
+~47.9MB) and two purpose-built test files we created
 specifically to isolate individual fields (`setlist_test.PCG`,
 `setlist_test_2.PCG`, the latter ~36MB and including full instrument-bank
 data). Anything marked **CONFIRMED** below was checked against one or more
@@ -312,7 +312,7 @@ list for what bit 3 and bits 0-2 of +17 might still be doing.
 Both isolated and confirmed via a purpose-built test file (Set List 127,
 slots 0-4 for Font size, slots 8-19 for Transpose -- confirmed to be
 properly isolated this time, unlike the earlier Font size false start,
-see below) with the project owner giving the exact real values used.
+see below) with the exact real values used confirmed on real hardware.
 Both fields turn out to be a handful of bits packed across two otherwise-
 unrelated bytes rather than living in one clean byte of their own.
 
@@ -335,13 +335,13 @@ unsigned6 = ((byte13 >> 5) & 0x7) << 3 | ((byte17 >> 5) & 0x7)
 transpose = unsigned6 >= 32 ? unsigned6 - 64 : unsigned6
 ```
 
-Verified against all 12 of the project owner's real test values
+Verified against all 12 of our real test values
 (`-24, -23, -12, -11, -10, -1, 0, 1, 11, 12, 13, 24`) -- every single one
 round-trips exactly through this formula, no exceptions.
 
 **Why the earlier attempt failed**: the original "Font size" observation
 (`0x41, 0x01, 0xc1, 0x01`, recorded as unsolved) was never from isolated
-Font-size-only slots at all -- confirmed with the project owner. Those
+Font-size-only slots at all -- confirmed on real hardware. Those
 byte values are exactly the Color-sweep test's own edge-case slots
 (colors 17, 1, 49, 1 -- byte `+12`'s bits 6-7 set to non-zero, which the
 plain Color formula misreads as "colors beyond the documented 1-16
@@ -383,7 +383,7 @@ muted set -- none of the generic names exist at all:
 | 15 | Silver | `#546180` |
 | 16 | Slate | `#2a3149` |
 
-Hex values are the project owner's own on-screen reading, not a
+Hex values are our own on-screen reading, not a
 pixel-sampled measurement -- close enough to use directly (this app's UI
 brightens them a bit further for on-screen legibility, a purely cosmetic
 display-time adjustment, see `frontend/pane.js`'s `brightenHex()`), but not
@@ -467,7 +467,7 @@ at index 6, confirmed both by name (`INT-F`'s own real slot 0, "Doubled
 Screamer") and by a full round-trip: Combi U-A 016 Timbre 2 (raw bank 17,
 raw number 47) had been resolving to the wrong Program ("Xfade
 StagePianoATK Kn5", the old index-8 reading) until this fix -- index 6,
-record 47 is "EXi Overdrive Organ", exactly what the project owner
+record 47 is "EXi Overdrive Organ", exactly what we
 confirmed on the unit. USER-D/F/AA were independently confirmed the same
 way (index 9/11/13, matching "Vibraphone 2"/"Harmonic Bass/Lead"/"The
 Temple SW1" on real hardware). That also means `USER-A..G` is genuinely 7
@@ -484,7 +484,7 @@ in §6.2:
            12  USER-G     19  USER-GG
 ```
 
-**All 20 indices confirmed 2026-08-11**: the project owner checked every
+**All 20 indices confirmed 2026-08-11**: we checked every
 single position-0 Program name in the app against the real Kronos's own
 on-screen bank browser, for the entire list above -- every one matched
 exactly (`INT-A..F`, `USER-A..G`, `USER-AA..GG`), including the ones this
@@ -523,7 +523,7 @@ itself, which remains externally sourced only; see §7.)
 
 | Anchor | Type | Location found | Result |
 |---|---|---|---|
-| "Rolling in the Deep" | Combi | bank 7 (USER-A) / record 9 | Exact match -- Set List slot name, Combi name, and the project owner's own stated bank/number all agree |
+| "Rolling in the Deep" | Combi | bank 7 (USER-A) / record 9 | Exact match -- Set List slot name, Combi name, and our own stated bank/number all agree |
 | "Berlin Grand SW2 U.C." | Program | PRG1 bank 0 / record 0 | Exact match |
 | "Rain Again" | Program | PRG1 bank 0 / record 127 | Exact match |
 | "Subdivisions", "Perfect Kiss", "Sirius" | Program | PRG1 bank 0 / records 90, 91, 92 (consecutive) | Exact match -- confirmed Program uses the identical record layout/mechanism as Combi |
@@ -554,10 +554,49 @@ Song/Program slot's `bank>=20` signal and a Combi Timbre's confirmed
 `rawBankCode=6="GM"` are two separate bytes in two separate record types,
 confirmed independently of each other. Don't conflate them.
 
+### 5.5 Record size — CORRECTED 2026-08-13, and the factory "Init Program" template
+
+`PcgFile::copyProgramFrom()`'s own doc comment used to claim HD-1 records are
+4960 bytes and EXi records are 3706 bytes. The EXi figure was never actually
+checked against real bytes. Confirmed against `programBankInfo()` over two
+independent real backup files (`setlist_test_2.PCG` and `test_1.PCG`): every
+one of the 20 PRG1 sub-banks, HD-1 or EXi alike, uses 4960-byte records. The
+comment in `PcgFile.h` is corrected; `RecordSizeMismatch` in
+`copyProgramFrom()` is kept regardless as a belt-and-suspenders check, since
+a third real file could yet show a genuine stride difference this project
+hasn't hit.
+
+A new `PcgFile::programRecordBytes(bank, number)` accessor (mirrors
+`songRecordBytes()`/`nameRecordBytes()`'s shape) exposes one Program's raw
+record directly. First use: extracting Korg's own factory-default "Init
+Program" (HD-1) and "Init EXi Program" (EXi) record bytes as this app's own
+known-good template for a future "clear a Program slot" feature -- see
+`resources/Init-Program-HD1.raw`/`Init-Program-EXi.raw`, both 4960 bytes,
+extracted from a representative slot in `setlist_test_2.PCG` and confirmed
+byte-identical against the same two names' records in the independently-
+different `test_1.PCG`. No write path uses these yet; this was extraction
+only, for a planned Duplicates-panel feature (keep one copy of a duplicate
+Program, clear every other duplicate slot back to its bank's Init Program,
+repoint Combi/Set List references to the kept one -- see `STATE.md`).
+
+While verifying: every "Init Program"/"Init EXi Program" slot is byte-
+identical to every other slot of the same name **within its own bank**, but
+bytes 2632-2633 differ consistently **across** banks (e.g. bank 12 vs bank
+17, both HD-1) -- first suspected as a per-bank identity tag baked into the
+record. Cross-checked against Korg's own official parameter reference
+(`docs/external/KORG/Prog_HD-1.txt` and `Prog_EXi_Common.txt`, identical
+entry in both): it's "Tone Adjust" / "Switch8 On Value", a real Program
+parameter, nothing bank-identity-related. Still an open practical question
+for the planned Duplicates feature above: a factory Init Program's Tone
+Adjust value isn't identical across every bank, so writing one bank's
+template into a *different* bank's slot would carry over whichever value
+that source bank's Init Program happened to have -- not yet checked whether
+that reads as harmless on real hardware.
+
 ## 6. Combi Timbre references — CONFIRMED (Program refs), status byte CONFIRMED
 
 Each Combi record (`CMB1 > CBK1`, §5.1) has 16 Timbre slots, each optionally
-referencing a Program. Confirmed by the project owner providing several
+referencing a Program. Confirmed with several
 real Combis with known Timbre->Program assignments, and independently
 cross-checked against a third-party reverse-engineering of this format
 ([DaBlick/PCG-Tools](https://github.com/DaBlick/PCG-Tools), see
@@ -654,7 +693,7 @@ entirely rather than left around empty.
 **Raw code 30 = `USER-GG`, RESOLVED 2026-08-10**: real bytes from
 `setlist_test_2.PCG` (Combi U-A 016, Timbre 3: raw program 15, raw bank
 30) pointed at file-order index 19/record 15, which reads "JMJ THEREMIN"
-in that file -- and the project owner independently confirmed, by directly
+in that file -- and we independently confirmed, by directly
 browsing Program bank `USER-GG` position 15 on real hardware, that it
 really is "JMJ Theremin". Two independent paths (the raw Combi Timbre
 bytes, and a direct Program-bank browse) landing on the same name is
@@ -674,7 +713,7 @@ earlier misreading (2026-08-14)**: checked directly against real Combis in
 Piano 4" Timbre 7/index 6 has raw program=1/bank=28). This section briefly
 claimed `USER-E` was raw code 4 -- "a genuine surprise" breaking the
 contiguous 17-23 block every other single-letter USER bank sits in --
-based on the project owner's own real-hardware report for the same
+based on our own real-hardware report for the same
 "K-Lab: Katja's House" Combi's Timbre 7/index 6 (raw program=61/bank=4).
 That report was a misreading of the unit's display: re-checking the exact
 same Timbre confirmed real hardware actually shows `INT-E`, not `USER-E`,
@@ -687,7 +726,7 @@ program=73/bank=**21**) -- and 21 turns out to be exactly the "obvious"
 gap in `USER-A..G`'s 17-23 block after all (A=17,B=18,C=19,D=20,E=21,
 F=22,G=23, fully contiguous). Left as a methodology note rather than
 scrubbed from history: the original "genuine surprise" framing was itself
-the mistake, caught only because the project owner re-verified a specific
+the mistake, caught only because we re-verified a specific
 real-hardware reading instead of trusting the first transcription --
 exactly the kind of double-check this project's whole method depends on.
 `USER-FF` was the one remaining unconfirmed double-letter code, and the
@@ -720,7 +759,7 @@ too, including one `GM` example.
 
 **`GM` (raw code 6), PERMANENTLY indexless, confirmed 2026-08-12**: Combi
 U-A 030 "Bad Name" Timbre 2 -- raw bytes program=91/bank=6 in
-`setlist_test_2.PCG`, matching the project owner's real-hardware report
+`setlist_test_2.PCG`, confirmed on real hardware
 exactly ("code 6 - 091" -> `GM 092`). Unlike every other confirmed code
 above, `GM` is not "not yet" indexed -- it structurally can never be:
 `GM` is fixed MIDI-spec content, not one of the 20 stored PBK1/MBK1
@@ -734,18 +773,18 @@ reason -- `library.js`'s Timbre-bank-jump button only renders when a
 confirmed PBK1 index exists.
 
 **`G(1)`..`G(4)` (raw codes 7-10), same treatment, confirmed 2026-08-12**:
-Combi I-C 022 "Rainbow Bridge" (project owner's report said "Rainbow
+Combi I-C 022 "Rainbow Bridge" (our early note said "Rainbow
 Brodge" -- a typo, not a different Combi; the real name matches exactly)
 Timbres 1-4 -- raw bytes program=122/bank=7, program=122/bank=8,
 program=122/bank=9, program=122/bank=10 in `setlist_test_2.PCG`, all four
-matching the project owner's real-hardware report exactly. These sit
+confirmed on real hardware exactly. These sit
 right after `GM` (6) as a contiguous block, consistent with §5.2's own
 note that the real Program bank browser shows "GM" then "g(d)" right
 after `INT-F` -- very likely that same "g(d)" family (four separate
 banks?), though this project doesn't know Korg's own official name or
 purpose for `G(1)`..`G(4)` specifically, and isn't guessing. Same
 permanently-indexless treatment as `GM`: no PBK1 index, no Program name,
-no jump button. The project owner also reported the specific Program
+no jump button. We also recorded the specific Program
 names found there (program 122/"123": "Rain"/"Thunder"/"Wind"/"Stream" for
 `G(1)`/`G(2)`/`G(3)`/`G(4)` respectively) -- useful as confirmation these
 are real, distinct, content-bearing banks (and a suggestive hint they
@@ -760,8 +799,8 @@ confirmed 2026-08-13**: extend the same contiguous block right past
 055 "Prehistoric Predator" Timbres 5/6, Combi I-B 039 "Planetary
 Explosion" Timbre 5, Combi I-A 096 "Guitar Hero" Timbre 4). `g(8)` (code
 14) has NOT been checked -- not assumed just because the run around it
-fits. Lowercase this time, matching exactly what the project owner
-reported (`G(1)`..`G(4)` were reported uppercase) -- kept verbatim rather
+fits. Lowercase this time, matching exactly what was confirmed on real
+hardware (`G(1)`..`G(4)` were reported uppercase) -- kept verbatim rather
 than normalized, since it isn't confirmed which casing (if either
 consistently) the real Kronos UI uses. The reported Program names
 ("Bubble"/"Seashore"/"Jetplane"/"Polyphonic Synth") continuing right after
@@ -784,11 +823,11 @@ really is that common in practice.
 ### 6.3 A resolved "anomaly" (worth recording as a methodology note)
 
 An early Combi sample ("061 Sledgehammer") appeared to contradict this
-model: Timbre 3 and 4's raw bytes didn't match the Program numbers the
-project owner recalled from memory, and Timbres 5-9 (which the project
-owner believed were "active") read as all-zero/Off. Decoding the status
+model: Timbre 3 and 4's raw bytes didn't match the Program numbers we
+recalled from memory, and Timbres 5-9 (which we
+believed were "active") read as all-zero/Off. Decoding the status
 byte resolved this completely: Timbres 5-9 in that specific saved backup
-are genuinely `Off` in the file (not a parsing gap -- the project owner's
+are genuinely `Off` in the file (not a parsing gap -- our
 recollection of that Combi's live state didn't match what was actually in
 the saved backup), and Timbre 4's raw bytes (`number=85, bank=22`) decode
 cleanly to `USER-F-085` once bank 22 was identified -- not the
@@ -958,6 +997,14 @@ Recorded here for later, even though nothing below is wired into
     understood yet") are a real candidate for a per-chunk identity field
     that would fix this properly. Not yet investigated with real test data
     that's actually missing a known bank.
+14. **Mostly RESOLVED (2026-08-13), see §5.5**: a 2-byte field (offset
+    2632-2633) that differs between a factory "Init Program"'s bytes in
+    different banks turned out to be "Tone Adjust"/"Switch8 On Value" (a
+    real Program parameter, per Korg's own official reference), not a
+    per-bank identity tag as first suspected. Still open: whether writing
+    one bank's Init Program template into a different bank's slot (the
+    planned Duplicates-panel feature) is safe given that value isn't
+    identical across banks even for untouched factory content.
 
 ## 9. Where this is implemented
 
@@ -975,6 +1022,10 @@ Recorded here for later, even though nothing below is wired into
   hardware-validation helpers, not part of the shipped app: generate a
   matrix of Setlist Comment/Color/Volume/Font-size test permutations into a
   scratch file, for checking against a real Kronos by eye.
+- [`resources/Init-Program-HD1.raw`/`Init-Program-EXi.raw`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/tree/main/resources) --
+  real, extracted Korg factory "Init Program"/"Init EXi Program" record
+  bytes (see §5.5), meant as this app's own known-good template for a
+  future "clear a Program slot" feature. Not read by the app yet.
 - See the top-level [`README.md`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/README.md)
   for how to build/run the app, and
   [`STATE.md`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/STATE.md)

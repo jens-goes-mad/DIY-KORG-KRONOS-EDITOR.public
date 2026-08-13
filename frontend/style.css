@@ -231,30 +231,18 @@ body {
   font-size: 13px;
 }
 
-/* Dataset-select and the category tabs share one row, stacked below 1024px
-   and side by side from there up (Bootstrap's `col-12 col-lg-6` pattern,
-   per explicit request). First attempt used Bulma's own `.columns.is-
-   multiline` + `.column.is-12-mobile.is-6-desktop` -- reasoned through as
-   correct (mismatched 769px/1024px breakpoint tiers needing .is-multiline
-   to bridge them) but tested as not actually responding to the breakpoint
-   at all, and with no screen access here to debug Bulma's own minified
-   cascade further, written directly instead: plain flex-wrap with exactly
-   the one 1024px breakpoint asked for, nothing else to go wrong. */
+/* Two stacked full-width rows in the pane header -- dataset-select+Save on
+   its own line, then the category tabs+Back/Forward on the next, always (a
+   hard row break, per explicit request, replacing an earlier side-by-side-
+   above-1024px layout that used to share one row between the two). */
 .pane-header-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
 }
 
-.pane-header-col {
-  flex: 1 1 100%;  /* stacked, full width, below the breakpoint */
-}
-
-@media (min-width: 1024px) {
-  .pane-header-col {
-    flex: 1 1 0;  /* side by side, sharing the row equally, from 1024px up */
-    min-width: 0;
-  }
+.pane-header-row + .pane-header-row {
+  margin-top: 4px;
 }
 
 /* Holds the dataset selector and the "Save As..." button side by side --
@@ -276,16 +264,29 @@ body {
   white-space: nowrap;
 }
 
+/* Back/Forward jump-history buttons (pane.js's navBackButton/
+   navForwardButton) sit beside the category tabs, both on the tabs row --
+   stay their own natural width so the tabs (which can wrap onto a second
+   line, see below) get the rest of the row. */
+.tabs-row .nav-history-buttons {
+  flex: none;
+}
+
+.tabs-row .pane-category-tabs {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Bulma's own `.tabs` defaults to horizontal-scroll-on-overflow
    (`overflow-x: auto`, `white-space: nowrap` -- never wraps its own
-   items), fine when 4 tabs comfortably fit the half-width column above,
-   but a 5th (Internals) can overflow it, and since there's no visible
-   scrollbar affordance here, that just reads as the tab bar being cut
-   off. Override to wrap onto a second line instead, matching this pane's
-   own "stack rather than clip" responsive approach used everywhere else
-   (`.pane-header-row` above). `.tabs.pane-category-tabs` (two classes on
-   the same element pane.js already renders) is enough specificity to beat
-   Bulma's plain `.tabs` rule regardless of stylesheet order. */
+   items), fine when the row's plenty wide, but the Back/Forward buttons
+   sharing the row now narrow it, and with no visible scrollbar affordance
+   here a cut-off tab bar would just read as broken. Override to wrap onto
+   a second line instead, matching this pane's own "stack rather than clip"
+   responsive approach used everywhere else. `.tabs.pane-category-tabs`
+   (two classes on the same element pane.js already renders) is enough
+   specificity to beat Bulma's plain `.tabs` rule regardless of stylesheet
+   order. */
 .tabs.pane-category-tabs {
   overflow: visible;
   overflow-x: visible;
@@ -904,6 +905,33 @@ td.has-comment {
 .timbre-inactive-ref {
   color: var(--text-dim);
   font-style: italic;
+}
+
+/* Program usage-row entries (library.js's buildUsageRow()) -- .bank-jump-
+   button's width:100% is right for a table cell, but these live inside a
+   <li> in a variable-width list, so hug the label's own width instead of
+   stretching to fill the panel. */
+.usage-jump-button {
+  width: auto;
+  display: inline-block;
+  text-align: left;
+}
+
+/* Combis table's "Set Lists" pills (library.js's badgesCell()) -- a
+   `<button class="tag">` rather than Bulma's usual `<span class="tag">`, so
+   it can jump to that Set List slot. Bulma's own `.tag` rule styles
+   background/color/radius/padding regardless of element, but a bare
+   `<button>` still carries the browser's own default border/font -- reset
+   those explicitly rather than relying on Bulma's cascade order to already
+   cover it. */
+.setlist-usage-badge {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.setlist-usage-badge:hover {
+  filter: brightness(1.15);
 }
 
 /* Duplicates' expanded group detail (library.js's buildDuplicateGroupRow())

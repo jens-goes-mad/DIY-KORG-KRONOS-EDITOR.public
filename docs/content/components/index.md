@@ -12,7 +12,7 @@ menu:
 toc: true
 ---
 This page is about *how the app is built*, not the file format itself (see
-[The file format](/format) for that). It exists because the project owner wants more
+[The file format](/format) for that). It exists because we want more
 contributors to be able to join in -- most comparable Kronos tooling projects out there are
 either dead or tied to one platform, and lowering the bar to touch this codebase is a
 deliberate goal, not an afterthought.

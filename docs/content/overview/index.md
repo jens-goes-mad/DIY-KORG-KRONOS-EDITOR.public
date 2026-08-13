@@ -60,20 +60,25 @@ None of this is documented by Korg beyond the user manual's *behavior*. The on-d
 - **Combi Timbre-to-Program references**: each Combi's 16 Timbres sit at a fixed
   188-byte stride starting 4806 bytes into the Combi's own record: byte 0 is the
   referenced Program's number, byte 1 a raw bank code, byte 2 an on/off/engine-type
-  status (Internal/External/Ex2/Off). Confirmed bank codes so far: `INT-A`=0, `INT-B`=1,
-  `INT-C`=2, `INT-D`=3, `USER-A`=17, `USER-D`=20, `USER-F`=22, `USER-AA`=24 -- enough to
-  see the shape of an absolute, gapped numbering scheme (not simple file order), though
-  not every bank is mapped yet. Independently cross-checked against a third-party
-  reverse-engineering of this same format,
+  status (Internal/External/Ex2/Off). All 20 Program banks now have a confirmed raw
+  Combi Timbre bank code, plus 9 more permanently-indexless codes (`GM` and the "g(d)"
+  family) confirmed by name only -- an absolute, gapped numbering scheme (not simple
+  file order), fully mapped as of 2026-08-14. Independently cross-checked against a
+  third-party reverse-engineering of this same format,
   [DaBlick/PCG-Tools](https://github.com/DaBlick/PCG-Tools) -- both sources agree at
   every point they overlap, and it resolved what first looked like a gap in this
   project's own model (turned out to be a Combi sample whose remembered state didn't
   match what was actually saved in the file, not a parsing error).
+- **Factory "Init Program" template bytes**: the raw record Korg ships for every
+  untouched Program slot (`Init Program` for HD-1 banks, `Init EXi Program` for EXi),
+  extracted and cross-verified against two independent real backup files -- meant as
+  this app's own known-good bytes for a future "clear a Program slot" feature, rather
+  than guessing what an empty record should contain.
 
 Deliberately **not** solved yet: a handful of reserved bytes whose purpose isn't known
 (byte +17 still has unexplained bits even after Font size/Transpose were found), Drum
-Kits/Wave Sequences/Global settings, and exactly which of the 20 Program banks
-corresponds to which on-screen label beyond the ones directly confirmed above.
+Kits/Wave Sequences/Global settings, and whether a real backup can omit a Program/Combi
+bank entirely (every file examined so far has had a complete, canonically-ordered set).
 
 ## The editor
 

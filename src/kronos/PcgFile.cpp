@@ -909,6 +909,18 @@ std::optional<CombiInfo> PcgFile::decodeCombi(int bank, int number) const {
     return CombiInfo{fields.bank, fields.number, fields.name, fields.timbres};
 }
 
+std::optional<std::vector<uint8_t>> PcgFile::programRecordBytes(int bank, int number) const {
+    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return std::nullopt;
+    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
+    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return std::nullopt;
+
+    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
+    if (off + loc.bytesPerRecord > data_.size()) return std::nullopt;
+
+    return std::vector<uint8_t>(data_.begin() + static_cast<long>(off),
+                                 data_.begin() + static_cast<long>(off + loc.bytesPerRecord));
+}
+
 std::optional<std::vector<uint8_t>> PcgFile::songRecordBytes(int setlistIndex, int songIndex) const {
     if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= sbkSongsStart_.size()) return std::nullopt;
     if (songIndex < 0 || static_cast<size_t>(songIndex) >= setlists_[static_cast<size_t>(setlistIndex)].songs.size())

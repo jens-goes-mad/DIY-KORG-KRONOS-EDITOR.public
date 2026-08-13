@@ -312,10 +312,16 @@ public:
     //    engine types (HD-1 vs EXi) -- see ProgramBankType's own doc
     //    comment for why a Program can only be loaded into a matching bank.
     //  - RecordSizeMismatch: defensive second check on top of the above --
-    //    should already be implied by matching bank type (HD-1=4960 bytes,
-    //    EXi=3706), kept as a belt-and-suspenders check since
-    //    ProgramBankTypeResult::tagMatchesStride can be false for real data
-    //    this project hasn't independently verified yet.
+    //    should already be implied by matching bank type. CORRECTED
+    //    2026-08-13: this comment used to claim HD-1=4960 bytes, EXi=3706 --
+    //    that EXi figure was never actually confirmed against real bytes.
+    //    Checked directly against two independent real backup files
+    //    (programBankInfo() over both): every one of the 20 PRG1 sub-banks,
+    //    HD-1 or EXi alike, uses 4960-byte records. Kept as a belt-and-
+    //    suspenders check regardless, since ProgramBankTypeResult::
+    //    tagMatchesStride can still be false for real data this project
+    //    hasn't independently verified yet, and a third file could yet
+    //    show a real EXi/HD-1 stride difference this hasn't hit.
     //  - TargetSlotOccupied: the destination's *current* name is non-empty
     //    (a different Program already lives there -- re-dropping the exact
     //    same Program already at that slot is caught by DuplicateExists
@@ -391,6 +397,34 @@ public:
     // Same as decodeProgram(), for Combis -- see src/kronos/CombiDecoder.h,
     // the second per-record decoder built this way.
     std::optional<CombiInfo> decodeCombi(int bank, int number) const;
+
+    // One Program's raw PBK1/MBK1 record, straight from the retained file
+    // bytes -- same offset math as copyProgramFrom()'s source-side lookup,
+    // exposed as its own read so a caller doesn't need a whole second
+    // PcgFile just to pull one record's bytes out. First use: extracting a
+    // real "Init Program"/"Init EXi Program" slot's bytes as this app's own
+    // known-good template for clearing a Program slot, rather than
+    // guessing what an empty/init record's bytes should be (see
+    // resources/Init-Program-HD1.raw / Init-Program-EXi.raw, and STATE.md).
+    //
+    // RESOLVED 2026-08-13: while extracting those two templates, bytes
+    // 2632-2633 turned out to differ consistently across banks between
+    // "Init Program" copies (e.g. bank 12 vs bank 17, both HD-1) --
+    // suspected at first as a per-bank identity tag baked into the record.
+    // Checked against Korg's own official parameter reference
+    // (docs/external/KORG/Prog_HD-1.txt and Prog_EXi_Common.txt, identical
+    // entry in both): it's "Tone Adjust" / "Switch8 On Value", a real
+    // Program parameter, not anything bank- or identity-related. Still an
+    // open practical question for a future cross-bank template write (the
+    // Duplicates-resolution feature this was built for -- see STATE.md): a
+    // factory Init Program's Tone Adjust value isn't identical across
+    // every bank, so writing one bank's template into a different bank
+    // would carry over whichever value that SOURCE bank's Init Program
+    // happened to have -- not yet checked whether that reads as harmless
+    // (an inactive/default switch state regardless of its exact bits) on
+    // real hardware.
+    // Returns nullopt if the (bank, number) pair is out of range.
+    std::optional<std::vector<uint8_t>> programRecordBytes(int bank, int number) const;
 
     // Raw 542-byte SBK1 record for one Set List slot, straight from the
     // retained file bytes -- the same two-tier data-flow idea as

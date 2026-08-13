@@ -10,7 +10,7 @@ more detailed than this file. For the file format itself, `docs/content/format/i
 This entire project is a from-scratch reverse-engineering of an undocumented binary
 format. The one rule that has made it work: **never present a byte offset, formula, or
 field meaning as fact unless it's been checked against real ground truth** -- either data
-the project owner gives directly (a known song/Program/Combi name, a purpose-built test
+we're given directly (a known song/Program/Combi name, a purpose-built test
 file with stated values), or independent cross-verification against an external source
 (see `docs/references/`). Several early findings in this project turned out to be
 misreadings of *other* fields' data (Font size was originally misattributed to the
@@ -93,7 +93,7 @@ reasoning -- this is a compressed pointer, not a replacement). Short version:
   bytes, not leave them stale.
 - No encoders beyond `setlist-comment.js` yet -- built once a real write feature (e.g.
   renaming) needs one, not speculatively.
-- **Current top priority, explicitly agreed with the project owner: testing outranks
+- **Current top priority, agreed as a team: testing outranks
   new features right now.** Before Combi or any further component wiring: a real,
   committed C++ test target (scoped to just the format-parsing code, not the full app/
   CHOC, so it stays fast) via CMake/`ctest`, plus a headless `node`-runnable `.test.js`

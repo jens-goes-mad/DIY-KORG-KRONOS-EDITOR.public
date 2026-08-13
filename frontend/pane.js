@@ -893,6 +893,26 @@ function createSetlistPanel(
     return true;
   }
 
+  // Same technique as library.js's own scrollRowBelowHeader() -- this
+  // table has a sticky <thead> too, so a plain scrollIntoView({block:
+  // "center"}) can leave a row still partly hidden under it, especially
+  // near the top of the list. Kept as its own small copy here rather than
+  // shared with library.js -- these two files don't otherwise share
+  // rendering helpers, and per CLAUDE.md's duplicate-code norm this is
+  // flagged to the project rather than unilaterally factored out.
+  function scrollRowBelowHeader(row) {
+    const scrollBox = row.closest(".entries-scroll");
+    if (!scrollBox) return;
+    const table = row.closest("table");
+    const header = table ? table.querySelector("thead") : null;
+    const headerHeight = header ? header.getBoundingClientRect().height : 0;
+    const rowRect = row.getBoundingClientRect();
+    const boxRect = scrollBox.getBoundingClientRect();
+    const currentOffset = rowRect.top - boxRect.top;
+    const desiredOffset = headerHeight + 8;  // a small gap below the header
+    scrollBox.scrollTo({ top: scrollBox.scrollTop + currentOffset - desiredOffset, behavior: "smooth" });
+  }
+
   function renderRows() {
     const needle = filterText.trim().toLowerCase();
     // Filter is the only remaining display-only view state here -- sorting
@@ -1032,7 +1052,12 @@ function createSetlistPanel(
         bankButton.addEventListener("click", (ev) => {
           ev.stopPropagation();
           if (handleMultiSelectClick(ev, entry.index)) return;
-          onJumpToInstrument({ isProgram: entry.isProgram, bank: entry.bank, number: entry.number });
+          onJumpToInstrument({
+            isProgram: entry.isProgram,
+            bank: entry.bank,
+            number: entry.number,
+            from: { kind: "setlist", setlistIndex: currentSetlistIndex, songIndex: entry.index },
+          });
         });
         bankTd.appendChild(bankButton);
         volTd.textContent = String(entry.volume);
@@ -1137,8 +1162,14 @@ function createSetlistPanel(
     setlistSelect.disabled = setlists.length === 0;
   }
 
-  setlistSelect.addEventListener("change", async () => {
-    currentSetlistIndex = Number(setlistSelect.value);
+  // Shared by the dropdown's own change handler and jumpToEntry() below --
+  // both mean "show a different Set List in this pane," with the same
+  // stale-state resets (an open editor panel/expanded section/cached bytes
+  // belong to the OLD Set List's song at that index, not whatever now
+  // shares that index in the new one).
+  async function selectSetlist(setlistIndex) {
+    currentSetlistIndex = setlistIndex;
+    setlistSelect.value = String(setlistIndex);
     filterText = "";
     filterInput.value = "";
     openPanels.clear();  // don't carry an open editor panel over to a different Set List's song at the same index
@@ -1147,7 +1178,31 @@ function createSetlistPanel(
     releaseAllSlotLocks();
     notifyPaneSelectionChanged();
     await refreshEntries();
-  });
+  }
+
+  setlistSelect.addEventListener("change", () => selectSetlist(Number(setlistSelect.value)));
+
+  // Called by the shell (jumpToInstrument() in createPane(), after already
+  // switching this pane to its "setlist" category) when a Program's usage-
+  // row Set List reference (library.js's buildUsageRow()) is clicked --
+  // selects the target Set List first if this pane isn't already showing
+  // it, then opens+scrolls to that exact slot, same as clicking the row
+  // directly. Mirrors library.js's own jumpToEntry(), the Program/Combi
+  // equivalent of this same "jump and land on the row" pattern.
+  async function jumpToEntry(setlistIndex, songIndex) {
+    if (currentSetlistIndex !== setlistIndex) {
+      await selectSetlist(setlistIndex);
+    } else if (filterText) {
+      filterText = "";
+      filterInput.value = "";
+      renderRows();
+    }
+    const entry = entries.find((e) => e.index === songIndex);
+    if (!entry) return;
+    await openSection(entry, "comment");
+    const row = tbody.querySelector(`[data-index="${songIndex}"]`);
+    if (row) scrollRowBelowHeader(row);
+  }
 
   filterInput.addEventListener("input", () => {
     filterText = filterInput.value;
@@ -1230,29 +1285,31 @@ function createSetlistPanel(
     log(`[Pane ${paneId}] Showing ${displayName}`);
   }
 
-  return { refreshEntries, onDatasetChanged, getCurrentSetlistIndex: () => currentSetlistIndex };
+  return { refreshEntries, onDatasetChanged, getCurrentSetlistIndex: () => currentSetlistIndex, jumpToEntry };
 }
 
 function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, getOpposite, log, showToast }) {
   root.innerHTML = `
     <div class="pane-header">
-      <div class="pane-header-row">
-        <div class="pane-header-col dataset-select-row">
-          <div class="select is-small is-fullwidth dataset-select-wrap">
-            <select class="dataset-select"></select>
-          </div>
-          <button class="button is-small save-file-button" type="button" disabled title="Save this pane's dataset -- its current in-memory bytes, including any unsaved edits -- to a .PCG/.SNG file via a native Save dialog">Save As...</button>
+      <div class="pane-header-row dataset-select-row">
+        <div class="select is-small is-fullwidth dataset-select-wrap">
+          <select class="dataset-select"></select>
         </div>
-        <div class="pane-header-col">
-          <div class="tabs is-boxed is-small pane-category-tabs">
-            <ul>
-              <li class="is-active" data-category="setlist"><a>Setlist</a></li>
-              <li data-category="programs"><a>Programs</a></li>
-              <li data-category="combis"><a>Combis</a></li>
-              <li data-category="duplicates"><a>Duplicates</a></li>
-              <li data-category="internals"><a>Internals</a></li>
-            </ul>
-          </div>
+        <button class="button is-small save-file-button" type="button" disabled title="Save this pane's dataset -- its current in-memory bytes, including any unsaved edits -- to a .PCG/.SNG file via a native Save dialog">Save As...</button>
+      </div>
+      <div class="pane-header-row tabs-row">
+        <div class="tabs is-boxed is-small pane-category-tabs">
+          <ul>
+            <li class="is-active" data-category="setlist"><a>Setlist</a></li>
+            <li data-category="programs"><a>Programs</a></li>
+            <li data-category="combis"><a>Combis</a></li>
+            <li data-category="duplicates"><a>Duplicates</a></li>
+            <li data-category="internals"><a>Internals</a></li>
+          </ul>
+        </div>
+        <div class="buttons has-addons nav-history-buttons">
+          <button class="button is-small nav-back-button" type="button" disabled title="Back to the previous jump target">&#8592;</button>
+          <button class="button is-small nav-forward-button" type="button" disabled title="Forward to the next jump target">&#8594;</button>
         </div>
       </div>
     </div>
@@ -1263,6 +1320,8 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
 
   const datasetSelect = root.querySelector(".dataset-select");
   const saveFileButton = root.querySelector(".save-file-button");
+  const navBackButton = root.querySelector(".nav-back-button");
+  const navForwardButton = root.querySelector(".nav-forward-button");
   const categoryTabs = root.querySelectorAll(".pane-category-tabs li");
   const setlistContainer = root.querySelector('[data-category-panel="setlist"]');
   const libraryContainer = root.querySelector('[data-category-panel="library"]');
@@ -1320,6 +1379,93 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     tab.addEventListener("click", () => switchCategory(tab.dataset.category));
   });
 
+  // Applies one jump target without touching the nav-history stack below --
+  // the shared "actually do the jump" step used both by a fresh jump
+  // (jumpToInstrument/jumpToSetlistEntry, which push afterward) and by the
+  // Back/Forward buttons replaying a past entry (which must NOT push, or
+  // Back would immediately shove its own destination back onto the front
+  // of Forward).
+  function applyNavEntry(entry) {
+    if (entry.kind === "instrument") {
+      switchCategory(entry.isProgram ? "programs" : "combis");
+      libraryPanels.jumpToEntry(entry.isProgram, entry.bank, entry.number);
+    } else {
+      switchCategory("setlist");
+      setlistPanel.jumpToEntry(entry.setlistIndex, entry.songIndex);
+    }
+  }
+
+  // Per-pane jump history for the Back/Forward buttons beside the category
+  // tabs -- every jumpToInstrument()/jumpToSetlistEntry() call below (a
+  // Setlist Bank button, a Combi Timbre bank-jump button, or a Program
+  // usage-row Set List/Combi reference) pushes both where the click
+  // happened (its own `from`, supplied by the caller -- see each of their
+  // own call sites in library.js/this file) AND the destination it jumped
+  // to. Recording `from` explicitly (rather than just switching category)
+  // is what makes Back land back on the EXACT originating row -- e.g. the
+  // Combi a Timbre's bank-jump button was clicked from -- not just its
+  // category tab. Capped at 10 entries total (per explicit request) --
+  // oldest entries drop off the front past that, same idea as a real
+  // browser's history not growing unbounded. A fresh jump made after going
+  // Back truncates whatever was still ahead, same as a real browser:
+  // there's no redoing a "forward" branch a new jump just replaced.
+  const NAV_HISTORY_LIMIT = 10;
+  let navHistory = [];
+  let navIndex = -1;
+
+  function sameLocation(a, b) {
+    if (!a || !b || a.kind !== b.kind) return false;
+    return a.kind === "instrument"
+      ? a.isProgram === b.isProgram && a.bank === b.bank && a.number === b.number
+      : a.setlistIndex === b.setlistIndex && a.songIndex === b.songIndex;
+  }
+
+  function updateNavButtons() {
+    navBackButton.disabled = navIndex <= 0;
+    navForwardButton.disabled = navIndex < 0 || navIndex >= navHistory.length - 1;
+  }
+
+  function pushHistoryEntry(entry) {
+    navHistory.push(entry);
+    if (navHistory.length > NAV_HISTORY_LIMIT) navHistory.shift();
+    navIndex = navHistory.length - 1;
+  }
+
+  // `from` is omitted only when there's nowhere meaningful to record it
+  // (there isn't a call site like that today, but stays optional rather
+  // than assumed). Skips re-recording `from` if it's already exactly where
+  // the stack's current top sits -- avoids a redundant duplicate entry
+  // when jumping again from the same row without ever clicking Back.
+  function pushNavHistory(from, to) {
+    navHistory = navHistory.slice(0, navIndex + 1);
+    const top = navHistory[navHistory.length - 1];
+    if (from && !sameLocation(top, from)) pushHistoryEntry(from);
+    pushHistoryEntry(to);
+    updateNavButtons();
+  }
+
+  // Called on every dataset switch (loadDataset()/resetToEmpty() below) --
+  // a bank/number or setlist/song reference from one dataset means nothing
+  // in another, so past jump targets can't survive the switch.
+  function resetNavHistory() {
+    navHistory = [];
+    navIndex = -1;
+    updateNavButtons();
+  }
+
+  navBackButton.addEventListener("click", () => {
+    if (navIndex <= 0) return;
+    navIndex--;
+    applyNavEntry(navHistory[navIndex]);
+    updateNavButtons();
+  });
+  navForwardButton.addEventListener("click", () => {
+    if (navIndex < 0 || navIndex >= navHistory.length - 1) return;
+    navIndex++;
+    applyNavEntry(navHistory[navIndex]);
+    updateNavButtons();
+  });
+
   // Called when a Setlist row's Bank button, OR a Combi Timbre row's own
   // bank-jump button (library.js's buildTimbreRow(), only shown for a
   // confirmed Timbre bank code -- see formatTimbreRef()), is clicked --
@@ -1329,10 +1475,27 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   // `jumpToInstrument` is a closure over this one createPane() call's own
   // `switchCategory`/`libraryPanels`, and is handed to both
   // createSetlistPanel() and createLibraryPanels() as their own
-  // `onJumpToInstrument` prop.
-  function jumpToInstrument({ isProgram, bank, number }) {
-    switchCategory(isProgram ? "programs" : "combis");
-    libraryPanels.jumpToEntry(isProgram, bank, number);
+  // `onJumpToInstrument` prop. `from` is the location the click itself
+  // happened at (each call site knows its own containing row -- e.g. the
+  // Setlist song, or the Combi a Timbre reference lives on -- see their own
+  // call sites), recorded into nav history so Back returns to that EXACT
+  // row rather than just its category.
+  function jumpToInstrument({ isProgram, bank, number, from }) {
+    const to = { kind: "instrument", isProgram, bank, number };
+    applyNavEntry(to);
+    pushNavHistory(from, to);
+  }
+
+  // The reverse direction: a Program's usage-row Set List reference
+  // (library.js's buildUsageRow(), only shown once the row's "Set List
+  // usage" list is expanded) jumping to its Setlist entry -- switches this
+  // pane to its Setlist category and hands off to setlistPanel's own
+  // jumpToEntry(), same "always this SAME pane" guarantee as
+  // jumpToInstrument() above. Same `from`-recording as jumpToInstrument().
+  function jumpToSetlistEntry({ setlistIndex, songIndex, from }) {
+    const to = { kind: "setlist", setlistIndex, songIndex };
+    applyNavEntry(to);
+    pushNavHistory(from, to);
   }
 
   const setlistPanel = createSetlistPanel(setlistContainer, {
@@ -1352,6 +1515,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     getProgramBankType,
     onDropProgram,
     onJumpToInstrument: jumpToInstrument,
+    onJumpToSetlist: jumpToSetlistEntry,
   });
   const internalsPanel = createInternalsPanel(internalsContainer, {
     getDatasetId: getCurrentDatasetId,
@@ -1368,6 +1532,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     currentDatasetId = datasetId;
     datasetSelect.value = String(datasetId);
     saveFileButton.disabled = false;
+    resetNavHistory();
     await refreshProgramBankTypes();
     await setlistPanel.onDatasetChanged(displayName);
     await libraryPanels.onDatasetChanged();
@@ -1380,6 +1545,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   async function resetToEmpty() {
     currentDatasetId = null;
     saveFileButton.disabled = true;
+    resetNavHistory();
     await refreshProgramBankTypes();
     await setlistPanel.onDatasetChanged();
     await libraryPanels.onDatasetChanged();

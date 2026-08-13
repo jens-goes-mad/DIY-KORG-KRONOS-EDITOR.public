@@ -17,7 +17,10 @@
 // dataset -- no cross-dataset dedup here, that's a real future idea, not
 // this pass. See STATE.md's "Program/Combi Library Editor" plan for the
 // phased roadmap this is Phase 1 of.
-function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDropProgram, onJumpToInstrument }) {
+function createLibraryPanels(
+  root,
+  { log, getDatasetId, getProgramBankType, onDropProgram, onJumpToInstrument, onJumpToSetlist }
+) {
   root.innerHTML = `
     <input class="filter-input library-filter input is-small" type="text" placeholder="Filter / search..." />
     <div class="select-control-area">
@@ -315,16 +318,29 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   // when there are few enough (<=10) to stay readable; above that, the
   // "#STL" count column still shows the total, just without the
   // per-reference breakdown. Bulma's own `.tags`/`.tag` (a real pill/chip
-  // component), not a hand-rolled one.
-  function badgesCell(setlistUsages) {
+  // component), not a hand-rolled one -- each pill is a `<button class=
+  // "tag">` (Bulma styles `.tag` the same regardless of element) so it can
+  // jump to that Set List slot, same as the Program usage row's own Set
+  // List references (buildUsageRow()).
+  function badgesCell(setlistUsages, combi) {
     const td = document.createElement("td");
     if (setlistUsages && setlistUsages.length > 0 && setlistUsages.length <= 10) {
       const wrap = document.createElement("div");
       wrap.className = "tags";
       for (const u of setlistUsages) {
-        const badge = document.createElement("span");
-        badge.className = "tag";
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "tag setlist-usage-badge";
         badge.textContent = `${u.setlistName} (${kronosNumber(u.songIndex)})`;
+        badge.title = `Show this in the Setlist view`;
+        badge.addEventListener("click", (ev) => {
+          ev.stopPropagation();  // don't also toggle this Combi row's Timbre list open/closed
+          onJumpToSetlist({
+            setlistIndex: u.setlistIndex,
+            songIndex: u.songIndex,
+            from: { kind: "instrument", isProgram: false, bank: combi.bank, number: combi.number },
+          });
+        });
         wrap.appendChild(badge);
       }
       td.appendChild(wrap);
@@ -346,6 +362,14 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
     return td;
   }
 
+  // Each Set List/Combi usage entry below renders as its own bank-jump-style
+  // button (reusing .bank-jump-button's look, same as the Combi Timbre bank
+  // reference button -- see buildTimbreRow()) rather than plain text: a
+  // Program can be referenced from many places, so unlike the single-target
+  // Combi-Timbre-to-Program jump, this is one jump target per list item.
+  // Set List jumps go through onJumpToSetlist (switches this pane to its
+  // Setlist category, selects that Set List, opens+scrolls to that slot);
+  // Combi jumps reuse the existing onJumpToInstrument (isProgram: false).
   function buildUsageRow(program) {
     const tr = document.createElement("tr");
     tr.className = "editor-row";  // reuses the shared expand-row look from pane.js/style.css
@@ -380,7 +404,19 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
         list.className = "usage-list";
         for (const u of usage.setlistUsages) {
           const li = document.createElement("li");
-          li.textContent = `${u.setlistName} -- slot ${kronosNumber(u.songIndex)}`;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "button is-small bank-jump-button usage-jump-button";
+          btn.textContent = `${u.setlistName} -- slot ${kronosNumber(u.songIndex)}`;
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();  // don't also toggle this usage row closed
+            onJumpToSetlist({
+              setlistIndex: u.setlistIndex,
+              songIndex: u.songIndex,
+              from: { kind: "instrument", isProgram: true, bank: program.bank, number: program.number },
+            });
+          });
+          li.appendChild(btn);
           list.appendChild(li);
         }
         box.appendChild(list);
@@ -409,11 +445,24 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
           list.className = "usage-list";
           for (const c of usage.combiUsages) {
             const li = document.createElement("li");
-            li.textContent = `${formatBankNumber({ isProgram: false, bank: c.bank, number: c.number })} "${c.name || "(empty)"}"`;
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "button is-small bank-jump-button usage-jump-button";
+            btn.textContent = `${formatBankNumber({ isProgram: false, bank: c.bank, number: c.number })} "${c.name || "(empty)"}"`;
             if (!c.active) {
-              li.textContent += " (via an Off Timbre only)";
-              li.className = "timbre-inactive-ref";
+              btn.textContent += " (via an Off Timbre only)";
+              btn.classList.add("timbre-inactive-ref");
             }
+            btn.addEventListener("click", (ev) => {
+              ev.stopPropagation();  // don't also toggle this usage row closed
+              onJumpToInstrument({
+                isProgram: false,
+                bank: c.bank,
+                number: c.number,
+                from: { kind: "instrument", isProgram: true, bank: program.bank, number: program.number },
+              });
+            });
+            li.appendChild(btn);
             list.appendChild(li);
           }
           box.appendChild(list);
@@ -699,7 +748,12 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
           refSpan.title = `Show Program ${ref} in this pane's Programs view`;
           refSpan.addEventListener("click", (ev) => {
             ev.stopPropagation();
-            onJumpToInstrument({ isProgram: true, bank: programBank, number: t.number });
+            onJumpToInstrument({
+              isProgram: true,
+              bank: programBank,
+              number: t.number,
+              from: { kind: "instrument", isProgram: false, bank: combi.bank, number: combi.number },
+            });
           });
         } else {
           refSpan = document.createElement("span");
@@ -752,7 +806,7 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
       tr.append(
         bankCell(false, c.bank, c.number),
         nameTd,
-        badgesCell(c.setlistUsages),
+        badgesCell(c.setlistUsages, c),
         refCell(String(c.setlistReferenceCount), false)
       );
 
@@ -955,19 +1009,28 @@ function createLibraryPanels(root, { log, getDatasetId, getProgramBankType, onDr
   function jumpToEntry(isProgram, bank, number) {
     filterInput.value = "";
     const key = `${bank}-${number}`;
+    let panelTable;
     if (isProgram) {
       expandedProgramKey = key;
       programBankFilter.add(bank);
       refreshProgramBankButtons();
+      panelTable = panelTables.programs;
     } else {
       expandedCombiKeys.add(key);
       combiBankFilter.add(bank);
       refreshCombiBankButtons();
       selectedSetlistIndex = -1;
       populateSetlistFilterSelect();
+      panelTable = panelTables.combis;
     }
     renderCurrentTab();
-    const row = root.querySelector(`[data-entry-key="${key}"]`);
+    // Scoped to the target's OWN panel table, not `root` as a whole -- a
+    // Program and a Combi can share the exact same bank/number (`key` has
+    // no kind prefix), and an unscoped root.querySelector() always returns
+    // the Programs panel's row first (it's earlier in the DOM, regardless
+    // of which panel is actually `hidden`), silently landing a Combi jump
+    // on the wrong, invisible row instead of doing nothing loudly.
+    const row = panelTable.querySelector(`[data-entry-key="${key}"]`);
     if (row) scrollRowBelowHeader(row);
   }
 
