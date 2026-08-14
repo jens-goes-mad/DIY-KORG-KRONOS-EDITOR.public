@@ -28,7 +28,7 @@ readingTime = true
 
 [article.license]
 enabled = true
-default = "Licensed under CC BY-NC-SA 4.0"
+default = "Source-available under the PolyForm Noncommercial License 1.0.0 -- see LICENSE in the repo"
 
 ## Widgets
 [[widgets.homepage]]

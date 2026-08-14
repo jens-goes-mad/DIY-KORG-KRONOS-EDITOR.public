@@ -106,6 +106,9 @@ findings, and bug reports are welcome. The project lives on GitHub:
   disprove. See [App architecture & components](/components) for how the codebase is laid
   out if you want to dig in.
 
+Source-available under the [PolyForm Noncommercial License 1.0.0](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/LICENSE)
+-- free for any noncommercial use; commercial use needs a separate agreement first.
+
 ## Why (the personal version)
 
 The Kronos's own Set List and Combi/Program browsing on the hardware is workable but

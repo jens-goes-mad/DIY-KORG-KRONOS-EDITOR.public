@@ -268,3 +268,10 @@ frontend/
   components/kronos/          -- standalone, byte-level-tested UI pieces (see Architecture direction above)
 third_party/choc/            -- vendored from DIY-MIDI-METRONOME/EDITOR
 ```
+
+## License
+
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE) -- free to use,
+modify, and share for any noncommercial purpose (personal, research, educational, hobby,
+nonprofit). Not OSI "open source" in the strict sense: commercial use needs a separate
+agreement first -- see [`LICENSE`](LICENSE) for how to ask.
