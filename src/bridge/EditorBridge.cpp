@@ -718,3 +718,56 @@ choc::value::Value EditorBridge::resolveDuplicateProgram(const choc::value::Valu
     value.setMember("combiRefsSkipped", result.combiRefsSkipped);
     return value;
 }
+
+choc::value::Value EditorBridge::swapCombis(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bankA = intArg(args, 1);
+    const int numberA = intArg(args, 2);
+    const int bankB = intArg(args, 3);
+    const int numberB = intArg(args, 4);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->swapCombis(bankA, numberA, bankB, numberB);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    return value;
+}
+
+choc::value::Value EditorBridge::moveCombiWithinBank(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int fromNumber = intArg(args, 2);
+    const int toNumber = intArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->moveCombiWithinBank(bank, fromNumber, toNumber);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    return value;
+}
+
+choc::value::Value EditorBridge::moveCombiToBank(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int srcBank = intArg(args, 1);
+    const int srcNumber = intArg(args, 2);
+    const int dstBank = intArg(args, 3);
+    const int dstNumber = intArg(args, 4);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->moveCombiToBank(srcBank, srcNumber, dstBank, dstNumber);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    return value;
+}

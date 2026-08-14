@@ -766,6 +766,32 @@ std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const {
     return groups;
 }
 
+void PcgFile::repointOneSetlistSlot(int setlistIndex, int songIndex, int toBank, int toNumber) {
+    auto bytes = songRecordBytes(setlistIndex, songIndex);
+    if (!bytes) return;  // shouldn't happen -- callers always have a live (setlistIndex, songIndex) in hand
+    (*bytes)[kSbkBankOffset] = static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toBank & kSbkBankMask));
+    (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(toNumber);
+    putSongRecordBytes(setlistIndex, songIndex, *bytes);
+}
+
+std::vector<std::pair<int, int>> PcgFile::findSetlistReferences(bool isProgram, int bank, int number) const {
+    std::vector<std::pair<int, int>> hits;
+    for (const auto& setlist : setlists_) {
+        for (const auto& song : setlist.songs) {
+            if (!song.params.found || song.params.isProgram != isProgram) continue;
+            if (song.params.bank != bank || song.params.number != number) continue;
+            hits.push_back({setlist.index, song.index});
+        }
+    }
+    return hits;
+}
+
+int PcgFile::repointSetlistReferences(bool isProgram, int fromBank, int fromNumber, int toBank, int toNumber) {
+    auto hits = findSetlistReferences(isProgram, fromBank, fromNumber);
+    for (const auto& [setlistIndex, songIndex] : hits) repointOneSetlistSlot(setlistIndex, songIndex, toBank, toNumber);
+    return static_cast<int>(hits.size());
+}
+
 PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int keepNumber,
                                                               const std::vector<uint8_t>& hd1InitBytes,
                                                               const std::vector<uint8_t>& exiInitBytes) {
@@ -807,20 +833,7 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
         putProgramRecordBytes(dup.bank, dup.number, templateBytes);
         result.clearedPrograms++;
 
-        for (auto& setlist : setlists_) {
-            for (auto& song : setlist.songs) {
-                if (!song.params.found || !song.params.isProgram) continue;
-                if (song.params.bank != dup.bank || song.params.number != dup.number) continue;
-
-                auto bytes = songRecordBytes(setlist.index, song.index);
-                if (!bytes) continue;  // shouldn't happen -- this song was just read from setlists_ itself
-                (*bytes)[kSbkBankOffset] =
-                    static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (keepBank & kSbkBankMask));
-                (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(keepNumber);
-                putSongRecordBytes(setlist.index, song.index, *bytes);
-                result.setlistRefsRepointed++;
-            }
-        }
+        result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, dup.bank, dup.number, keepBank, keepNumber);
 
         // dupRawCode<0 means dup.bank itself has no confirmed Timbre code --
         // structurally impossible to know whether any Combi Timbre
@@ -860,6 +873,227 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
         }
     }
 
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int bankB, int numberB) {
+    CombiRearrangeResult result;
+
+    if (bankA < 0 || bankA >= static_cast<int>(combiBankLocations_.size()) || numberA < 0 ||
+        static_cast<uint32_t>(numberA) >= combiBankLocations_[static_cast<size_t>(bankA)].numRecords) {
+        result.error = "No such Combi at the first position";
+        return result;
+    }
+    if (bankB < 0 || bankB >= static_cast<int>(combiBankLocations_.size()) || numberB < 0 ||
+        static_cast<uint32_t>(numberB) >= combiBankLocations_[static_cast<size_t>(bankB)].numRecords) {
+        result.error = "No such Combi at the second position";
+        return result;
+    }
+
+    if (bankA == bankB && numberA == numberB) {
+        result.ok = true;  // no-op, same as reorderSong()'s own fromIndex==toIndex convention
+        return result;
+    }
+
+    auto bytesA = combiRecordBytes(bankA, numberA);
+    auto bytesB = combiRecordBytes(bankB, numberB);
+    if (!bytesA || !bytesB) {
+        result.error = "Couldn't read one of the two Combi records";
+        return result;
+    }
+
+    putCombiRecordBytes(bankA, numberA, *bytesB);
+    putCombiRecordBytes(bankB, numberB, *bytesA);
+
+    // NOT two sequential repointSetlistReferences() calls -- A's referrers
+    // are moved to B, then a second call searching for "whoever now
+    // references B" would immediately re-catch the slots the FIRST call
+    // just wrote (they now legitimately reference B) and swap them straight
+    // back to A. A single pass checking each song against both original
+    // positions avoids that entirely: since bankA/numberA != bankB/numberB,
+    // no song can match both, so there's no ambiguity about which way a
+    // given song moves.
+    for (auto& setlist : setlists_) {
+        for (auto& song : setlist.songs) {
+            if (!song.params.found || song.params.isProgram) continue;
+            int toBank, toNumber;
+            if (song.params.bank == bankA && song.params.number == numberA) {
+                toBank = bankB;
+                toNumber = numberB;
+            } else if (song.params.bank == bankB && song.params.number == numberB) {
+                toBank = bankA;
+                toNumber = numberA;
+            } else {
+                continue;
+            }
+
+            auto bytes = songRecordBytes(setlist.index, song.index);
+            if (!bytes) continue;  // shouldn't happen -- this song was just read from setlists_ itself
+            (*bytes)[kSbkBankOffset] =
+                static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toBank & kSbkBankMask));
+            (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(toNumber);
+            putSongRecordBytes(setlist.index, song.index, *bytes);
+            result.setlistRefsRepointed++;
+        }
+    }
+
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::moveCombiWithinBank(int bank, int fromNumber, int toNumber) {
+    CombiRearrangeResult result;
+
+    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) {
+        result.error = "No such Combi bank";
+        return result;
+    }
+    const uint32_t count = combiBankLocations_[static_cast<size_t>(bank)].numRecords;
+    if (fromNumber < 0 || static_cast<uint32_t>(fromNumber) >= count || toNumber < 0 ||
+        static_cast<uint32_t>(toNumber) >= count) {
+        result.error = "Combi index out of range";
+        return result;
+    }
+    if (fromNumber == toNumber) {
+        result.ok = true;
+        return result;
+    }
+
+    auto movingBytes = combiRecordBytes(bank, fromNumber);
+    if (!movingBytes) {
+        result.error = "Couldn't read the moving Combi's record";
+        return result;
+    }
+
+    // Snapshot exactly WHO references the MOVING record's own original
+    // position, before any writes happen -- a single search-then-write
+    // repointSetlistReferences() call for this can't be placed safely
+    // anywhere in this function: the shift below reads from AND writes to
+    // enough of the [fromNumber..toNumber] range that both `fromNumber`
+    // (used as a write-target by the shift's very first step) and
+    // `toNumber` (used as a read/search-key by the shift's very last step,
+    // in EITHER direction) get reused for an unrelated record's own move.
+    // Doing the search-then-write before the shift collides with the
+    // second; doing it after collides with the first (both found the hard
+    // way, via a real 36MB file where the shifted range actually had
+    // referenced records at both ends). Capturing identities up front and
+    // applying the repoint by identity at the very end, after everything
+    // else, sidesteps this entirely -- nothing else in this function ever
+    // searches for "who references fromNumber" (the shift's own searches
+    // all use i-1/i+1 for the current i, which never equals fromNumber),
+    // so these captured slots are never touched by the shift in between.
+    auto movingReferrers = findSetlistReferences(false, bank, fromNumber);
+
+    // Same shift-the-intervening-range mechanic as reorderSong() (Set List
+    // slots), applied to Combis -- see its own doc comment for the
+    // direction reasoning. Each shifted record's own Set List referrers are
+    // repointed right after it moves, so by the time this returns every
+    // record in the range points wherever its own content actually ended
+    // up, not just the one that was dragged.
+    if (toNumber < fromNumber) {
+        for (int i = fromNumber; i > toNumber; --i) {
+            auto bytes = combiRecordBytes(bank, i - 1);
+            if (!bytes) {
+                result.error = "Couldn't read a Combi record while shifting";
+                return result;
+            }
+            putCombiRecordBytes(bank, i, *bytes);
+            result.setlistRefsRepointed += repointSetlistReferences(false, bank, i - 1, bank, i);
+        }
+    } else {
+        for (int i = fromNumber; i < toNumber; ++i) {
+            auto bytes = combiRecordBytes(bank, i + 1);
+            if (!bytes) {
+                result.error = "Couldn't read a Combi record while shifting";
+                return result;
+            }
+            putCombiRecordBytes(bank, i, *bytes);
+            result.setlistRefsRepointed += repointSetlistReferences(false, bank, i + 1, bank, i);
+        }
+    }
+
+    putCombiRecordBytes(bank, toNumber, *movingBytes);
+
+    // Apply the moving record's own repoint last, by the identities
+    // captured up front -- see this function's own comment above for why.
+    for (const auto& [setlistIndex, songIndex] : movingReferrers) {
+        repointOneSetlistSlot(setlistIndex, songIndex, bank, toNumber);
+        result.setlistRefsRepointed++;
+    }
+
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::moveCombiToBank(int srcBank, int srcNumber, int dstBank, int dstNumber) {
+    CombiRearrangeResult result;
+
+    if (srcBank < 0 || srcBank >= static_cast<int>(combiBankLocations_.size()) || srcNumber < 0 ||
+        static_cast<uint32_t>(srcNumber) >= combiBankLocations_[static_cast<size_t>(srcBank)].numRecords) {
+        result.error = "No such source Combi";
+        return result;
+    }
+    if (dstBank < 0 || dstBank >= static_cast<int>(combiBankLocations_.size()) || dstNumber < 0 ||
+        static_cast<uint32_t>(dstNumber) >= combiBankLocations_[static_cast<size_t>(dstBank)].numRecords) {
+        result.error = "No such destination Combi";
+        return result;
+    }
+    if (srcBank == dstBank) {
+        result.error = "Use moveCombiWithinBank() for a same-bank move";
+        return result;
+    }
+
+    // Refuse rather than silently orphan/misdirect whoever referenced the
+    // slot about to be overwritten -- see this method's own doc comment.
+    for (const auto& setlist : setlists_) {
+        for (const auto& song : setlist.songs) {
+            if (song.params.found && !song.params.isProgram && song.params.bank == dstBank &&
+                song.params.number == dstNumber) {
+                result.error = "Can't overwrite -- the destination Combi is still referenced by at least one Set List slot";
+                return result;
+            }
+        }
+    }
+
+    // Find a real "Init Combi" elsewhere in the SOURCE's own bank to fill
+    // the vacated slot with -- see this method's own doc comment for why
+    // this is sourced live rather than from a shipped template.
+    std::optional<int> fillerNumber;
+    for (const auto& combi : combis_) {
+        if (combi.bank == srcBank && combi.number != srcNumber && combi.name == "Init Combi") {
+            fillerNumber = combi.number;
+            break;
+        }
+    }
+    if (!fillerNumber.has_value()) {
+        result.error = "Can't vacate -- no other \"Init Combi\" slot exists in this bank to fill it with";
+        return result;
+    }
+
+    auto srcBytes = combiRecordBytes(srcBank, srcNumber);
+    auto fillerBytes = combiRecordBytes(srcBank, *fillerNumber);
+    if (!srcBytes || !fillerBytes) {
+        result.error = "Couldn't read the source or filler Combi record";
+        return result;
+    }
+
+    putCombiRecordBytes(dstBank, dstNumber, *srcBytes);
+
+    // Patch the filler's own name field (offset 4, 24 bytes -- see
+    // docs/content/format/index.md §5) to "- Init Combi -" before writing
+    // it into the vacated slot, same visibility convention as the
+    // Duplicates panel's Init Program templates -- makes a vacated slot
+    // unmistakable rather than looking like Korg's own plain "Init Combi".
+    constexpr size_t kNameOffset = 4;
+    constexpr size_t kNameLength = 24;
+    static const std::string kVacatedName = "- Init Combi -";
+    for (size_t i = 0; i < kNameLength; ++i) {
+        (*fillerBytes)[kNameOffset + i] = i < kVacatedName.size() ? static_cast<uint8_t>(kVacatedName[i]) : 0;
+    }
+    putCombiRecordBytes(srcBank, srcNumber, *fillerBytes);
+
+    result.setlistRefsRepointed = repointSetlistReferences(false, srcBank, srcNumber, dstBank, dstNumber);
     result.ok = true;
     return result;
 }

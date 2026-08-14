@@ -217,6 +217,26 @@ public:
     // caching needed) via EDITOR_RESOURCES_DIR -- see CMakeLists.txt.
     choc::value::Value resolveDuplicateProgram(const choc::value::ValueView& args);
 
+    // [datasetId, bankA, numberA, bankB, numberB] -> {ok, setlistRefsRepointed}
+    // or {ok:false, error}. Swaps two Combis' entire content (same or
+    // different bank) and repoints every Set List slot referencing either
+    // one to follow it to its new position. See PcgFile::swapCombis()'s own
+    // doc comment.
+    choc::value::Value swapCombis(const choc::value::ValueView& args);
+
+    // [datasetId, bank, fromNumber, toNumber] -> {ok, setlistRefsRepointed}
+    // or {ok:false, error}. Moves a Combi to a new position within its own
+    // bank, shifting the intervening range to make room -- see
+    // PcgFile::moveCombiWithinBank()'s own doc comment.
+    choc::value::Value moveCombiWithinBank(const choc::value::ValueView& args);
+
+    // [datasetId, srcBank, srcNumber, dstBank, dstNumber] -> {ok,
+    // setlistRefsRepointed} or {ok:false, error}. Moves a Combi into a
+    // specific slot in a different bank, overwriting whatever was there --
+    // see PcgFile::moveCombiToBank()'s own doc comment for the destination-
+    // referenced refusal and how the vacated source slot gets filled.
+    choc::value::Value moveCombiToBank(const choc::value::ValueView& args);
+
     // [datasetId] -> {ok, topLevelChunks:[...], programBanks:[{index,
     // bankType, numRecords, bytesPerRecord}...], combiBanks:[{index,
     // numRecords, bytesPerRecord}...]} or {ok:false, error}. Backs the

@@ -5,18 +5,20 @@
 // whichever single panel the shell tells it to show via showPanel()).
 // Operates on whichever dataset the shell tells it via getDatasetId(), not
 // its own selector (the shell owns ONE dataset-select shared by every
-// category). Combis/Duplicates stay read-only, not draggable -- repointing a
-// Combi's Timbre references or deduping is a separate, harder problem, not
-// this pass. Programs rows ARE draggable (drag one onto another to copy its
+// category). Programs rows are draggable (drag one onto another to copy its
 // raw bytes into that slot, same dataset or across two panes' different
 // datasets -- see onDropProgram in app.js and PcgFile::copyProgramFrom()'s
 // own doc comment for the validation guards), once explicitly deferred as
 // "the hard, physical-bank-placement problem" (STATE.md's EXPLORATION
-// section) but now unblocked by surfacing bank type in the UI first (this
-// same session). Duplicates is (and stays) scoped to a single selected
-// dataset -- no cross-dataset dedup here, that's a real future idea, not
-// this pass. See STATE.md's "Program/Combi Library Editor" plan for the
-// phased roadmap this is Phase 1 of.
+// section) but now unblocked by surfacing bank type in the UI first. Combis
+// rows are ALSO draggable (swap / move within a bank / move to a different
+// bank -- see buildCombisRow's own comment, STATE.md's Combi rearrangement
+// entry for the full design and why a Combi's own vacated slot is always
+// safe to fill: unlike Programs, a Combi is only ever referenced by Set
+// List slots, never by anything else). Duplicates is (and stays) read-only
+// and scoped to a single selected dataset -- no cross-dataset dedup here,
+// that's a real future idea, not this pass. See STATE.md's "Program/Combi
+// Library Editor" plan for the phased roadmap this is Phase 1 of.
 function createLibraryPanels(
   root,
   {
@@ -89,6 +91,11 @@ function createLibraryPanels(
   // stands in). The actual copy still goes through EditorBridge::
   // copyProgram()'s own validation regardless -- this is only a hover hint.
   let draggedProgram = null;
+
+  // Same idea as draggedProgram above, for a Combi row's own dragstart --
+  // see buildCombisRow's own comment for the three gestures this backs
+  // (swap / move within bank / move to a different bank).
+  let draggedCombi = null;
 
   let currentTab = "programs";
   let programs = [];
@@ -805,7 +812,7 @@ function createLibraryPanels(
 
     panel.innerHTML = "";
     const table = document.createElement("table");
-    table.className = "table is-fullwidth is-hoverable is-narrow";
+    table.className = "table is-fullwidth is-hoverable is-narrow combis-table";
     table.innerHTML =
       colgroupHtml([2.6, null, 4, 1.3]) +
       "<thead><tr><th>Bank</th><th>Name</th><th>Set Lists</th>" +
@@ -831,6 +838,81 @@ function createLibraryPanels(
         else expandedCombiKeys.add(key);
         renderCombisPanel();
       });
+
+      // Three gestures, same 3-zone drop pane.js's Setlist table already
+      // uses (dropZoneForEvent(), a shared top-level function -- pane.js
+      // loads after library.js in index.html, but this only matters at
+      // CALL time, long after every script has finished loading, so the
+      // load order is fine):
+      //  - Drop ONTO another Combi row -> swap (same or different bank --
+      //    always safe, nothing is destroyed, so no bank restriction).
+      //  - Drop BEFORE/AFTER a row in the SAME bank -> move within bank
+      //    (shift the intervening range, PcgFile::moveCombiWithinBank()).
+      //  - Drop BEFORE/AFTER a row in a DIFFERENT bank -> move to that
+      //    bank, overwriting the target (PcgFile::moveCombiToBank()) --
+      //    there's no "shift" concept spanning two independent banks'
+      //    128-slot arrays, so before/after collapses to the same thing as
+      //    onto once a bank boundary is crossed.
+      // Cross-dataset Combi rearranging isn't supported at all (same
+      // reasoning as Setlist slots -- a bank/number reference isn't
+      // portable across two different files' bank layouts), so a drag
+      // originating from a different dataset isn't even shown as a valid
+      // target during dragover.
+      tr.draggable = true;
+      tr.addEventListener("dragstart", (ev) => {
+        draggedCombi = { datasetId: getDatasetId(), bank: c.bank, number: c.number };
+        ev.dataTransfer.setData("application/json", JSON.stringify(draggedCombi));
+        ev.dataTransfer.effectAllowed = "move";
+      });
+      tr.addEventListener("dragend", () => {
+        draggedCombi = null;
+      });
+      tr.addEventListener("dragover", (ev) => {
+        if (draggedCombi == null || draggedCombi.datasetId !== getDatasetId()) {
+          tr.classList.remove("drop-target");
+          return;
+        }
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = "move";
+        tr.classList.add("drop-target");
+      });
+      tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
+      tr.addEventListener("drop", async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        tr.classList.remove("drop-target");
+        const raw = ev.dataTransfer.getData("application/json");
+        if (!raw) return;
+        const source = JSON.parse(raw);
+        if (source.datasetId !== getDatasetId()) return;
+        if (source.bank === c.bank && source.number === c.number) return;  // dropped on itself
+
+        const zone = dropZoneForEvent(tr, ev);
+        const sourceLabel = formatBankNumber({ isProgram: false, bank: source.bank, number: source.number });
+        const targetLabel = formatBankNumber({ isProgram: false, bank: c.bank, number: c.number });
+
+        let result, description;
+        if (zone === "on") {
+          result = await window.swapCombis(getDatasetId(), source.bank, source.number, c.bank, c.number);
+          description = `Swapped ${sourceLabel} <-> ${targetLabel}`;
+        } else if (source.bank === c.bank) {
+          const toNumber = zone === "before" ? c.number : c.number + 1;
+          result = await window.moveCombiWithinBank(getDatasetId(), c.bank, source.number, toNumber);
+          description = `Moved ${sourceLabel} to position ${kronosNumber(toNumber)}`;
+        } else {
+          result = await window.moveCombiToBank(getDatasetId(), source.bank, source.number, c.bank, c.number);
+          description = `Moved ${sourceLabel} -> ${targetLabel}, overwriting it`;
+        }
+
+        if (!result.ok) {
+          showToast(result.error);
+          return;
+        }
+        showToast(`${description} -- repointed ${result.setlistRefsRepointed} Set List slot(s).`);
+        await load();
+        await onRefreshOppositeLibrary(getDatasetId());
+      });
+
       tbody.appendChild(tr);
 
       if (expandedCombiKeys.has(key) && c.timbres) tbody.appendChild(buildTimbreRow(c));

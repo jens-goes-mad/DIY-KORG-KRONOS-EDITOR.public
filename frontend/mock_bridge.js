@@ -215,6 +215,19 @@
           timbres: makeFakeTimbres(),
         });
       });
+      // One genuinely blank "Init Combi" per bank -- gives moveCombiToBank()
+      // below a real same-bank filler to vacate a slot into, mirroring
+      // makeFakePrograms()'s own "one empty slot per bank" pattern. Real
+      // Init Combi records are abundant in real files (see STATE.md); mock
+      // mode only needs one per bank to exercise the happy path.
+      combis.push({
+        bank,
+        number: names.length,
+        name: "Init Combi",
+        setlistReferenceCount: 0,
+        setlistUsages: [],
+        timbres: makeFakeTimbres(),
+      });
     }
     return combis;
   }
@@ -593,6 +606,137 @@
     }
 
     return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
+  };
+
+  // Mirrors PcgFile::swapCombis() -- see its own doc comment in PcgFile.h.
+  // Single pass over dataset.songs checking both original positions at
+  // once (not two sequential repoints), same reasoning as the real
+  // backend: a second pass searching for "whoever now references B" would
+  // re-catch what the first pass just wrote.
+  window.swapCombis = (datasetId, bankA, numberA, bankB, numberB) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+
+    const a = dataset.combis.find((c) => c.bank === bankA && c.number === numberA);
+    if (!a) return fail("No such Combi at the first position");
+    const b = dataset.combis.find((c) => c.bank === bankB && c.number === numberB);
+    if (!b) return fail("No such Combi at the second position");
+    if (bankA === bankB && numberA === numberB) return ok({ setlistRefsRepointed: 0 });
+
+    const aContent = { name: a.name, setlistReferenceCount: a.setlistReferenceCount, setlistUsages: a.setlistUsages, timbres: a.timbres };
+    const bContent = { name: b.name, setlistReferenceCount: b.setlistReferenceCount, setlistUsages: b.setlistUsages, timbres: b.timbres };
+    Object.assign(a, bContent);
+    Object.assign(b, aContent);
+
+    let setlistRefsRepointed = 0;
+    for (const setlistIndex of Object.keys(dataset.songs)) {
+      for (const song of dataset.songs[setlistIndex]) {
+        if (song.isProgram) continue;
+        if (song.bank === bankA && song.number === numberA) {
+          song.bank = bankB;
+          song.number = numberB;
+          setlistRefsRepointed++;
+        } else if (song.bank === bankB && song.number === numberB) {
+          song.bank = bankA;
+          song.number = numberA;
+          setlistRefsRepointed++;
+        }
+      }
+    }
+    return ok({ setlistRefsRepointed });
+  };
+
+  // Mirrors PcgFile::moveCombiWithinBank() -- see its own doc comment.
+  // Mock simplification: shifts only the OTHER Combis that already exist
+  // in mock data within the [fromNumber..toNumber] range, rather than a
+  // full 128-slot shift -- mock fixtures are sparse (a handful of named
+  // Combis per bank, see makeFakeCombis()), so there's nothing real to
+  // shift in any gap between them anyway.
+  window.moveCombiWithinBank = (datasetId, bank, fromNumber, toNumber) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+    if (fromNumber === toNumber) return ok({ setlistRefsRepointed: 0 });
+
+    const moving = dataset.combis.find((c) => c.bank === bank && c.number === fromNumber);
+    if (!moving) return fail("No such Combi to move");
+
+    const inRange = dataset.combis.filter((c) => {
+      if (c.bank !== bank || c.number === fromNumber) return false;
+      return toNumber < fromNumber
+        ? c.number >= toNumber && c.number < fromNumber
+        : c.number > fromNumber && c.number <= toNumber;
+    });
+
+    let setlistRefsRepointed = 0;
+    const repoint = (fromNum, toNum) => {
+      for (const setlistIndex of Object.keys(dataset.songs)) {
+        for (const song of dataset.songs[setlistIndex]) {
+          if (song.isProgram || song.bank !== bank || song.number !== fromNum) continue;
+          song.number = toNum;
+          setlistRefsRepointed++;
+        }
+      }
+    };
+
+    for (const c of inRange) {
+      const oldNumber = c.number;
+      c.number = toNumber < fromNumber ? oldNumber + 1 : oldNumber - 1;
+      repoint(oldNumber, c.number);
+    }
+    moving.number = toNumber;
+    repoint(fromNumber, toNumber);
+
+    return ok({ setlistRefsRepointed });
+  };
+
+  // Mirrors PcgFile::moveCombiToBank() -- see its own doc comment,
+  // including why the vacated source is filled from a same-bank "Init
+  // Combi" (makeFakeCombis() adds one per bank) rather than a shipped
+  // template.
+  window.moveCombiToBank = (datasetId, srcBank, srcNumber, dstBank, dstNumber) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+    if (srcBank === dstBank) return fail("Use moveCombiWithinBank() for a same-bank move");
+
+    const src = dataset.combis.find((c) => c.bank === srcBank && c.number === srcNumber);
+    if (!src) return fail("No such source Combi");
+    const dst = dataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
+    if (!dst) return fail("No such destination Combi");
+
+    const dstReferenced = Object.keys(dataset.songs).some((setlistIndex) =>
+      dataset.songs[setlistIndex].some((song) => !song.isProgram && song.bank === dstBank && song.number === dstNumber)
+    );
+    if (dstReferenced) {
+      return fail("Can't overwrite -- the destination Combi is still referenced by at least one Set List slot");
+    }
+
+    const filler = dataset.combis.find((c) => c.bank === srcBank && c.number !== srcNumber && c.name === "Init Combi");
+    if (!filler) return fail('Can\'t vacate -- no other "Init Combi" slot exists in this bank to fill it with');
+
+    Object.assign(dst, {
+      name: src.name,
+      setlistReferenceCount: src.setlistReferenceCount,
+      setlistUsages: src.setlistUsages,
+      timbres: src.timbres,
+    });
+    Object.assign(src, {
+      name: "- Init Combi -",
+      setlistReferenceCount: filler.setlistReferenceCount,
+      setlistUsages: filler.setlistUsages,
+      timbres: filler.timbres,
+    });
+
+    let setlistRefsRepointed = 0;
+    for (const setlistIndex of Object.keys(dataset.songs)) {
+      for (const song of dataset.songs[setlistIndex]) {
+        if (song.isProgram || song.bank !== srcBank || song.number !== srcNumber) continue;
+        song.bank = dstBank;
+        song.number = dstNumber;
+        setlistRefsRepointed++;
+      }
+    }
+
+    return ok({ setlistRefsRepointed });
   };
 
   window.findDuplicatePrograms = (datasetId) => {

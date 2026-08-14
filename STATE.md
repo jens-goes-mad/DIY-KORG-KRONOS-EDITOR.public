@@ -2324,6 +2324,66 @@ gaps are deliberate choices, not accidental blind spots.
 Not acted on yet -- this is a triage/comparison record, not a build plan. Worth revisiting
 before picking the next feature to build.
 
+--- EXPLORATION: CREATING A DATASET FROM NOTHING, AND WHOLE-BANK PROGRAM REORDER (2026-08-14, NOT DECIDED) ---
+
+Two questions asked directly, answered here rather than guessed at.
+
+**Can we synthesize a brand-new, empty dataset (Set Lists + a HD-1 bank + an EXi bank +
+a Combi bank) without loading a real Kronos backup first? FURTHER INVESTIGATION
+REQUIRED -- not confident enough yet, for real, specific reasons, not just caution:**
+  - What we DO have solidly: real "Init Program"/"Init EXi Program" template bytes for a
+    blank Program slot, both engine types (`resources/Init-Program-HD1.raw`/
+    `Init-Program-EXi.raw`, entries 31-33 above) -- and an extensively-exercised
+    "genuinely empty Set List slot" shape (every drag-and-drop/sort/copy operation
+    already reads and writes these for real).
+  - What we DON'T have: no extracted or verified **blank Combi** template at all --
+    every Init Program effort so far was Programs-only. The chunk header's own `dwX`
+    field ([The file format](/format) open question #1) has never had its *meaning*
+    confirmed, only its position/width -- fine when copying it through unchanged from
+    an existing valid file, not fine if we'd have to invent a value from nothing. The
+    file-header **checksum flag** (open question #11) reads "checksum present" in our
+    one real sample, but where that checksum would actually live and how it's computed
+    has never been investigated -- if real hardware validates it, a synthesized file
+    could be silently rejected. Whether a real backup can legally *omit* a bank at all
+    is itself still an open question (#13), so we don't even know if "an empty PRG1
+    bank with zero records" is a well-formed thing a real unit accepts.
+  - Most fundamentally: every real-hardware verification this project has ever done
+    started from an already-valid real file and either just *read* it, or made a
+    *small edit* to already-valid bytes (see the User Guide's own "Save As, then load
+    onto a Kronos" testing workflow). This project has never tried building a whole
+    file's bytes from nothing and having a real Kronos accept it as a valid backup --
+    that's a different, larger act of trust than editing one field of a file that was
+    already known-good, even where every individual piece is well understood.
+
+**Can we A-Z/Z-A reorder Programs within one bank, like Set Lists already do? Yes,
+architecturally -- the primitives already exist, and the real challenge is exactly the
+one flagged when asking: repointing every reference, file-wide, not just within the
+bank.**
+  - The key difference from Set List sorting: a Set List slot has no INCOMING
+    references (nothing else in the file points at "Set List 5, slot 12" specifically),
+    so `sortSetlist()` is a pure, local, 128-record shuffle. A Program is a heavily
+    *referenced-by* target -- every Set List slot across all 128 lists that points at
+    it, and every Combi Timbre across every Combi that references it (via the raw-code
+    translation, see §6.2), would need to be found and repointed to its new position.
+    Reordering a whole bank typically moves most of its records, not just two swapping
+    -- so this is the same repointing mechanism `resolveDuplicates()` (entries 31-33
+    above) already proved out, just applied to potentially all 128 Programs in one
+    bank at once instead of one duplicate.
+  - Real shape this would take: (1) snapshot all 128 records' raw bytes up front, same
+    "read everything before writing" discipline `sortSetlist()` already uses so a
+    record about to move never races its own read; (2) compute an old-position ->
+    new-position mapping (same alphabetical/empties-at-the-end convention as Set List
+    sort); (3) write all 128 records into their new positions; (4) sweep every Set List
+    slot and every Combi Timbre reference in the *entire file* and repoint any hit
+    against the mapping.
+  - Not a reverse-engineering unknown like the question above -- no blocking "do we even
+    know how" gap, just real, substantial engineering (and worth validating performance
+    on a large real file before committing to it, though the existing usage-scanning
+    code this app already runs on every load suggests it'd be fine).
+
+Neither of these is being built now -- recorded so the reasoning isn't lost, matching
+this project's own "note it, don't guess, don't silently build it either" pattern.
+
 --- BLIND SPOTS / NOT YET TOUCHED ---
 
 Format:
@@ -2876,5 +2936,68 @@ App/UI:
       screens) added the same session, keyed to visual position
       (`:first-of-type`/`:last-of-type`) so it stays correct across
       `swapPanes()` either order.
+  34. **BUILT (2026-08-14)**: Combi rearrangement -- swap, move within a
+      bank, move to a different bank -- the last read-only table in
+      `library.js` (Combis) is now draggable, mirroring what Set Lists and
+      Programs already had. A Combi is only ever referenced by Set List
+      slots (never by other Combis, unlike Programs which are also
+      referenced by Combi Timbres), so this needed no Timbre-repointing
+      dimension at all.
+      - `PcgFile::repointSetlistReferences()` factored out of entry 32's
+        inline `resolveDuplicates()` loop -- shared by all four write paths
+        now instead of getting a fourth near-identical copy.
+      - Three new `PcgFile` methods, all returning `{ok, error,
+        setlistRefsRepointed}`: `swapCombis()` (same or different bank,
+        never destroys anything so no restriction), `moveCombiWithinBank()`
+        (shift, same mechanic as `sortSetlist()`), `moveCombiToBank()`
+        (overwrites the destination -- refuses if the destination is still
+        referenced by any Set List slot, a deliberate choice over silently
+        orphaning or blanking those slots).
+      - `moveCombiToBank()` needed a blank "Init Combi" filler for the
+        vacated source slot, and this project had never extracted one for
+        Combis. First search used the wrong signal (`name.empty()`) and
+        found nothing -- caught directly: `U-A 100` in `setlist_test_2.PCG`
+        is a real blank Combi literally named `"Init Combi"`, 1136-1178 of
+        them across two real files. Within one bank every non-zero-numbered
+        one is byte-identical, but across banks they differ by 40+
+        unexplained bytes (open question, not investigated further this
+        pass) and slot 0 of each bank carries one extra outlier byte at
+        offset 3. Rather than ship a single resource file that would be
+        wrong for 13 of 14 banks, the filler is sourced LIVE from another
+        `"Init Combi"` slot in the SAME bank being vacated (name patched to
+        `"- Init Combi -"`, same visibility convention as entry 33's Init
+        Program templates) -- refuses the move if that bank has none.
+      - Two real ordering bugs in `moveCombiWithinBank()`'s reference
+        repointing, both only exposed by a real-file smoke probe (the
+        synthetic unit-test fixture's shift distances were too short to hit
+        either): doing the shift loop then a final repoint for the moved
+        record's own referrers let the loop's first write collide with the
+        final repoint's search; moving the final repoint before the loop
+        instead just moved the same collision onto the loop's last step in
+        the other direction. Fixed by snapshotting which Set List slots
+        reference the record's ORIGINAL position via a pure search (no
+        writes) before touching anything, then applying that repoint by
+        identity after every other write is done -- immune to the collision
+        because identity-based application never re-searches.
+      - `EditorBridge`/`main.cpp` bindings and `mock_bridge.js` fakes follow
+        entry 32's exact pattern. `library.js` drag gesture: drop onto
+        another row = swap; drop before/after in the same bank = move
+        within bank; drop before/after in a different bank = move to that
+        bank (no shift concept spans two independent banks, so it collapses
+        to the same as dropping onto that slot).
+      - Verified: `tests/pcg_file_test.cpp` gained a dedicated fixture
+        (`buildCombiRearrangeFixture()`, not the shared synthetic file,
+        which asserts exactly one Combi record elsewhere) and
+        `testCombiRearrange()` covering all three operations plus both
+        refusal paths; full `pcg_file_test`/`kronos_editor`/
+        `generate_setlist_test_matrix` rebuild clean; real-file smoke
+        probes against `setlist_test_2.PCG` confirmed all three operations
+        end to end, including `moveCombiToBank()`'s happy path (a
+        genuinely-referenced Combi moved bank 7 -> bank 0, the destination
+        inherited its 1 Set List usage, the vacated source read back as
+        `"- Init Combi -"`) and its destination-referenced refusal
+        (attempting to overwrite a bank whose only spare Combi -- an INT
+        factory bank -- turned out to have zero "Init Combi" slots at all,
+        correctly refused rather than fabricating bytes).
 
 === END STATE BLOCK ===

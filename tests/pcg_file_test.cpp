@@ -1096,6 +1096,212 @@ void testResolveDuplicates() {
     }
 }
 
+// A small, dedicated fixture -- NOT buildSyntheticPcgFile() (that one's
+// shared by testPcgFileEndToEnd()'s many sequential sub-tests and has a
+// hard `CHECK_EQ(pcg.combis().size(), 1, ...)` assertion elsewhere, so
+// adding more Combi records there would break it). Two Combi banks: bank 0
+// has a deliberately-unreferenced "Unused" at number 0 (an all-zero Set
+// List slot ALSO decodes as isProgram=false/bank=0/number=0 -- see
+// docs/content/format/index.md §5.4's own caveat -- so nothing here ever
+// uses (bank 0, number 0) as a REAL reference target, or every one of the
+// 125 genuinely-empty slots below would spuriously match too), then
+// "Combi A"/"Combi B"/"Combi C" at 1-3, plus an "Init Combi" filler at 4.
+// Bank 1 has "Other Bank Combi" at 0 (safe -- the collision is specifically
+// with bank 0) and an unreferenced "Empty Target" at 1. One Set List's
+// first three slots reference bank0/1, bank0/2, and bank1/0 respectively,
+// giving swap/move/move-to-bank real Set List referrers to repoint.
+std::vector<uint8_t> buildCombiRearrangeFixture() {
+    constexpr uint32_t kSongsPerSetlist = 128;
+    constexpr size_t kRecordSize = 28;
+    constexpr size_t kSbkHeaderSize = 40;
+    constexpr size_t kSbkRecordSize = 542;
+    constexpr size_t kCombiRecordSize = 40;  // small synthetic stride, same idea as kBankRecordSize=32 elsewhere
+
+    std::vector<uint8_t> sdb1;
+    pushU32BE(sdb1, 1);
+    pushU32BE(sdb1, (kSongsPerSetlist + 1) * kRecordSize);
+    pushNameRecord(sdb1, "Test Setlist", kRecordSize);
+    pushNameRecord(sdb1, "Song A", kRecordSize);
+    pushNameRecord(sdb1, "Song B", kRecordSize);
+    pushNameRecord(sdb1, "Song C", kRecordSize);
+    for (uint32_t k = 3; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+
+    std::vector<uint8_t> sbk1;
+    pushU32BE(sbk1, 1);
+    pushU32BE(sbk1, static_cast<uint32_t>(kSbkHeaderSize + kSongsPerSetlist * kSbkRecordSize));
+    pushZeros(sbk1, kSbkHeaderSize);
+    auto songA = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/1, 1, 0, 100, 0, 0, 0, "");
+    auto songB = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/2, 1, 0, 100, 0, 0, 0, "");
+    auto songC = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/1, /*number=*/0, 1, 0, 100, 0, 0, 0, "");
+    sbk1.insert(sbk1.end(), songA.begin(), songA.end());
+    sbk1.insert(sbk1.end(), songB.begin(), songB.end());
+    sbk1.insert(sbk1.end(), songC.begin(), songC.end());
+    for (uint32_t k = 3; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+
+    std::vector<uint8_t> cbk1BankA;
+    pushU32BE(cbk1BankA, 5);
+    pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));
+    pushNameRecord(cbk1BankA, "Unused", kCombiRecordSize);  // number 0 -- deliberately never a real reference target
+    pushNameRecord(cbk1BankA, "Combi A", kCombiRecordSize);
+    pushNameRecord(cbk1BankA, "Combi B", kCombiRecordSize);
+    pushNameRecord(cbk1BankA, "Combi C", kCombiRecordSize);
+    pushNameRecord(cbk1BankA, "Init Combi", kCombiRecordSize);
+
+    std::vector<uint8_t> cbk1BankB;
+    pushU32BE(cbk1BankB, 2);
+    pushU32BE(cbk1BankB, static_cast<uint32_t>(kCombiRecordSize));
+    pushNameRecord(cbk1BankB, "Other Bank Combi", kCombiRecordSize);
+    pushNameRecord(cbk1BankB, "Empty Target", kCombiRecordSize);  // unreferenced -- a real destination for moveCombiToBank()
+
+    std::vector<uint8_t> sls1Content;
+    appendChunk(sls1Content, "SDB1", sdb1);
+    appendChunk(sls1Content, "SBK1", sbk1);
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1BankA);
+    appendChunk(cmb1Content, "CBK1", cbk1BankB);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "SLS1", sls1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testCombiRearrange() {
+    // --- swapCombis(): bank0/1 ("Combi A") <-> bank1/0 ("Other Bank
+    // Combi"), both referenced ------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.swapCombis(0, 1, 1, 0);
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  swapCombis() error: %s\n", result.error.c_str());
+        CHECK_EQ(result.setlistRefsRepointed, 2, "both referenced slots (Song A, Song C) moved");
+
+        auto atBank0 = pcg.decodeCombi(0, 1);
+        auto atBank1 = pcg.decodeCombi(1, 0);
+        CHECK(atBank0.has_value() && atBank1.has_value());
+        if (atBank0 && atBank1) {
+            CHECK_EQ(atBank0->name, std::string("Other Bank Combi"), "bank0/1 now holds what was at bank1/0");
+            CHECK_EQ(atBank1->name, std::string("Combi A"), "bank1/0 now holds what was at bank0/1");
+        }
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.bank, 1, "Song A followed Combi A to bank 1");
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 0, "Song A followed Combi A to number 0");
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.bank, 0, "Song C followed Other Bank Combi to bank 0");
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.number, 1, "Song C followed Other Bank Combi to number 1");
+        // Song B (bank0/2, "Combi B") was never part of the swap -- must be untouched.
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.bank, 0, "Song B untouched by an unrelated swap");
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 2, "Song B untouched by an unrelated swap");
+
+        // No-op: swapping a slot with itself.
+        auto noop = pcg.swapCombis(0, 2, 0, 2);
+        CHECK(noop.ok);
+        CHECK_EQ(noop.setlistRefsRepointed, 0, "self-swap is a no-op");
+
+        // Rejected: out-of-range position.
+        auto bad = pcg.swapCombis(99, 0, 0, 1);
+        CHECK(!bad.ok);
+    }
+
+    // --- moveCombiWithinBank(): shift bank0's Combi C (number 3) to
+    // number 1, shifting A and B up by one -------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.moveCombiWithinBank(0, 3, 1);
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  moveCombiWithinBank() error: %s\n", result.error.c_str());
+        // Combi C itself moved (was unreferenced, so 0 for it) -- but
+        // shifting A (referenced by Song A) and B (referenced by Song B)
+        // out of the way repoints both: 2 total.
+        CHECK_EQ(result.setlistRefsRepointed, 2, "both shifted-out records' referrers followed them");
+
+        auto n1 = pcg.decodeCombi(0, 1);
+        auto n2 = pcg.decodeCombi(0, 2);
+        auto n3 = pcg.decodeCombi(0, 3);
+        CHECK(n1.has_value() && n2.has_value() && n3.has_value());
+        if (n1 && n2 && n3) {
+            CHECK_EQ(n1->name, std::string("Combi C"), "Combi C moved to number 1");
+            CHECK_EQ(n2->name, std::string("Combi A"), "Combi A shifted to number 2");
+            CHECK_EQ(n3->name, std::string("Combi B"), "Combi B shifted to number 3");
+        }
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 2, "Song A followed Combi A to number 2");
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 3, "Song B followed Combi B to number 3");
+
+        // Rejected: out-of-range index.
+        auto bad = pcg.moveCombiWithinBank(0, 0, 99);
+        CHECK(!bad.ok);
+    }
+
+    // --- moveCombiToBank(): happy path, dest-referenced refusal, no-
+    // filler refusal -----------------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        // bank1/0 ("Other Bank Combi") IS referenced (Song C) -- refuse.
+        auto refused = pcg.moveCombiToBank(0, 1, 1, 0);
+        CHECK(!refused.ok);
+        auto stillThere = pcg.decodeCombi(1, 0);
+        CHECK(stillThere.has_value());
+        if (stillThere) CHECK_EQ(stillThere->name, std::string("Other Bank Combi"), "refused move writes nothing");
+
+        // Same-bank rejected outright (use moveCombiWithinBank() instead).
+        auto sameBank = pcg.moveCombiToBank(0, 1, 0, 2);
+        CHECK(!sameBank.ok);
+
+        // Happy path: move Combi B (bank0/2, referenced by Song B) into
+        // bank1/1 ("Empty Target", unreferenced).
+        auto moved = pcg.moveCombiToBank(0, 2, 1, 1);
+        CHECK(moved.ok);
+        if (!moved.ok) std::fprintf(stderr, "  moveCombiToBank() error: %s\n", moved.error.c_str());
+        CHECK_EQ(moved.setlistRefsRepointed, 1, "Song B (the only referrer) followed Combi B to its new home");
+
+        auto atDest = pcg.decodeCombi(1, 1);
+        CHECK(atDest.has_value());
+        if (atDest) CHECK_EQ(atDest->name, std::string("Combi B"), "destination now holds the moved Combi's content");
+
+        auto vacated = pcg.decodeCombi(0, 2);
+        CHECK(vacated.has_value());
+        if (vacated) {
+            CHECK_EQ(vacated->name, std::string("- Init Combi -"),
+                     "vacated source renamed to the visibility-customized filler name");
+        }
+
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.bank, 1, "Song B repointed to the new bank");
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 1, "Song B repointed to the new number");
+
+        // Rejected: bank 1 (the source bank here) has no "Init Combi" of
+        // its own to vacate with -- source=bank1/0 ("Other Bank Combi",
+        // still referenced by Song C, which is fine -- only the
+        // DESTINATION's references block a move), destination=bank0/3
+        // ("Combi C", unreferenced -- passes that check cleanly) -- so this
+        // isolates the "no filler" refusal specifically, not the
+        // destination-referenced one.
+        auto noFiller = pcg.moveCombiToBank(1, 0, 0, 3);
+        CHECK(!noFiller.ok);
+        auto stillC = pcg.decodeCombi(0, 3);
+        CHECK(stillC.has_value());
+        if (stillC) CHECK_EQ(stillC->name, std::string("Combi C"), "rejected move writes nothing");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1106,6 +1312,7 @@ int main() {
     testPcgFileEndToEnd();
     testSaveRoundTrip();
     testResolveDuplicates();
+    testCombiRearrange();
 
     if (g_failures > 0) {
         std::fprintf(stderr, "\n%d check(s) FAILED\n", g_failures);

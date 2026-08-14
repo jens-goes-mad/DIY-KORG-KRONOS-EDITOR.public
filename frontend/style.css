@@ -487,15 +487,18 @@ td.has-comment {
   text-underline-offset: 3px;
 }
 
-/* Shared by both draggable tables (Setlist rows, Programs rows) -- see
-   pane.js's Setlist drag handlers and library.js's Programs ones. */
+/* Shared by every draggable table (Setlist rows, Programs rows, Combis
+   rows) -- see pane.js's Setlist drag handlers and library.js's Programs/
+   Combis ones. */
 .setlist-table tbody tr,
-.programs-table tbody tr {
+.programs-table tbody tr,
+.combis-table tbody tr {
   cursor: grab;
 }
 
 .setlist-table tbody tr.drop-target,
-.programs-table tbody tr.drop-target {
+.programs-table tbody tr.drop-target,
+.combis-table tbody tr.drop-target {
   background: rgba(91, 141, 239, 0.25);
   outline: 1px dashed var(--accent);
   outline-offset: -1px;

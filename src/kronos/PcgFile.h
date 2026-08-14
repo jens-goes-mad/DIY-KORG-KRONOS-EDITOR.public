@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace kronos {
@@ -494,6 +495,58 @@ public:
                                                const std::vector<uint8_t>& hd1InitBytes,
                                                const std::vector<uint8_t>& exiInitBytes);
 
+    // Same shape as ResolveDuplicatesResult, for the three Combi rearrange
+    // methods below -- a Combi is only ever referenced by Set List slots
+    // (never by anything else -- Combi Timbres reference Programs, never
+    // other Combis), so there's no Combi-Timbre-repointing dimension here
+    // the way resolveDuplicates() has.
+    struct CombiRearrangeResult {
+        bool ok = false;
+        std::string error;
+        int setlistRefsRepointed = 0;
+    };
+
+    // Swaps two Combis' entire raw content (same or different bank) and
+    // repoints every Set List slot referencing EITHER one so it follows its
+    // content to the new position. Never destroys anything -- both slots'
+    // old content survives, just at each other's position, so there's no
+    // destination-occupied restriction. A no-op (ok=true, nothing written)
+    // if both refer to the same slot. Returns ok=false with `error` set if
+    // either (bank, number) doesn't exist in this file.
+    CombiRearrangeResult swapCombis(int bankA, int numberA, int bankB, int numberB);
+
+    // Moves a Combi to a new position within its OWN bank, shifting the
+    // intervening range by one to make room -- same mechanic as
+    // reorderSong() (Set List slots), ported to Combis. Every record that
+    // SHIFTS (not just the one that was dragged) gets its own Set List
+    // referrers repointed to follow it to its own new position. Returns
+    // ok=false with `error` set if the bank or either index is out of
+    // range.
+    CombiRearrangeResult moveCombiWithinBank(int bank, int fromNumber, int toNumber);
+
+    // Moves a Combi into a specific slot in a DIFFERENT bank, overwriting
+    // whatever was there, and repoints every Set List slot that referenced
+    // the source to follow it to its new position.
+    //
+    // Refuses (ok=false, nothing written) if the destination currently has
+    // ANY Set List reference -- rather than silently leaving those slots
+    // pointing at the source's unrelated new content, or silently blanking
+    // them, both considered and rejected in favor of just not allowing the
+    // move (confirmed directly, not assumed).
+    //
+    // The vacated source slot is filled with a real "Init Combi" record
+    // found elsewhere in the SOURCE's own bank (name field patched to
+    // "- Init Combi -" for visibility, same convention as the Duplicates
+    // panel's Init Program templates), sourced live rather than from a
+    // shipped resource file -- real "Init Combi" bytes differ across banks
+    // in ways not understood yet (unlike Program's Init Program/Init EXi
+    // Program split, this isn't just a 2-way HD-1/EXi difference), so using
+    // the target bank's OWN copy sidesteps needing to solve that. Refuses
+    // (ok=false, nothing written) if the source bank has no OTHER Combi
+    // currently named "Init Combi" to copy from, rather than fabricating
+    // blank bytes with no ground truth.
+    CombiRearrangeResult moveCombiToBank(int srcBank, int srcNumber, int dstBank, int dstNumber);
+
     // Raw 542-byte SBK1 record for one Set List slot, straight from the
     // retained file bytes -- the same two-tier data-flow idea as
     // decodeProgram()/decodeCombi(), applied to Set List slots: a detail
@@ -602,6 +655,38 @@ private:
     // else in this file.
     void refreshProgramInfo(int bank, int number);
     void refreshCombiInfo(int bank, int number);
+
+    // Patches ONE already-identified Set List slot's bank/number bytes to
+    // (toBank, toNumber) -- the one place that knows the kSbkBankOffset/
+    // kSbkBankMask/kSbkNumberOffset shape, shared by the search-based
+    // repointSetlistReferences() below and moveCombiWithinBank()'s own
+    // identity-based repoint (see its doc comment for why that one can't
+    // just search-and-repoint at a single point in time without risking a
+    // collision with the shift it's part of).
+    void repointOneSetlistSlot(int setlistIndex, int songIndex, int toBank, int toNumber);
+
+    // Every (setlistIndex, songIndex) of a Set List slot currently
+    // referencing (bank, number) as a Program or Combi (isProgram
+    // distinguishes which) -- a pure search, no write. Exposed separately
+    // from repointSetlistReferences() below so a caller can snapshot WHO
+    // references something before any writes happen, then apply the
+    // repoint later by identity rather than by re-searching (immune to an
+    // intervening write changing what the search would find).
+    std::vector<std::pair<int, int>> findSetlistReferences(bool isProgram, int bank, int number) const;
+
+    // Repoints every Set List slot currently referencing (fromBank,
+    // fromNumber) as a Program or Combi (isProgram distinguishes which) to
+    // (toBank, toNumber) instead -- findSetlistReferences() + a
+    // repointOneSetlistSlot() call per hit. Shared by this project's
+    // various "something moved, follow the references" write paths
+    // (resolveDuplicates(), swapCombis(), the per-step shifts inside
+    // moveCombiWithinBank(), moveCombiToBank()) wherever a single search-
+    // then-write at one point in time is safe (i.e. nothing else in the
+    // same operation will later search using fromNumber or toNumber as a
+    // key) -- see moveCombiWithinBank()'s own doc comment for the one case
+    // in this file where it ISN'T safe and the two pieces are used
+    // separately instead. Returns how many slots were repointed.
+    int repointSetlistReferences(bool isProgram, int fromBank, int fromNumber, int toBank, int toNumber);
 
     // The Set List instrument-name cross-reference (§5 in docs/content/
     // format/index.md), resolved on demand from programs_/combis_ rather

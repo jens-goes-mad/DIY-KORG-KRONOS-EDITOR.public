@@ -135,6 +135,11 @@ int main() {
         view.bind("resolveDuplicateProgram", [&bridge](const choc::value::ValueView& args) {
             return bridge.resolveDuplicateProgram(args);
         });
+        view.bind("swapCombis", [&bridge](const choc::value::ValueView& args) { return bridge.swapCombis(args); });
+        view.bind("moveCombiWithinBank",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiWithinBank(args); });
+        view.bind("moveCombiToBank",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiToBank(args); });
         view.bind("getDatasetInternals",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getDatasetInternals(args); });
     };
