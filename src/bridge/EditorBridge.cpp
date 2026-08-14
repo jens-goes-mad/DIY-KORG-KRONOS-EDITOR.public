@@ -49,11 +49,14 @@ std::vector<uint8_t> bytesArg(const choc::value::ValueView& args, size_t index) 
     return result;
 }
 
-// Reads args[index] as a JS array of {srcBank, srcNumber, dstBank} objects
-// (the user's chosen destination bank per unresolved Program, gathered by
-// the cross-dataset Combi copy panel) into
-// std::vector<kronos::PcgFile::ProgramPlacement>. Empty if the argument is
-// missing or isn't an array.
+// Reads args[index] as a JS array of {srcBank, srcNumber, dstBank, dstNumber?}
+// objects (the user's chosen destination bank -- and, optionally, exact free
+// slot -- per unresolved Program, gathered by the cross-dataset Combi copy
+// panel) into std::vector<kronos::PcgFile::ProgramPlacement>. `dstNumber`
+// defaults to -1 (ProgramPlacement's own "let apply() pick the first free
+// slot" sentinel) when omitted, so older-shaped placement objects (bank
+// only) still work unchanged. Empty if the argument is missing or isn't an
+// array.
 std::vector<kronos::PcgFile::ProgramPlacement> placementsArg(const choc::value::ValueView& args, size_t index) {
     std::vector<kronos::PcgFile::ProgramPlacement> result;
     if (!args.isArray() || args.size() <= index) return result;
@@ -66,6 +69,7 @@ std::vector<kronos::PcgFile::ProgramPlacement> placementsArg(const choc::value::
         placement.srcBank = static_cast<int>(element["srcBank"].getWithDefault<double>(0));
         placement.srcNumber = static_cast<int>(element["srcNumber"].getWithDefault<double>(0));
         placement.dstBank = static_cast<int>(element["dstBank"].getWithDefault<double>(0));
+        placement.dstNumber = static_cast<int>(element["dstNumber"].getWithDefault<double>(-1));
         result.push_back(placement);
     }
     return result;

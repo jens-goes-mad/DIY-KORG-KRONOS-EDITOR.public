@@ -1,0 +1,23 @@
+lit-html 3.3.3
+Source: https://unpkg.com/lit-html@3/lit-html.js
+License: BSD-3-Clause (https://github.com/lit/lit/blob/main/packages/lit-html/LICENSE)
+
+Vendored as a single self-contained ES module -- lit-html itself has no
+imports of its own (verified directly, not assumed), so unlike a typical
+npm package there's no dependency tree to also vendor. Only lit-html (the
+templating primitive: html/render/nothing/svg/mathml), NOT the full Lit/
+LitElement component framework, and no directives module (ref/repeat/
+classMap/etc.) -- pulled in only if a real use for one shows up.
+
+Loaded via a dynamic import() from a plain (non-module) <script>, same
+pattern frontend/pane-setlist-editor.js's loadSlotCodecs() already
+established for frontend/components/kronos/*.js -- works without
+converting index.html's scripts to type="module", see STATE.md.
+
+PILOT USE ONLY as of 2026-08-14 (frontend/combi-cross-dataset-panel.js) --
+not yet adopted anywhere else in this app. See STATE.md for the reasoning
+and how it's going before using it elsewhere.
+
+To update: re-download lit-html.js from the URL above at a newer version
+tag, strip the trailing "//# sourceMappingURL=..." comment (no .map
+vendored), replace this file, bump the version note here.

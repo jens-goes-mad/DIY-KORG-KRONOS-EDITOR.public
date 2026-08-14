@@ -221,6 +221,13 @@ Debug builds read `frontend/` live off disk (edit-reload friendly). Release
 builds (`-DCMAKE_BUILD_TYPE=Release`, or `-DEDITOR_EMBED_RESOURCES=ON`)
 embed `frontend/` into the binary via `tools/embed_resources.py`.
 
+**Don't want to build locally?** The native-build workflow can also be triggered
+manually (`workflow_dispatch`) from the Actions tab -- [Actions -> Build Kronos Editor
+(native) -> Run workflow](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/actions/workflows/native-build.yml).
+Once the run finishes, its summary page lists 4 downloadable artifacts, one per
+platform: `kronos-editor-macos-arm64`, `kronos-editor-macos-x86_64`,
+`kronos-editor-linux-x86_64`, `kronos-editor-windows-x86_64`.
+
 ## Testing
 
 ```sh

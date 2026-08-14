@@ -778,6 +778,11 @@ function createSetlistPanel(
   // side effect of also opening an editor. Returns true if it handled the
   // click (caller should stop there, not run its own action).
   function handleMultiSelectClick(ev, songIndex) {
+    // Shift+Cmd/Ctrl+click is the jump buttons' own "opposite pane, keep its
+    // dataset" gesture (pane.js's jumpToOppositePane()), not multi-select --
+    // Shift is reserved for that family of gestures on this row, so this
+    // never claims a Shift-combo, even a Cmd/Ctrl one.
+    if (ev.shiftKey) return false;
     if (!ev.ctrlKey && !ev.metaKey) return false;
     if (multiSelected.has(songIndex)) multiSelected.delete(songIndex);
     else multiSelected.add(songIndex);
@@ -942,7 +947,10 @@ function createSetlistPanel(
         bankButton.type = "button";
         bankButton.className = "button is-small bank-jump-button";  // Bulma button, same look as the topbar's Open button
         bankButton.textContent = formatBankNumber(entry, bankType);
-        bankButton.title = `Show ${entry.isProgram ? "Program" : "Combi"} ${formatBankNumber(entry, bankType)} in this pane's Programs/Combis view (Shift+click: show in the opposite pane instead)`;
+        bankButton.title =
+          `Show ${entry.isProgram ? "Program" : "Combi"} ${formatBankNumber(entry, bankType)} in this pane's ` +
+          "Programs/Combis view (Shift+click: show in the opposite pane instead, switching its dataset to " +
+          "match this one; Shift+Cmd+click: same, but keep whatever dataset the opposite pane already has open)";
         bankButton.addEventListener("click", (ev) => {
           ev.stopPropagation();
           if (handleMultiSelectClick(ev, entry.index)) return;
@@ -952,6 +960,7 @@ function createSetlistPanel(
             number: entry.number,
             from: { kind: "setlist", setlistIndex: currentSetlistIndex, songIndex: entry.index },
             toOpposite: ev.shiftKey,
+            keepOppositeDataset: ev.metaKey,
           });
         });
         bankTd.appendChild(bankButton);

@@ -169,6 +169,14 @@ you're already looking at. If the opposite pane isn't currently showing the same
 different one, or none at all), Shift+click switches it to this pane's dataset first, then
 jumps.
 
+**Shift+Cmd+click** is a variant of the same idea: it jumps to the *opposite* pane too, but
+never switches its dataset -- it jumps to the same bank/number in whatever the opposite pane
+already has open. Useful when a foreign/donated file's Combi only references generic/default
+sounds, so there's nothing distinctive to identify -- with your own reference backup already
+open in the opposite pane, Shift+Cmd+click shows you what's actually stored at that exact same
+coordinate on your own unit. If the opposite pane has no dataset open at all, there's nothing
+to jump to and a toast says so.
+
 ### Back and Forward
 
 Each pane keeps its own history of the last 10 jumps (any of the kinds above), with **←**/
@@ -270,10 +278,11 @@ copy to mean anything.
   drag-and-drop write in this app.
 - If **any Program doesn't exist yet**, a panel slides in from whichever side of the screen
   the drop landed on, listing every Timbre (the ones already resolved grayed out) and, for
-  each Program that's missing, a row of destination-bank buttons to pick where it should be
-  copied to -- only banks of the matching engine type with a free slot are offered. Apply
-  copies each chosen Program and repoints the new Combi's Timbres to match, all in one step;
-  Cancel abandons the whole drop.
+  each Program that's missing, a small table -- one row per destination bank of the matching
+  engine type that has room, each with its own dropdown of that bank's actual free ("empty")
+  Program slots to choose from. Pick the exact slot you want it copied into. Apply copies each
+  chosen Program into its chosen slot and repoints the new Combi's Timbres to match, all in
+  one step; Cancel abandons the whole drop.
 
 The source Combi (and its dataset) is never touched by any of this -- exactly like a
 same-dataset copy, only the destination changes.
@@ -336,3 +345,10 @@ you built.
 - Cross-dataset Combi copying only supports the **copy onto an empty slot** gesture --
   cross-dataset swap and cross-dataset move-to-a-different-bank (overwrite) aren't
   supported yet, only within one dataset.
+- **Copying a Program (directly, or as part of a Combi copy) copies its entire raw record
+  verbatim, including its KARMA settings** -- and whether every part of those settings is
+  safe to carry over this way hasn't been investigated yet (see [The file format](/format)
+  §8 #15). If a copied Program's KARMA behavior (Switch/Fader assignments, Generated
+  Effect module) looks wrong after a copy, this is why -- please report it with the
+  specific Program/Combi involved if you hit this, it would be real, valuable ground
+  truth. This applies to a same-dataset Program copy just as much as a cross-dataset one.

@@ -323,10 +323,14 @@ public:
     //    tagMatchesStride can still be false for real data this project
     //    hasn't independently verified yet, and a third file could yet
     //    show a real EXi/HD-1 stride difference this hasn't hit.
-    //  - TargetSlotOccupied: the destination's *current* name is non-empty
-    //    (a different Program already lives there -- re-dropping the exact
+    //  - TargetSlotOccupied: the destination's *current* name doesn't look
+    //    like an empty/untouched slot (looksLikeEmptyProgramName() in
+    //    PcgFile.cpp -- CORRECTED 2026-08-15, see its own doc comment: a
+    //    real untouched slot's name is Korg's own factory
+    //    "Init Program"/"Init EXi Program", not a blank string) -- a
+    //    different real Program already lives there. Re-dropping the exact
     //    same Program already at that slot is caught by DuplicateExists
-    //    instead, not this).
+    //    instead, not this.
     //  - DuplicateExists: a byte-identical Program (matching contentHash)
     //    already exists anywhere in this file.
     std::optional<ProgramCopyError> copyProgramFrom(const PcgFile& src, int srcBank, int srcNumber,
@@ -597,8 +601,9 @@ public:
         std::string name;
         ProgramBankType bankType = ProgramBankType::Hd1;
         // Destination bank indices of the matching engine type with at least one
-        // empty (name.empty()) Program slot -- may be empty, meaning nowhere in
-        // the destination currently has room for this Program.
+        // empty Program slot (looksLikeEmptyProgramName() in PcgFile.cpp) -- may
+        // be empty, meaning nowhere in the destination currently has room for
+        // this Program.
         std::vector<int> candidateBanks;
     };
 
@@ -621,13 +626,18 @@ public:
                                                             int dstBank, int dstNumber) const;
 
     // One decision from analyzeCombiCrossDatasetCopy()'s `unresolved` list: which
-    // destination bank to place `srcBank`/`srcNumber`'s Program into (the specific
-    // slot NUMBER is chosen fresh at apply time -- the first empty slot found in
-    // this bank, not pinned down by the analysis step).
+    // destination bank (and, optionally, exact slot) to place `srcBank`/
+    // `srcNumber`'s Program into. `dstNumber` defaults to -1 ("let apply choose --
+    // the first empty slot found in `dstBank` at apply time, not pinned down by
+    // the analysis step"); a caller that lets the user pick an exact free slot
+    // (e.g. from a per-bank dropdown of that bank's own empty Program names) sets
+    // it explicitly instead -- applyCombiCrossDatasetCopy() re-validates it's
+    // still actually empty at apply time either way, never trusts it blindly.
     struct ProgramPlacement {
         int srcBank = 0;
         int srcNumber = 0;
         int dstBank = 0;
+        int dstNumber = -1;
     };
 
     // Applies a cross-dataset Combi copy: for each of `src`'s Combi's real Program
@@ -635,8 +645,10 @@ public:
     // earlier analyzeCombiCrossDatasetCopy() call, in case this file changed in the
     // meantime, e.g. via the opposite pane) -- reuses an existing byte-identical
     // Program if one exists now, otherwise consults `placements` for that Program's
-    // chosen destination bank and copies it there via copyProgramFrom() (the first
-    // empty slot found in that bank). Refuses (ok=false, nothing written) if any
+    // chosen destination bank and copies it there via copyProgramFrom(), at the
+    // placement's own `dstNumber` if one was given (re-validated fresh -- refused if
+    // that exact slot is no longer empty), otherwise the first empty slot found in
+    // that bank. Refuses (ok=false, nothing written) if any
     // dependency still has neither an existing match nor a placement, or if THIS
     // file's (dstBank, dstNumber) Combi slot is no longer empty. On success,
     // rewrites the COPY of the source Combi's raw bytes (writeTimbreProgramRef(),

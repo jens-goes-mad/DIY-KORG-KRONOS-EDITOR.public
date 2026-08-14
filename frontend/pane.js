@@ -651,10 +651,27 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   // pane's internals directly, only through its public interface, same
   // discipline refreshOppositeLibrary()/refreshSetlistEverywhere() already
   // use elsewhere in this file.
-  async function jumpToOppositePane(to, from) {
+  //
+  // Shift+Cmd+click (`keepDataset`, from `ev.metaKey` at each call site,
+  // only meaningful together with `toOpposite`) is a second, deliberately
+  // different gesture (2026-08-14): jump to the SAME bank/number coordinate
+  // in the opposite pane WITHOUT switching its dataset first, even if it's
+  // showing something completely different. Real use case: a donated/
+  // foreign PCG's Combi whose Timbres only reference default/GM-ish
+  // Programs (so there's nothing distinctive to match by content) -- with
+  // your own reference dataset already open in the opposite pane, this
+  // peeks at whatever your own unit already has at that exact same
+  // coordinate, which a dataset-switching jump can't do (it would replace
+  // that reference dataset with the foreign one before jumping).
+  async function jumpToOppositePane(to, from, keepDataset) {
     const opposite = getOpposite();
     if (!opposite) return;
-    if (opposite.getCurrentDatasetId() !== currentDatasetId) {
+    if (keepDataset) {
+      if (opposite.getCurrentDatasetId() == null) {
+        showToast("Opposite pane has no dataset open -- nothing to jump to there.");
+        return;
+      }
+    } else if (opposite.getCurrentDatasetId() !== currentDatasetId) {
       const displayName = knownDatasets.find((d) => d.datasetId === currentDatasetId);
       await opposite.loadDataset(currentDatasetId, displayName ? displayName.displayName : "");
     }
@@ -679,10 +696,10 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   // the Setlist song, or the Combi a Timbre reference lives on -- see their
   // own call sites), recorded into nav history so Back returns to that
   // EXACT row rather than just its category.
-  function jumpToInstrument({ isProgram, bank, number, from, toOpposite }) {
+  function jumpToInstrument({ isProgram, bank, number, from, toOpposite, keepOppositeDataset }) {
     const to = { kind: "instrument", isProgram, bank, number };
     if (toOpposite) {
-      jumpToOppositePane(to, from);
+      jumpToOppositePane(to, from, keepOppositeDataset);
       return;
     }
     applyNavEntry(to);
@@ -695,10 +712,10 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   // pane to its Setlist category and hands off to setlistPanel's own
   // jumpToEntry(), same "always this SAME pane, unless toOpposite" guarantee
   // as jumpToInstrument() above. Same `from`-recording as jumpToInstrument().
-  function jumpToSetlistEntry({ setlistIndex, songIndex, from, toOpposite }) {
+  function jumpToSetlistEntry({ setlistIndex, songIndex, from, toOpposite, keepOppositeDataset }) {
     const to = { kind: "setlist", setlistIndex, songIndex };
     if (toOpposite) {
-      jumpToOppositePane(to, from);
+      jumpToOppositePane(to, from, keepOppositeDataset);
       return;
     }
     applyNavEntry(to);

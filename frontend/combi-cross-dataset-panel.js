@@ -22,39 +22,61 @@
 // for dropZoneForEvent()/formatBankNumber()/etc.) -- pane-combi-editor.js
 // loads before this file in index.html, but that only matters at CALL time,
 // long after every script has finished loading, so the load order is fine.
+//
+// PILOT: this is the first component in the app rendered with lit-html
+// (frontend/vendor/lit-html.js) instead of manual createElement()/innerHTML
+// wiring, tried here specifically because this file is legacy-free and
+// nothing else touches its DOM (grepped, confirmed) -- see
+// frontend/vendor/LIT_HTML_VERSION.txt and STATE.md for how it went before
+// using it anywhere else. `?attr=`/`@event=` below are lit-html's own
+// boolean-attribute/event-listener binding syntax, not real HTML.
 
 const combiCrossDatasetPanelRoot = document.getElementById("combiCrossDatasetPanelRoot");
 
-combiCrossDatasetPanelRoot.innerHTML = `
-  <div class="cross-dataset-panel-backdrop" hidden></div>
-  <div class="cross-dataset-panel" hidden>
-    <div class="cross-dataset-panel-header">
-      <h2 class="cross-dataset-panel-title"></h2>
-      <button class="cross-dataset-panel-close" type="button" title="Cancel">&#10005;</button>
-    </div>
-    <div class="cross-dataset-panel-body"></div>
-    <div class="cross-dataset-panel-footer">
-      <button class="button is-small cross-dataset-cancel" type="button">Cancel</button>
-      <button class="button is-small is-link cross-dataset-apply" type="button" disabled>Apply</button>
-    </div>
-  </div>
-`;
-
-const crossDatasetBackdrop = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel-backdrop");
-const crossDatasetPanel = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel");
-const crossDatasetTitle = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel-title");
-const crossDatasetBody = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel-body");
-const crossDatasetCloseButton = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel-close");
-const crossDatasetCancelButton = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-cancel");
-const crossDatasetApplyButton = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-apply");
-
-// Which edge (left/right) the panel is currently anchored to -- set fresh
-// each time it opens (slideDirectionFor() below), since which pane is the
-// destination can differ drag to drag.
-function setSlideEdge(edge) {
-  crossDatasetPanel.classList.toggle("slide-from-left", edge === "left");
-  crossDatasetPanel.classList.toggle("slide-from-right", edge === "right");
+// Mirrors PcgFile.cpp's looksLikeEmptyProgramName() (see its own doc
+// comment) -- a genuinely untouched Program slot on real Kronos hardware is
+// named Korg's own factory "Init Program"/"Init EXi Program", not a blank
+// string, so the dropdown below must recognize the same names the backend
+// does or it'll show "no free slot" for a destination that actually has
+// plenty of room (reported directly, 2026-08-15, against a real personal
+// Kronos backup).
+function looksLikeEmptyProgramName(name) {
+  if (!name) return true;
+  const lower = name.toLowerCase();
+  return lower === "init exi program" || lower.includes("init program");
 }
+
+// Lazily loads lit-html the same way pane-setlist-editor.js's
+// loadSlotCodecs() loads the SBK1 codecs -- a dynamic import() works from
+// this plain (non-module) script without converting index.html's scripts to
+// type="module". Cached in one shared promise so re-opening the panel
+// doesn't re-trigger a second import. Kicked off immediately below (not
+// deferred to first drag) so the panel's closed-shell markup exists in the
+// DOM from page load, same guarantee the old synchronous innerHTML template
+// gave -- nothing else in the app reaches into this file's DOM (grepped,
+// confirmed), so the brief async gap before that first render is safe.
+let lit = null;
+let litHtmlPromise = null;
+function loadLitHtml() {
+  if (!litHtmlPromise) {
+    litHtmlPromise = import("./vendor/lit-html.js").then((mod) => {
+      lit = mod;
+      return mod;
+    });
+  }
+  return litHtmlPromise;
+}
+
+// All panel state lives here, not in the DOM -- lit-html re-renders the
+// same nodes from this object instead of the old imperative classList/
+// disabled/innerHTML mutation. `mounted` drives the `hidden` attribute,
+// `open` drives the `is-open`/`is-visible` transition classes; they're
+// separate (not one flag) so opening/closing can still do the same two-step
+// reveal the old code did (unhide on one frame, add the transition classes
+// on the next; on close, remove the classes and only re-hide once the CSS
+// transition actually finishes) -- collapsing them into a single flag would
+// skip the slide animation.
+let panelState = { mounted: false, open: false, session: null };
 
 // The panel slides in from the screen edge nearest wherever the Combi was
 // actually dropped -- read from the destination pane's own DOM position
@@ -67,157 +89,220 @@ function slideDirectionFor(dstPaneEl) {
   return dstPaneEl.matches(".pane:last-of-type") ? "right" : "left";
 }
 
-function openPanel(edge) {
-  setSlideEdge(edge);
-  crossDatasetBackdrop.hidden = false;
-  crossDatasetPanel.hidden = false;
-  // Same next-frame trick as showToast()'s own fade-in -- both classes
+function renderRoot() {
+  const { mounted, open, session } = panelState;
+
+  if (!session) {
+    lit.render(
+      lit.html`
+        <div class="cross-dataset-panel-backdrop" hidden></div>
+        <div class="cross-dataset-panel" hidden></div>
+      `,
+      combiCrossDatasetPanelRoot
+    );
+    return;
+  }
+
+  try {
+    renderSession(mounted, open, session);
+  } catch (err) {
+    // A render bug here must never just leave the panel silently blank --
+    // that's exactly the failure mode this project's own "verify by
+    // actually running it" norm exists to catch, and this codebase has no
+    // browser devtools access during a live test session to spot a
+    // swallowed exception otherwise. Surface it directly instead.
+    console.error("[combi-cross-dataset-panel] render failed:", err);
+    lit.render(
+      lit.html`
+        <div class="cross-dataset-panel-backdrop is-visible" ?hidden=${!mounted}></div>
+        <div class="cross-dataset-panel slide-from-right is-open" ?hidden=${!mounted}>
+          <div class="cross-dataset-panel-header">
+            <h2 class="cross-dataset-panel-title">Something went wrong</h2>
+          </div>
+          <div class="cross-dataset-panel-body">
+            <div class="cross-dataset-unresolved-empty">
+              The panel failed to render: ${err && err.message ? err.message : String(err)}
+            </div>
+          </div>
+          <div class="cross-dataset-panel-footer">
+            <button class="button is-small cross-dataset-cancel" type="button" @click=${() => closeSession()}>Close</button>
+          </div>
+        </div>
+      `,
+      combiCrossDatasetPanelRoot
+    );
+  }
+}
+
+function renderSession(mounted, open, session) {
+  const { analysis, selections, dstPrograms, edge, sourceLabel, targetLabel } = session;
+
+  const applyDisabled = analysis.unresolved.some((u) => {
+    if (u.candidateBanks.length === 0) return true; // nothing to select -- can never be resolved
+    return !selections.has(`${u.srcBank}-${u.srcNumber}`);
+  });
+
+  // One row per Timbre in analysis.dependencies -- found ones grayed out/
+  // disabled (informational: nothing to decide, this Program's already in
+  // the destination), not-found ones just noted as "needs a destination
+  // below" (the actual bank-picker lives in the unresolved section, grouped
+  // by unique Program so several Timbres sharing one Program share one
+  // decision).
+  const depRows = analysis.dependencies.map(
+    (dep) => lit.html`
+      <div class="cross-dataset-dep-row ${dep.found ? "is-found" : ""}">
+        <span class="cross-dataset-dep-label">Timbre ${dep.timbreIndex + 1}: ${dep.name || "(unnamed)"}</span>
+        <span class="cross-dataset-dep-status">${
+          dep.found
+            ? `already in destination (${formatBankNumber({ isProgram: true, bank: dep.foundBank, number: dep.foundNumber })})`
+            : "needs a destination bank below"
+        }</span>
+      </div>
+    `
+  );
+
+  // One two-column row-editor per unique unresolved Program -- one table
+  // row per eligible destination bank (matching engine type, already
+  // filtered server-side into `candidateBanks`): column 1 is the bank ID,
+  // column 2 is a dropdown of that bank's own empty ("Init Program") slots,
+  // built from `dstPrograms` (a plain window.listPrograms(dstDatasetId)
+  // snapshot fetched once when the panel opened -- candidateBanks only ever
+  // told us WHICH banks have room, not the actual free slot numbers).
+  // Picking a slot in any one bank's dropdown is this Program's selection
+  // (stored as `{bank, number}` in the session's own selections Map, keyed
+  // by source bank/number) -- re-rendering resets every OTHER bank's own
+  // dropdown back to its placeholder, since only one selection can be live
+  // per Program at a time. If a genuinely empty bank turns out to have zero
+  // actual free slots in `dstPrograms` (stale between analyze() and now --
+  // e.g. a write from the opposite pane), its dropdown is simply empty
+  // (disabled with a placeholder) rather than pretending a slot exists;
+  // applyCombiCrossDatasetCopy() re-validates the chosen slot fresh either
+  // way, so this is a UX nicety, not the only safety net.
+  const unresolvedRows = analysis.unresolved.map((program) => {
+    const key = `${program.srcBank}-${program.srcNumber}`;
+    const selected = selections.get(key);
+    return lit.html`
+      <div class="cross-dataset-unresolved-row">
+        <div class="cross-dataset-unresolved-label">
+          ${program.name || "(unnamed)"} (${formatBankNumber(
+      { isProgram: true, bank: program.srcBank, number: program.srcNumber },
+      program.bankType
+    )})
+        </div>
+        ${
+          program.candidateBanks.length === 0
+            ? lit.html`<div class="cross-dataset-unresolved-empty">No free bank available in the destination -- cancel and free up a slot first.</div>`
+            : lit.html`<div class="cross-dataset-slot-picker">
+                ${program.candidateBanks.map((bank) => {
+                  const freeSlots = dstPrograms
+                    .filter((p) => p.bank === bank && looksLikeEmptyProgramName(p.name))
+                    .sort((a, b) => a.number - b.number);
+                  const isSelectedBank = selected != null && selected.bank === bank;
+                  const options = [lit.html`<option value="">${freeSlots.length === 0 ? "-- no free slot --" : "-- choose a slot --"}</option>`];
+                  for (const p of freeSlots) {
+                    options.push(
+                      lit.html`<option value=${p.number} ?selected=${isSelectedBank && selected.number === p.number}>${kronosNumber(p.number)} (${p.name || "empty"})</option>`
+                    );
+                  }
+                  return lit.html`
+                    <div class="cross-dataset-slot-picker-row">
+                      <span class="cross-dataset-slot-picker-bank">${PROGRAM_BANK_NAMES[bank] || String(bank)}</span>
+                      <select
+                        class="cross-dataset-slot-picker-select"
+                        ?disabled=${freeSlots.length === 0}
+                        @change=${(ev) => {
+                          if (ev.target.value === "") selections.delete(key);
+                          else selections.set(key, { bank, number: parseInt(ev.target.value, 10) });
+                          renderRoot();
+                        }}
+                      >
+                        ${options}
+                      </select>
+                    </div>
+                  `;
+                })}
+              </div>`
+        }
+      </div>
+    `;
+  });
+
+  const doClose = () => closeSession();
+  const doApply = async () => {
+    const placements = analysis.unresolved
+      .filter((u) => selections.has(`${u.srcBank}-${u.srcNumber}`))
+      .map((u) => {
+        const chosen = selections.get(`${u.srcBank}-${u.srcNumber}`);
+        return { srcBank: u.srcBank, srcNumber: u.srcNumber, dstBank: chosen.bank, dstNumber: chosen.number };
+      });
+    const applied = await session.onApply(placements);
+    if (applied) doClose();
+  };
+
+  lit.render(
+    lit.html`
+      <div
+        class="cross-dataset-panel-backdrop ${open ? "is-visible" : ""}"
+        ?hidden=${!mounted}
+        @click=${doClose}
+      ></div>
+      <div class="cross-dataset-panel slide-from-${edge} ${open ? "is-open" : ""}" ?hidden=${!mounted}>
+        <div class="cross-dataset-panel-header">
+          <h2 class="cross-dataset-panel-title">Copy ${sourceLabel} &rarr; ${targetLabel}</h2>
+          <button class="cross-dataset-panel-close" type="button" title="Cancel" @click=${doClose}>&#10005;</button>
+        </div>
+        <div class="cross-dataset-panel-body">
+          ${
+            analysis.dependencies.length > 0
+              ? lit.html`<h3 class="cross-dataset-section-heading">Timbres</h3>
+                ${depRows}`
+              : lit.nothing
+          }
+          <h3 class="cross-dataset-section-heading">Choose a destination bank</h3>
+          ${unresolvedRows}
+        </div>
+        <div class="cross-dataset-panel-footer">
+          <button class="button is-small cross-dataset-cancel" type="button" @click=${doClose}>Cancel</button>
+          <button class="button is-small is-link cross-dataset-apply" type="button" ?disabled=${applyDisabled} @click=${doApply}>
+            Apply
+          </button>
+        </div>
+      </div>
+    `,
+    combiCrossDatasetPanelRoot
+  );
+}
+
+function openSession(session) {
+  panelState = { mounted: true, open: false, session };
+  renderRoot();
+  // Same next-frame trick the old code used for its fade-in -- both classes
   // present on the same frame means no visible transition at all.
   requestAnimationFrame(() => {
-    crossDatasetBackdrop.classList.add("is-visible");
-    crossDatasetPanel.classList.add("is-open");
+    panelState = { ...panelState, open: true };
+    renderRoot();
   });
 }
 
-function closePanel() {
-  crossDatasetBackdrop.classList.remove("is-visible");
-  crossDatasetPanel.classList.remove("is-open");
-  const onEnd = () => {
-    crossDatasetBackdrop.hidden = true;
-    crossDatasetPanel.hidden = true;
-  };
-  crossDatasetPanel.addEventListener("transitionend", onEnd, { once: true });
-}
-
-// One row per Timbre in analysis.dependencies -- found ones grayed out/
-// disabled (informational: nothing to decide, this Program's already in the
-// destination), not-found ones just noted as "needs a destination below"
-// (the actual bank-picker lives in the unresolved section, grouped by
-// unique Program so several Timbres sharing one Program share one decision).
-function buildDependencyRow(dep) {
-  const row = document.createElement("div");
-  row.className = "cross-dataset-dep-row" + (dep.found ? " is-found" : "");
-  const label = document.createElement("span");
-  label.className = "cross-dataset-dep-label";
-  label.textContent = `Timbre ${dep.timbreIndex + 1}: ${dep.name || "(unnamed)"}`;
-  const status = document.createElement("span");
-  status.className = "cross-dataset-dep-status";
-  status.textContent = dep.found
-    ? `already in destination (${formatBankNumber({ isProgram: true, bank: dep.foundBank, number: dep.foundNumber })})`
-    : "needs a destination bank below";
-  row.append(label, status);
-  return row;
-}
-
-// One radio-button-bar per unique unresolved Program -- clicking a bank
-// button selects it (Bulma's `.is-link`, deselecting any other button in
-// the SAME row, unlike renderBankFilterRow()'s own independent multi-toggle
-// semantics) and reports the choice via `onSelect`, used to gate the Apply
-// button and build the final `placements` array.
-function buildUnresolvedRow(program, onSelect) {
-  const row = document.createElement("div");
-  row.className = "cross-dataset-unresolved-row";
-
-  const label = document.createElement("div");
-  label.className = "cross-dataset-unresolved-label";
-  label.textContent = `${program.name || "(unnamed)"} (${formatBankNumber({ isProgram: true, bank: program.srcBank, number: program.srcNumber }, program.bankType)})`;
-  row.appendChild(label);
-
-  if (program.candidateBanks.length === 0) {
-    const none = document.createElement("div");
-    none.className = "cross-dataset-unresolved-empty";
-    none.textContent = "No free bank available in the destination -- cancel and free up a slot first.";
-    row.appendChild(none);
-    return row;
-  }
-
-  const bar = document.createElement("div");
-  bar.className = "bank-filter-row";
-  const buttons = [];
-  for (const bank of program.candidateBanks) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "button is-small bank-filter-button";
-    btn.textContent = PROGRAM_BANK_NAMES[bank] || String(bank);
-    btn.addEventListener("click", () => {
-      for (const b of buttons) b.classList.remove("is-link");
-      btn.classList.add("is-link");
-      onSelect(bank);
-    });
-    buttons.push(btn);
-    bar.appendChild(btn);
-  }
-  row.appendChild(bar);
-  return row;
-}
-
-// Renders the panel's full body for one analysis result, wires up the
-// Apply/Cancel buttons, and returns nothing -- state (selections, resolved
-// once every unresolved Program has a bank) lives in this closure only for
-// as long as the panel is open for THIS one drag; a fresh call rebuilds it
-// from scratch for the next one.
-function renderPanel({ analysis, sourceLabel, targetLabel, dstPaneEl, onApply }) {
-  crossDatasetTitle.textContent = `Copy ${sourceLabel} -> ${targetLabel}`;
-  crossDatasetBody.innerHTML = "";
-
-  if (analysis.dependencies.length > 0) {
-    const timbresHeading = document.createElement("h3");
-    timbresHeading.className = "cross-dataset-section-heading";
-    timbresHeading.textContent = "Timbres";
-    crossDatasetBody.appendChild(timbresHeading);
-    for (const dep of analysis.dependencies) crossDatasetBody.appendChild(buildDependencyRow(dep));
-  }
-
-  const unresolvedHeading = document.createElement("h3");
-  unresolvedHeading.className = "cross-dataset-section-heading";
-  unresolvedHeading.textContent = "Choose a destination bank";
-  crossDatasetBody.appendChild(unresolvedHeading);
-
-  // srcBank-srcNumber -> chosen dstBank -- every unresolved Program must
-  // have an entry (a real number, not just "present") before Apply enables.
-  const selections = new Map();
-  const updateApplyState = () => {
-    crossDatasetApplyButton.disabled = analysis.unresolved.some((u) => {
-      if (u.candidateBanks.length === 0) return true;  // nothing to select -- can never be resolved
-      return !selections.has(`${u.srcBank}-${u.srcNumber}`);
-    });
-  };
-  for (const program of analysis.unresolved) {
-    crossDatasetBody.appendChild(
-      buildUnresolvedRow(program, (dstBank) => {
-        selections.set(`${program.srcBank}-${program.srcNumber}`, dstBank);
-        updateApplyState();
-      })
-    );
-  }
-  updateApplyState();
-
-  const cleanupAndClose = () => {
-    crossDatasetCloseButton.onclick = null;
-    crossDatasetCancelButton.onclick = null;
-    crossDatasetBackdrop.onclick = null;
-    crossDatasetApplyButton.onclick = null;
-    closePanel();
-  };
-  crossDatasetCloseButton.onclick = cleanupAndClose;
-  crossDatasetCancelButton.onclick = cleanupAndClose;
-  crossDatasetBackdrop.onclick = cleanupAndClose;
-  crossDatasetApplyButton.onclick = async () => {
-    const placements = analysis.unresolved
-      .filter((u) => selections.has(`${u.srcBank}-${u.srcNumber}`))
-      .map((u) => ({ srcBank: u.srcBank, srcNumber: u.srcNumber, dstBank: selections.get(`${u.srcBank}-${u.srcNumber}`) }));
-    const applied = await onApply(placements);
-    if (applied) cleanupAndClose();
-  };
-
-  openPanel(slideDirectionFor(dstPaneEl));
+function closeSession() {
+  panelState = { ...panelState, open: false };
+  renderRoot();
+  const panelEl = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel");
+  panelEl.addEventListener(
+    "transitionend",
+    () => {
+      panelState = { mounted: false, open: false, session: null };
+      renderRoot();
+    },
+    { once: true }
+  );
 }
 
 // The one entry point pane-combi-editor.js's drop handler calls for a
 // cross-dataset empty-slot drop. Always runs the read-only analysis first;
 // applies immediately with no panel at all if nothing needs a decision
-// (every dependency already present in the destination), otherwise renders
-// and opens the panel above.
+// (every dependency already present in the destination), otherwise opens
+// the panel above.
 async function startCombiCrossDatasetCopy({
   srcDatasetId,
   srcBank,
@@ -247,11 +332,24 @@ async function startCombiCrossDatasetCopy({
     return;
   }
 
-  renderPanel({
+  // The per-bank slot dropdowns need each candidate bank's ACTUAL free slot
+  // numbers, not just "this bank has room" (candidateBanks) -- a plain
+  // listPrograms() snapshot of the destination, same call the Programs
+  // table itself uses. Fetched once per panel-open, not per Program/bank
+  // row, and not re-fetched on every re-render (selecting a slot doesn't
+  // change what's free elsewhere) -- applyCombiCrossDatasetCopy() is the
+  // real authority at Apply time regardless, this is just what populates
+  // the dropdowns.
+  const dstPrograms = await window.listPrograms(dstDatasetId);
+
+  await loadLitHtml();
+  openSession({
     analysis,
+    dstPrograms,
+    selections: new Map(), // srcBank-srcNumber -> chosen {bank, number}
+    edge: slideDirectionFor(dstPaneEl),
     sourceLabel,
     targetLabel,
-    dstPaneEl,
     onApply: async (placements) => {
       const result = await window.applyCombiCrossDatasetCopy(
         srcDatasetId,
@@ -272,3 +370,5 @@ async function startCombiCrossDatasetCopy({
     },
   });
 }
+
+loadLitHtml().then(renderRoot);

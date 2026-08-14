@@ -2460,6 +2460,26 @@ Format:
      eventually identifies a bank properly (e.g. the unexplored first-4-bytes
      field above) only ever has to answer a binary present/absent question
      per bank, not a "how much of it is there" one.
+  10. **FLAGGED 2026-08-14, not yet investigated**: a Program record's own
+      "KARMA Common" section (Korg's own `Prog_HD-1.txt`/
+      `Prog_EXi_Common.txt`) has eight each of "SwitchN Name ID"/"FaderN
+      Name ID" fields (`0000~02FF`, a numeric index into up to 768
+      entries), plus KARMA's separate GE (Generated Effect) module
+      structure (`docs/external/KORG/KARMA_GE_RTP.txt`, its own name plus
+      up to 32 named real-time parameters). Whether any of these are
+      simple self-contained values (safe to copy verbatim) or references
+      into a KARMA Scene/GE library that isn't necessarily identical
+      between two files -- or even two banks of the same file -- is
+      completely unknown. Real, practical consequence: `PcgFile::
+      copyProgramFrom()` (used by same-dataset Program drag-copy AND the
+      new cross-dataset Combi copy's own Program placement, entry 37
+      above) copies a Program's entire raw record verbatim with no
+      special handling for these fields -- if any turn out to be
+      file/bank-relative references, a copied Program's KARMA behavior
+      could silently end up wrong with no error at all. Noted in
+      docs/content/format/index.md §8 #15 and the User Guide's Current
+      Limitations, and flagged to real users as something worth reporting
+      if hit -- not reproduced against a real file yet.
 
 App/UI:
   8. Leading spaces reportedly disappearing from Comment text somewhere in
@@ -3221,5 +3241,208 @@ App/UI:
         after. Full `pcg_file_test`/`kronos_editor`/
         `generate_setlist_test_matrix` rebuild clean, `node --check` on
         every touched/new JS file.
+  38. **FIXED (2026-08-14)**: files could not be loaded at all unless they
+      contained at least one Set List -- `loadFromMemory()` treated a
+      missing SDB1 (Set List database) chunk as a fatal error
+      (`"No SDB1 (Set List database) chunk found in this file"`, load
+      refused outright). Reported directly: two real third-party PCG
+      sound-bank distributions (donated for testing -- `HALEN-SPLIT.PCG`,
+      `JMJ KRONOS 2.PCG`) wouldn't open at all. Walked both files' real
+      chunk hierarchy by hand (a throwaway Python script, not guessed) and
+      confirmed neither contains SLS1/SDB1/SBK1 *anywhere* -- just
+      `PCG1 > (DIV1, PRG1 > (PBK1[, MBK1]), CMB1 > CBK1)`, one also with
+      `WSQ1`/`DPI1` Drum Sample data. Root cause: every real file this
+      project had tested against so far happened to include at least one
+      Set List, so the hard requirement went unnoticed -- but Set Lists are
+      just one of several categories the Kronos's own backup dialog lets
+      you include/exclude; a sound-bank-only PCG (the common case for
+      sharing/distributing Programs and Combis, as opposed to a personal
+      backup) has no reason to include any.
+      - Fix: removed the early-return -- an empty `sdbChunks` already made
+        the SDB1-parsing loop below it a correct no-op (zero Set Lists),
+        nothing else needed to change. Programs/Combis/etc. parse
+        completely independently of Set Lists already.
+      - Verified: a standalone smoke-test binary (`clang++` against
+        `PcgFile.cpp` directly, this project's usual pattern for a quick
+        real-bytes check outside the full CMake build) loaded both real
+        donated files after the fix -- `HALEN-SPLIT.PCG`: 0 Set Lists, 128
+        Programs, 128 Combis; `JMJ KRONOS 2.PCG`: 0 Set Lists, 256
+        Programs (two Program banks), 128 Combis. Both failed outright
+        before the fix. Added `testPcgFileNoSetlists()` to
+        `tests/pcg_file_test.cpp` as a permanent regression test -- a
+        fixture shaped like the real donated files (PRG1/CBK1 present, no
+        SLS1 sibling at all, not just an SLS1 with empty SDB1/SBK1
+        children -- the real files omit the wrapper chunk itself). Full
+        `pcg_file_test`/`kronos_editor` rebuild clean, `ctest` clean.
+  39. **BUILT**: Shift+Cmd+click, a second cross-pane jump gesture alongside
+      plain Shift+click (`toOpposite`, all 5 jump/navigation buttons across
+      `pane-setlist-editor.js`/`pane-combi-editor.js`/`pane-program-
+      editor.js` -- built earlier, `pane.js`'s `jumpToOppositePane()`, never
+      previously given its own STATE.md entry). Plain Shift+click jumps to
+      the opposite pane AND switches its dataset to match this one first if
+      needed; Shift+Cmd+click jumps to the same bank/number coordinate in
+      the opposite pane WITHOUT touching its dataset, even if that's a
+      completely different file. Real motivating case, reported directly:
+      a donated foreign PCG's Combi whose Timbres only reference default/
+      GM-ish Programs -- nothing distinctive to identify by content -- so
+      with a reference dataset (the project owner's own original Kronos
+      backup) already open in the opposite pane, Shift+Cmd+click peeks at
+      whatever that reference dataset already has at the exact same
+      coordinate, which a dataset-switching jump can't do (it would replace
+      the reference dataset with the foreign one before jumping).
+      - `pane.js`: `jumpToOppositePane(to, from, keepDataset)` gained the
+        third param -- skips the `loadDataset()` call entirely when set,
+        toasting instead of jumping if the opposite pane has no dataset
+        open at all (nothing to jump to there). `jumpToInstrument`/
+        `jumpToSetlistEntry` gained a matching `keepOppositeDataset` field,
+        threaded straight through.
+      - All 5 call sites now pass `keepOppositeDataset: ev.metaKey`
+        alongside the existing `toOpposite: ev.shiftKey`, with tooltips
+        updated to describe both gestures.
+      - One real conflict found and fixed:
+        `pane-setlist-editor.js`'s `handleMultiSelectClick()` (the Setlist
+        table's own Ctrl/Cmd+click "toggle multi-select" gesture, checked
+        BEFORE the jump buttons' own toOpposite/keepOppositeDataset logic
+        at every one of its 4 call sites) fired on ANY Ctrl/Cmd+click,
+        including a Shift+Cmd+click meant for the new gesture -- it would
+        have toggled multi-select and swallowed the click before
+        `onJumpToInstrument()` ever ran, on the Setlist row's own Bank/jump
+        button specifically. Fixed by making `handleMultiSelectClick()`
+        return `false` immediately whenever `ev.shiftKey` is set, on the
+        reasoning that Shift is now reserved for the jump-gesture family on
+        that row; plain Ctrl/Cmd (no Shift) still toggles multi-select
+        exactly as before everywhere else that calls it.
+      - Verified: `node --check` on all four touched files, full
+        `kronos_editor` rebuild clean, grepped the embedded binary for the
+        new `keepOppositeDataset` identifier (9 occurrences, matching the
+        3 `pane.js` internal references + one per call site x 5 plus the
+        object-literal key itself once more -- consistent with the actual
+        edit, not a stray/missing one).
+  40. **BUILT (2026-08-15)**: cross-dataset Combi copy's unresolved-Program
+      picker gained exact-slot placement -- previously (entry 37) the panel
+      only let the user pick a destination BANK per unresolved Program;
+      `applyCombiCrossDatasetCopy()` always auto-picked the first empty
+      slot in that bank. The plan's own "out of scope this pass" note
+      flagged a slot-number picker as a "possible future refinement, not
+      requested" -- now requested directly, with a concrete UI spec.
+      - `PcgFile::ProgramPlacement` gained `int dstNumber = -1` (sentinel:
+        "let apply() auto-pick", preserving every existing caller's
+        behavior unchanged). `applyCombiCrossDatasetCopy()`'s resolution
+        pass: when `dstNumber >= 0`, uses it directly after a FRESH
+        re-validation that it's still actually empty right now (refuses
+        with a clear error if not, same "never trust a stale earlier read"
+        discipline the rest of this function already follows) instead of
+        scanning for the first free slot.
+      - `EditorBridge.cpp`'s `placementsArg()` reads an optional
+        `dstNumber` field (defaults to -1, so an older-shaped `{srcBank,
+        srcNumber, dstBank}` placement object still works unchanged) --
+        `mock_bridge.js`'s fake mirrors the same exact-slot-vs-auto-pick
+        branch.
+      - `combi-cross-dataset-panel.js`: replaced the per-Program bank-only
+        radio-bar with a two-column row-editor -- one row per candidate
+        bank (column 1: bank ID) with that bank's own empty Program slots
+        in a dropdown (column 2), built from a
+        `window.listPrograms(dstDatasetId)` snapshot fetched once when the
+        panel opens (`candidateBanks` only ever said WHICH banks have
+        room, never the actual free slot numbers -- reused the existing
+        Programs-table bridge call rather than adding a new one, since the
+        data was already there). Selections now store `{bank, number}`
+        per unresolved Program instead of just a bank; Apply sends the
+        exact `dstNumber` through.
+      - **Regression found and fixed the same day, reported directly**: a
+        real `<table>`/`<tr>`/`<td>` was tried first for the row-editor,
+        nested three lit-html template-literal levels deep (per-Program row
+        > per-bank row > `<option>` list) -- the panel opened but showed no
+        banks/dropdown at all for any unresolved Program, silently. Root
+        cause never fully pinned down in isolation (no browser devtools
+        available mid-session to inspect it directly), but table-context
+        HTML parsing is stricter about which elements can appear where
+        (foster-parenting) than a plain element, and that friction is a
+        known rough edge with lit-html's per-template-literal isolated
+        parsing once nesting gets this deep -- consistent with the
+        symptom. Fixed by dropping `<table>` entirely for plain flex-row
+        `<div>`s (same two-column look, none of the parsing risk). Also
+        added a try/catch around the panel's whole render path that shows
+        a visible in-panel error message instead of silently leaving it
+        blank if this class of bug recurs -- this codebase's testing
+        environment has no browser console access mid-session, so a
+        swallowed exception here would otherwise be invisible until
+        reported by hand.
+      - Verified: `tests/pcg_file_test.cpp` gained
+        `testCombiCrossDatasetCopyExactSlot()` -- a dedicated small fixture
+        pair (not the shared src/dst from entry 37's own test, whose state
+        evolves across its sub-tests) covering: an exact NON-lowest slot
+        (2, with 0/1 also free) is honored rather than silently falling
+        back to "first free," and a stale exact-slot placement (chosen
+        slot no longer empty by apply time) is refused with nothing
+        written. Full `pcg_file_test`/`kronos_editor` rebuild clean,
+        `node --check` on every touched JS file, grepped the embedded
+        binary for the new UI strings.
+  41. **FIXED (2026-08-15)**: every "is this Program slot free" check in the
+      whole app used `name.empty()` -- reported directly against a real
+      personal Kronos backup, whose cross-dataset Combi copy claimed ZERO
+      free destination banks anywhere despite genuinely having room. Root
+      cause: this project ALREADY confirmed, independently, days earlier
+      (§5.5 in the file-format doc) that a genuinely untouched Program slot
+      on real hardware is named Korg's own factory `"Init Program"`/`"Init
+      EXi Program"`, never a blank string -- but that finding was only ever
+      applied to the Duplicates panel's "clear a slot" write path
+      (`resources/Init-Program-*.raw`), never fed back into any of the
+      "is this slot free to write INTO" checks. Every one of this project's
+      OWN synthetic test fixtures happened to use a literal blank name for
+      "free," which is exactly why this went unnoticed until tested against
+      a real file.
+      - New shared helper `looksLikeEmptyProgramName()` in `PcgFile.cpp`
+        (mirrors `looksLikeEmptyCombiName()`'s existing shape) -- empty
+        string, or a case-insensitive match on `"init exi program"`
+        (Korg's real EXi factory name doesn't contain "init program" as a
+        contiguous substring, so it needs its own exact check) or
+        containing `"init program"` (catches Korg's real HD-1 factory name
+        AND this app's own two customized "cleared slot" template names,
+        entry from 2026-08-14's docs). Replaces `p.name.empty()` at all 4
+        real call sites: `copyProgramFrom()`'s `TargetSlotOccupied` check,
+        `analyzeCombiCrossDatasetCopy()`'s `candidateBanks` scan, and both
+        branches of `applyCombiCrossDatasetCopy()`'s slot resolution (exact
+        `dstNumber` re-validation and auto-pick).
+      - `combi-cross-dataset-panel.js` gained a JS mirror of the same
+        function for its own per-bank slot dropdown (entry 40's own
+        `dstPrograms.filter(...)` call) -- the backend fix alone wasn't
+        enough, since the dropdown itself was independently filtering by
+        `!p.name`. Dropdown option labels also now show the slot's real
+        name (`"012 (Init Program)"`) instead of a hardcoded `"(empty)"`,
+        so a genuinely-blank slot and a real-factory-named one read
+        differently. `mock_bridge.js`'s fake mirrors the same check at its
+        3 equivalent call sites (Duplicates' own "skip blank names" mock
+        check, unrelated to this, deliberately left alone -- see its own
+        comment).
+      - Verified: `tests/pcg_file_test.cpp` gained
+        `testProgramCopyRecognizesRealFactoryEmptyNames()` -- deliberately
+        builds destination banks whose ONLY "free" slots are real-factory-
+        named (zero blank-named slots anywhere), so the test can only pass
+        if the real name is actually recognized, not by accidentally still
+        matching `name.empty()`. Covers `copyProgramFrom()` directly (both
+        `"Init Program"` and `"Init EXi Program"`) and the full
+        `analyzeCombiCrossDatasetCopy()` -> `applyCombiCrossDatasetCopy()`
+        path end to end. Full `pcg_file_test`/`kronos_editor` rebuild
+        clean, `node --check` on both touched JS files.
+  42. **IDEA, NOT DECIDED (2026-08-15)**: a persistent log file to capture
+      exceptions, plus a new header button (left side, beneath the right
+      tab bar) to open a sidebar showing it -- suggested after entry 40's
+      own render-failure try/catch only helps if devtools happen to be open
+      at the moment something breaks; a log file would survive across runs
+      and be inspectable after the fact, which is the actual gap. The
+      second half of the suggestion -- "the sidebar becomes context aware,"
+      i.e. reusing the cross-dataset copy panel (entry 37/40,
+      `combi-cross-dataset-panel.js`) as a general multi-mode sidebar
+      (combi-picker mode vs. log-viewer mode) rather than building a
+      separate, simpler affordance for logs -- is a real architectural
+      shift (that panel is currently a single-purpose global overlay), not
+      a small addition, and was flagged back to the project rather than
+      assumed: one real use (the cross-dataset picker) doesn't yet justify
+      generalizing the panel into a shared shell. Recommended sequencing if
+      this gets picked up: build the log file first (small, immediately
+      useful on its own), decide the sidebar-reuse question separately
+      once there's a second real consumer, not bundled into one task.
+      Explicitly deferred -- "We look at it later," not committed to yet.
 
 === END STATE BLOCK ===

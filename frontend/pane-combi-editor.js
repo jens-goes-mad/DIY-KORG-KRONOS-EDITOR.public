@@ -159,7 +159,10 @@ function createCombisPanel(
         badge.type = "button";
         badge.className = "tag setlist-usage-badge";
         badge.textContent = `${u.setlistName} (${kronosNumber(u.songIndex)})`;
-        badge.title = `Show this in the Setlist view (Shift+click: show in the opposite pane instead)`;
+        badge.title =
+          "Show this in the Setlist view (Shift+click: show in the opposite pane instead, switching its " +
+          "dataset to match this one; Shift+Cmd+click: same, but keep whatever dataset the opposite pane " +
+          "already has open)";
         badge.addEventListener("click", (ev) => {
           ev.stopPropagation();  // don't also toggle this Combi row's Timbre list open/closed
           onJumpToSetlist({
@@ -167,6 +170,7 @@ function createCombisPanel(
             songIndex: u.songIndex,
             from: { kind: "instrument", isProgram: false, bank: combi.bank, number: combi.number },
             toOpposite: ev.shiftKey,
+            keepOppositeDataset: ev.metaKey,
           });
         });
         wrap.appendChild(badge);
@@ -361,7 +365,12 @@ function createCombisPanel(
           refSpan = document.createElement("button");
           refSpan.type = "button";
           refSpan.className = "button is-small bank-jump-button timbre-ref";
-          refSpan.title = `Show Program ${ref} in this pane's Programs view (Shift+click: show in the opposite pane instead)`;
+          refSpan.title =
+            `Show Program ${ref} in this pane's Programs view (Shift+click: show in the opposite pane ` +
+            "instead, switching its dataset to match this one; Shift+Cmd+click: same, but keep whatever " +
+            "dataset the opposite pane already has open -- e.g. jump to this same bank/number in your own " +
+            "reference dataset, useful when this Timbre's Program is unremarkable/default and there's " +
+            "nothing distinctive to match by content)";
           refSpan.addEventListener("click", (ev) => {
             ev.stopPropagation();
             onJumpToInstrument({
@@ -370,6 +379,7 @@ function createCombisPanel(
               number: t.number,
               from: { kind: "instrument", isProgram: false, bank: combi.bank, number: combi.number },
               toOpposite: ev.shiftKey,
+              keepOppositeDataset: ev.metaKey,
             });
           });
         } else {

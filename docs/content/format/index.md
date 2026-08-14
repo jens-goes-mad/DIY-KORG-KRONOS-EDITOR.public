@@ -85,9 +85,12 @@ detail.
 
 Deliberately **not** solved yet: a handful of reserved bytes whose purpose isn't known
 (byte +17 still has unexplained bits even after Font size/Transpose were found), Drum
-Kits/Wave Sequences/Global settings, and whether a real backup can omit a Program/Combi
-bank entirely (every file examined so far has had a complete, canonically-ordered set).
-See §8 for the full, numbered list of open questions.
+Kits/Wave Sequences/Global settings, whether a real backup can omit a Program/Combi
+bank entirely (every file examined so far has had a complete, canonically-ordered set),
+and -- a real risk, not just a curiosity -- whether a Program's own KARMA-related fields
+(GE/Switch/Fader Name IDs, KARMA_GE_RTP's own Generated Effect module data) are safe to
+copy verbatim between Programs at all, since `copyProgramFrom()` currently does exactly
+that with no special handling. See §8 for the full, numbered list of open questions.
 
 ---
 
@@ -211,6 +214,17 @@ whatever it finds naively starting at byte 16.
 Only one `SLS1`/`SLD1`/`SDB1`/`STL1`/`SBK1` chain exists per file, but that
 single chain holds all 128 of the unit's Set Lists internally (§3) -- this
 is not a limitation.
+
+**`SLS1` (and everything inside it) is entirely optional** -- CONFIRMED
+2026-08-14 against two real third-party PCG sound-bank distributions
+(`HALEN-SPLIT.PCG`, `JMJ KRONOS 2.PCG`, both donated for testing) that
+contain zero `SLS1`/`SDB1`/`SBK1` anywhere: just `PCG1 > (DIV1, PRG1, CMB1)`
+(one also with `WSQ1`/`DPI1`). Set Lists are one of several categories the
+Kronos's own backup dialog lets you include/exclude, and sound-bank-only
+distributions (the common case for sharing Programs/Combis, as opposed to a
+personal backup) have no reason to include any. The editor originally
+treated a missing `SDB1` as a fatal load error -- fixed; see STATE.md entry
+38.
 
 `SLS1`'s total size is far larger than `SLD1` alone -- the remainder is
 `STL1`/`SBK1` (§4), which fully accounts for it (no further mystery region
@@ -630,6 +644,17 @@ different `test_1.PCG`. That write path exists now (see `STATE.md`
 entries 32/33): the Duplicates panel's "keep this one" button clears every
 OTHER duplicate to the matching template and repoints Combi/Set List
 references to the kept slot.
+
+**Consequence initially missed (found and fixed 2026-08-15, STATE.md entry
+41)**: this real-name-not-blank fact wasn't fed back into the app's own
+"is this Program slot free to write into" checks for a while --
+`copyProgramFrom()`/cross-dataset Combi copy's bank/slot resolution all
+tested `name.empty()`, which every one of this project's own synthetic test
+fixtures happened to satisfy but no real hardware-written file ever does.
+Reported directly against a real personal Kronos backup. Fixed via a shared
+`looksLikeEmptyProgramName()` helper recognizing both real factory names
+(plus this app's own two customized template names below) as "free," not
+just a blank string.
 
 **Name field deliberately customized (2026-08-14)**: once the write path
 was real, the stored bytes' actual 24-byte name field (Korg's own real
@@ -1070,6 +1095,30 @@ Recorded here for later, even though nothing below is wired into
     one bank's Init Program template into a different bank's slot (the
     planned Duplicates-panel feature) is safe given that value isn't
     identical across banks even for untouched factory content.
+15. **NOT YET INVESTIGATED (2026-08-14)** -- a real risk flagged directly,
+    not discovered by this project's own testing: a Program's raw record
+    (Korg's own `Prog_HD-1.txt`/`Prog_EXi_Common.txt`) has a whole "KARMA
+    Common" section -- Module Control, GE/Time Signature, and eight each
+    of "SwitchN Name ID"/"FaderN Name ID" (`0000~02FF`, i.e. a numeric
+    index into *something* with up to 768 entries) -- plus KARMA's own
+    separate GE (Generated Effect) module structure
+    (`docs/external/KORG/KARMA_GE_RTP.txt`: a GE's own name plus up to 32
+    named "RTParm" real-time parameters). Whether any of these Name
+    ID/GE-module fields are simple self-contained values (safe to copy
+    verbatim, like most of a Program record) or are *references* into a
+    KARMA Scene/GE library that isn't necessarily identical between two
+    files -- or even between two banks of the same file -- is completely
+    unknown. `PcgFile::copyProgramFrom()` (used by same-dataset Program
+    drag-copy AND the new cross-dataset Combi copy's own Program
+    placement, see STATE.md) copies a Program's ENTIRE raw record
+    verbatim, byte for byte, with no special handling for these fields --
+    if any of them turn out to be file- or bank-relative references
+    rather than portable values, a copied Program's KARMA behavior could
+    silently end up wrong (pointing at the wrong GE/Scene/parameter name)
+    with no error at all, whether that copy happened *within* one dataset
+    or *across* two. Not reproduced against a real file yet -- recorded so
+    the risk isn't lost, not because it's been confirmed to actually
+    happen.
 
 ## 9. Where this is implemented
 

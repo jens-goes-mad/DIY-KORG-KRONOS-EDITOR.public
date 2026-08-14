@@ -49,6 +49,18 @@
   const ok = (extra) => Promise.resolve(Object.assign({ ok: true }, extra));
   const fail = (error) => Promise.resolve({ ok: false, error });
 
+  // Mirrors PcgFile.cpp's looksLikeEmptyProgramName() -- a real untouched
+  // Program slot is named Korg's own factory "Init Program"/"Init EXi
+  // Program", not a blank string (docs/content/format/index.md §5.5). This
+  // mock's own fake datasets (makeFakePrograms() etc.) only ever use blank
+  // names for "free", so this mostly just keeps the fake in sync with the
+  // real backend's rule rather than fixing an actual observable mock bug.
+  function looksLikeEmptyProgramName(name) {
+    if (!name) return true;
+    const lower = name.toLowerCase();
+    return lower === "init exi program" || lower.includes("init program");
+  }
+
   function makeFakeSong(k, label) {
     return {
       index: k,
@@ -530,7 +542,7 @@
     }
 
     const existingAtTarget = dstDataset.programs.find((p) => p.bank === dstBank && p.number === dstNumber);
-    if (existingAtTarget && existingAtTarget.name) {
+    if (existingAtTarget && !looksLikeEmptyProgramName(existingAtTarget.name)) {
       return fail("Can't copy: the destination slot already holds a different Program.");
     }
 
@@ -853,7 +865,7 @@
     const unresolved = seenUnresolved.map((u) => {
       const candidateBanks = dstBanks
         .filter((bank) => dstDataset.programs.find((p) => p.bank === bank)?.bankType === u.bankType)
-        .filter((bank) => dstDataset.programs.some((p) => p.bank === bank && !p.name))
+        .filter((bank) => dstDataset.programs.some((p) => p.bank === bank && looksLikeEmptyProgramName(p.name)))
         .sort((a, b) => a - b);
       return Object.assign({ candidateBanks }, u);
     });
@@ -912,8 +924,24 @@
 
       const placement = (placements || []).find((pl) => pl.srcBank === srcProgram.bank && pl.srcNumber === srcProgram.number);
       if (!placement) return fail(`No destination chosen for "${srcProgram.name}" (${srcProgram.bank}/${srcProgram.number})`);
-      const free = dstDataset.programs.filter((p) => p.bank === placement.dstBank && !p.name).sort((a, b) => a.number - b.number)[0];
-      if (!free) return fail(`No free slot left in the chosen bank for "${srcProgram.name}"`);
+      // Mirrors PcgFile.cpp's own dstNumber >= 0 branch: an exact slot the
+      // user picked (a per-bank dropdown of that bank's own empty Program
+      // names) is re-validated fresh here rather than trusted, same as the
+      // real backend -- falls back to "first free slot in the bank" when
+      // omitted (dstNumber == -1, the ProgramPlacement default).
+      let free;
+      if (placement.dstNumber != null && placement.dstNumber >= 0) {
+        const exact = dstDataset.programs.find((p) => p.bank === placement.dstBank && p.number === placement.dstNumber);
+        if (!exact || !looksLikeEmptyProgramName(exact.name)) {
+          return fail(`The chosen destination slot for "${srcProgram.name}" is no longer free -- pick another.`);
+        }
+        free = exact;
+      } else {
+        free = dstDataset.programs
+          .filter((p) => p.bank === placement.dstBank && looksLikeEmptyProgramName(p.name))
+          .sort((a, b) => a.number - b.number)[0];
+        if (!free) return fail(`No free slot left in the chosen bank for "${srcProgram.name}"`);
+      }
 
       resolvedPrograms.push({ srcBank: srcProgram.bank, srcNumber: srcProgram.number, dstBank: free.bank, dstNumber: free.number, alreadyPresent: false });
       resolvedTimbres.push({ timbreIndex: i, dstBank: free.bank, dstNumber: free.number });

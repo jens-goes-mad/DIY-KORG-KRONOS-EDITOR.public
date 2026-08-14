@@ -375,6 +375,64 @@ void testHashProgramRecord() {
     CHECK(kronos::hashProgramRecord(a.data(), a.size()) != kronos::hashProgramRecord(b.data(), b.size()));
 }
 
+// Real third-party PCG sound-bank distributions (donated for testing:
+// HALEN-SPLIT.PCG, JMJ KRONOS 2.PCG) contain zero SLS1/SDB1/SBK1 anywhere
+// in the hierarchy -- just PRG1/CBK1 (one also had WSQ1/DPI1 Drum Sample
+// data, not modeled here since nothing reads it yet). Both failed to load
+// entirely before this fixture's fix (loadFromMemory() treated a missing
+// SDB1 as fatal) -- Set Lists are just one of several categories the
+// Kronos's own backup dialog lets you include/exclude, not something every
+// real PCG is guaranteed to have.
+std::vector<uint8_t> buildNoSetlistsPcgFile() {
+    constexpr size_t kBankRecordSize = 32;
+
+    std::vector<uint8_t> pbk1BankA;
+    pushU32BE(pbk1BankA, 2);  // numRecords
+    pushU32BE(pbk1BankA, static_cast<uint32_t>(kBankRecordSize));  // bytesPerRecord
+    pushNameRecord(pbk1BankA, "No Setlist Program 0", kBankRecordSize);
+    pushNameRecord(pbk1BankA, "No Setlist Program 1", kBankRecordSize);
+
+    const size_t kCombiRecordSize = kTimbreBaseOffset + kTimbreStride * 16;
+    std::vector<uint8_t> cbk1BankA;
+    pushU32BE(cbk1BankA, 1);  // numRecords
+    pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));  // bytesPerRecord
+    auto combi0 = makeCbkCombiRecord("No Setlist Combi", kCombiRecordSize);
+    cbk1BankA.insert(cbk1BankA.end(), combi0.begin(), combi0.end());
+
+    std::vector<uint8_t> prg1Content;
+    appendChunk(prg1Content, "PBK1", pbk1BankA);
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1BankA);
+
+    // No SLS1 sibling at all -- matches the real donated files exactly,
+    // rather than an SLS1 wrapper with empty SDB1/SBK1 children (a weaker
+    // test: real files omit the wrapper chunk itself, not just its content).
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "DIV1", {});
+    appendChunk(pcg1Content, "PRG1", prg1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testPcgFileNoSetlists() {
+    kronos::PcgFile pcg;
+    std::string error;
+    std::vector<uint8_t> data = buildNoSetlistsPcgFile();
+    bool ok = pcg.loadFromMemory(data, error);
+
+    CHECK(ok);
+    CHECK_EQ(error, std::string(""), "no error message on a file with no Set Lists at all");
+    CHECK_EQ(pcg.setlists().size(), static_cast<size_t>(0), "zero Set Lists, not a load failure");
+    CHECK_EQ(pcg.programs().size(), static_cast<size_t>(2), "Programs still load fine without SDB1");
+    CHECK_EQ(pcg.combis().size(), static_cast<size_t>(1), "Combis still load fine without SDB1");
+}
+
 void testPcgFileEndToEnd() {
     kronos::PcgFile pcg;
     std::string error;
@@ -1660,6 +1718,204 @@ void testCombiCrossDatasetCopy() {
     }
 }
 
+// A Combi with exactly ONE real Timbre (index 0, INT-A/`number`) -- unlike
+// makeCrossDsSourceCombiRecord() above (which hardcodes 3 Timbres for that
+// test's own scenario), this is for testCombiCrossDatasetCopyExactSlot()'s
+// own single-dependency fixture.
+std::vector<uint8_t> makeCrossDsSingleTimbreCombiRecord(const std::string& name, int number) {
+    std::vector<uint8_t> rec(kCrossDsCombiRecordSize, 0);
+    for (size_t i = 0; i < name.size() && 4 + i < rec.size(); ++i) rec[4 + i] = static_cast<uint8_t>(name[i]);
+    rec[kCrossDsTimbreBase] = static_cast<uint8_t>(number);
+    rec[kCrossDsTimbreBase + 1] = 0;              // rawBankCode 0 -> INT-A
+    rec[kCrossDsTimbreBase + 2] = 1 << 5;          // status Internal
+    return rec;
+}
+
+// ProgramPlacement::dstNumber (2026-08-15): a caller can now pin an exact
+// destination slot instead of leaving apply() to auto-pick the first free
+// one -- built for the cross-dataset panel's own per-bank slot dropdown
+// (frontend/combi-cross-dataset-panel.js), which lets the user choose a
+// SPECIFIC empty Program by name/number, not just a bank. A dedicated small
+// fixture pair, separate from testCombiCrossDatasetCopy()'s shared src/dst
+// above -- those two files' state evolves across that test's own sub-tests
+// (its one unresolved Program gets resolved partway through), so reusing
+// them here would mean this test's outcome depends on running after (and
+// not disturbing) that one, which is exactly the kind of order-coupling
+// this project avoids in its fixtures.
+void testCombiCrossDatasetCopyExactSlot() {
+    // Destination PBK1 bank 0 (INT-A): numbers 0-2 free, number 3 filled --
+    // 3 real candidate slots so picking a NON-lowest one (2) actually proves
+    // the exact choice is honored, not just "first free slot" by coincidence.
+    std::vector<uint8_t> combiBank;
+    pushNameRecord(combiBank, "Unused", kCrossDsCombiRecordSize);      // number 0 -- (0,0)-collision dummy, see buildCrossDatasetDstFixture()'s own comment
+    pushNameRecord(combiBank, "Init Combi", kCrossDsCombiRecordSize);  // number 1 -- the copy target
+    auto dstFixture = buildCrossDatasetFixture(combiBank, 2, {{3, "Filler"}}, {}, std::nullopt);
+
+    auto srcCombi = makeCrossDsSingleTimbreCombiRecord("Slot Test Source", /*number=*/9);
+    auto srcFixture = buildCrossDatasetFixture(srcCombi, 1, {{9, "Needs Placement"}}, {}, std::nullopt);
+
+    kronos::PcgFile src, dst;
+    std::string error;
+    CHECK(src.loadFromMemory(srcFixture, error));
+    CHECK(dst.loadFromMemory(dstFixture, error));
+
+    auto analysis = dst.analyzeCombiCrossDatasetCopy(src, 0, 0, 0, 1);
+    CHECK(analysis.ok);
+    CHECK_EQ(static_cast<int>(analysis.unresolved.size()), 1, "one unresolved Program");
+    if (!analysis.unresolved.empty()) {
+        // Both dest PBK1 banks are HD-1 typed in this fixture skeleton --
+        // bank 1 always has its own single free slot too (programBank1={}
+        // still builds one empty record), same "both banks qualify" shape
+        // testCombiCrossDatasetCopy()'s own happy-path sub-test already
+        // established.
+        CHECK_EQ(static_cast<int>(analysis.unresolved[0].candidateBanks.size()), 2, "both dest banks have a free slot");
+    }
+
+    // --- Happy path: pin an exact, non-lowest free slot -------------------
+    {
+        kronos::PcgFile::ProgramPlacement placement;
+        placement.srcBank = 0;
+        placement.srcNumber = 9;
+        placement.dstBank = 0;
+        placement.dstNumber = 2;
+        auto result = dst.applyCombiCrossDatasetCopy(src, 0, 0, 0, 1, {placement});
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  apply() error: %s\n", result.error.c_str());
+
+        auto copiedCombi = dst.decodeCombi(0, 1);
+        CHECK(copiedCombi.has_value());
+        if (copiedCombi) {
+            CHECK(!copiedCombi->timbres[0].isDefault);
+            CHECK_EQ(copiedCombi->timbres[0].number, 2, "Timbre rewritten to the EXACT chosen slot, not the lowest free one");
+        }
+
+        auto placedProgram = dst.decodeProgram(0, 2);
+        CHECK(placedProgram.has_value());
+        if (placedProgram) CHECK_EQ(placedProgram->name, std::string("Needs Placement"), "the Program landed exactly where chosen");
+
+        // Slots 0 and 1 -- both free and LOWER than the chosen 2 -- must stay
+        // untouched, proving apply() didn't quietly fall back to "first free".
+        auto slot0 = dst.decodeProgram(0, 0);
+        CHECK(slot0.has_value());
+        if (slot0) CHECK(slot0->name.empty());
+        auto slot1 = dst.decodeProgram(0, 1);
+        CHECK(slot1.has_value());
+        if (slot1) CHECK(slot1->name.empty());
+    }
+
+    // --- Refused: the chosen exact slot is no longer free at apply time
+    // (e.g. a write from the opposite pane between analyze() and apply()) --
+    // a FRESH destination file, not the one just mutated above, with number
+    // 2 already occupied. -----------------------------------------------
+    {
+        std::vector<uint8_t> staleCombiBank;
+        pushNameRecord(staleCombiBank, "Unused", kCrossDsCombiRecordSize);
+        pushNameRecord(staleCombiBank, "Init Combi", kCrossDsCombiRecordSize);
+        auto staleFixture = buildCrossDatasetFixture(staleCombiBank, 2, {{2, "Already Taken"}}, {}, std::nullopt);
+        kronos::PcgFile staleDst;
+        CHECK(staleDst.loadFromMemory(staleFixture, error));
+
+        kronos::PcgFile::ProgramPlacement stalePlacement;
+        stalePlacement.srcBank = 0;
+        stalePlacement.srcNumber = 9;
+        stalePlacement.dstBank = 0;
+        stalePlacement.dstNumber = 2;
+        auto refused = staleDst.applyCombiCrossDatasetCopy(src, 0, 0, 0, 1, {stalePlacement});
+        CHECK(!refused.ok);
+
+        auto stillInit = staleDst.decodeCombi(0, 1);
+        CHECK(stillInit.has_value());
+        if (stillInit) CHECK_EQ(stillInit->name, std::string("Init Combi"), "refused apply writes nothing");
+    }
+}
+
+// looksLikeEmptyProgramName() (2026-08-15): a genuinely untouched Program
+// slot on real Kronos hardware is named Korg's own factory
+// "Init Program"/"Init EXi Program", NOT a blank string -- confirmed
+// against two independent real backup files (docs/content/format/index.md
+// §5.5). Every "is this slot free" check used to test name.empty() only,
+// which every one of this project's OWN synthetic fixtures happens to
+// satisfy (a blank-name empty record), masking the bug -- reported
+// directly against a real personal Kronos backup, where cross-dataset
+// Combi copy found ZERO free destination banks anywhere despite the
+// dataset genuinely having room. This test deliberately uses "Init
+// Program"/"Init EXi Program" as the ONLY "free" slots in its destination
+// bank (no blank-named slot at all), so it can only pass if the real
+// factory name is actually recognized, not by accidentally also matching
+// name.empty() as a fallback.
+void testProgramCopyRecognizesRealFactoryEmptyNames() {
+    // --- copyProgramFrom(): a real-factory-named slot is a valid copy target,
+    // not TargetSlotOccupied -----------------------------------------------
+    {
+        std::vector<uint8_t> dummyCombiBank;
+        pushNameRecord(dummyCombiBank, "Unused", kCrossDsCombiRecordSize);
+        // Two DISTINCT source Programs (0, 3) -- copying the SAME source into
+        // both target slots would trip DuplicateExists on the second copy
+        // (an identical Program would already exist elsewhere by then), which
+        // isn't what this test is checking.
+        auto fixture = buildCrossDatasetFixture(
+            dummyCombiBank, 1, {{0, "Real Program"}, {1, "Init Program"}, {2, "Init EXi Program"}, {3, "Second Program"}}, {},
+            std::nullopt);
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(fixture, error));
+
+        auto intoInitProgram = pcg.copyProgramFrom(pcg, 0, 0, 0, 1);
+        CHECK(!intoInitProgram.has_value());  // nullopt == success
+        auto slot1 = pcg.decodeProgram(0, 1);
+        CHECK(slot1.has_value());
+        if (slot1) CHECK_EQ(slot1->name, std::string("Real Program"), "copied INTO a real-factory \"Init Program\"-named slot");
+
+        auto intoInitExiProgram = pcg.copyProgramFrom(pcg, 0, 3, 0, 2);
+        CHECK(!intoInitExiProgram.has_value());  // nullopt == success
+        auto slot2 = pcg.decodeProgram(0, 2);
+        CHECK(slot2.has_value());
+        if (slot2) CHECK_EQ(slot2->name, std::string("Second Program"), "copied INTO a real-factory \"Init EXi Program\"-named slot");
+    }
+
+    // --- analyzeCombiCrossDatasetCopy(): a destination bank whose ONLY free
+    // slots are real-factory-named (no blank-name slot at all) still counts
+    // as a candidate -- the exact scenario reported. -----------------------
+    {
+        auto srcCombi = makeCrossDsSingleTimbreCombiRecord("Factory Name Test Source", /*number=*/9);
+        auto srcFixture = buildCrossDatasetFixture(srcCombi, 1, {{9, "Needs Placement"}}, {}, std::nullopt);
+
+        std::vector<uint8_t> dstCombiBank;
+        pushNameRecord(dstCombiBank, "Unused", kCrossDsCombiRecordSize);
+        pushNameRecord(dstCombiBank, "Init Combi", kCrossDsCombiRecordSize);
+        // Bank 0: number 0 occupied by a real Program, numbers 1-2 are
+        // real-factory-named "empty" slots -- deliberately NO blank-name slot
+        // anywhere, so a pass here can't be accidental.
+        auto dstFixture =
+            buildCrossDatasetFixture(dstCombiBank, 2, {{0, "Occupies Slot 0"}, {1, "Init Program"}, {2, "Init Program"}}, {}, std::nullopt);
+
+        kronos::PcgFile src, dst;
+        std::string error;
+        CHECK(src.loadFromMemory(srcFixture, error));
+        CHECK(dst.loadFromMemory(dstFixture, error));
+
+        auto analysis = dst.analyzeCombiCrossDatasetCopy(src, 0, 0, 0, 1);
+        CHECK(analysis.ok);
+        CHECK_EQ(static_cast<int>(analysis.unresolved.size()), 1, "one unresolved Program");
+        if (!analysis.unresolved.empty()) {
+            CHECK(!analysis.unresolved[0].candidateBanks.empty());  // bank 0 counts as a candidate via its real-factory-named slots
+        }
+
+        kronos::PcgFile::ProgramPlacement placement;
+        placement.srcBank = 0;
+        placement.srcNumber = 9;
+        placement.dstBank = 0;
+        // No dstNumber -- auto-pick must land on 1 (the first real-factory
+        // "Init Program"-named slot), not refuse with "no free slot".
+        auto result = dst.applyCombiCrossDatasetCopy(src, 0, 0, 0, 1, {placement});
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  apply() error: %s\n", result.error.c_str());
+        auto placed = dst.decodeProgram(0, 1);
+        CHECK(placed.has_value());
+        if (placed) CHECK_EQ(placed->name, std::string("Needs Placement"), "auto-pick landed in the real-factory-named slot");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1668,10 +1924,13 @@ int main() {
     testDecodeCombiFields();
     testHashProgramRecord();
     testPcgFileEndToEnd();
+    testPcgFileNoSetlists();
     testSaveRoundTrip();
     testResolveDuplicates();
     testCombiRearrange();
     testCombiCrossDatasetCopy();
+    testCombiCrossDatasetCopyExactSlot();
+    testProgramCopyRecognizesRealFactoryEmptyNames();
 
     if (g_failures > 0) {
         std::fprintf(stderr, "\n%d check(s) FAILED\n", g_failures);

@@ -116,7 +116,10 @@ function createProgramsPanel(
           btn.type = "button";
           btn.className = "button is-small bank-jump-button usage-jump-button";
           btn.textContent = `${u.setlistName} -- slot ${kronosNumber(u.songIndex)}`;
-          btn.title = "Show this in the Setlist view (Shift+click: show in the opposite pane instead)";
+          btn.title =
+            "Show this in the Setlist view (Shift+click: show in the opposite pane instead, switching its " +
+            "dataset to match this one; Shift+Cmd+click: same, but keep whatever dataset the opposite pane " +
+            "already has open)";
           btn.addEventListener("click", (ev) => {
             ev.stopPropagation();  // don't also toggle this usage row closed
             onJumpToSetlist({
@@ -124,6 +127,7 @@ function createProgramsPanel(
               songIndex: u.songIndex,
               from: { kind: "instrument", isProgram: true, bank: program.bank, number: program.number },
               toOpposite: ev.shiftKey,
+              keepOppositeDataset: ev.metaKey,
             });
           });
           li.appendChild(btn);
@@ -159,7 +163,10 @@ function createProgramsPanel(
             btn.type = "button";
             btn.className = "button is-small bank-jump-button usage-jump-button";
             btn.textContent = `${formatBankNumber({ isProgram: false, bank: c.bank, number: c.number })} "${c.name || "(empty)"}"`;
-            btn.title = "Show this Combi in this pane's Combis view (Shift+click: show in the opposite pane instead)";
+            btn.title =
+              "Show this Combi in this pane's Combis view (Shift+click: show in the opposite pane instead, " +
+              "switching its dataset to match this one; Shift+Cmd+click: same, but keep whatever dataset the " +
+              "opposite pane already has open)";
             if (!c.active) {
               btn.textContent += " (via an Off Timbre only)";
               btn.classList.add("timbre-inactive-ref");
@@ -172,6 +179,7 @@ function createProgramsPanel(
                 number: c.number,
                 from: { kind: "instrument", isProgram: true, bank: program.bank, number: program.number },
                 toOpposite: ev.shiftKey,
+                keepOppositeDataset: ev.metaKey,
               });
             });
             li.appendChild(btn);

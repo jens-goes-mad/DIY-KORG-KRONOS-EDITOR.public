@@ -467,12 +467,19 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
         return false;
     }
 
+    // SDB1 is optional -- Set Lists are just one of several categories the
+    // Kronos's own backup dialog lets you include/exclude, and third-party
+    // sound-bank-only PCG distributions routinely omit them entirely.
+    // Confirmed against two real donated files (HALEN-SPLIT.PCG, JMJ KRONOS
+    // 2.PCG) with zero SLS1/SDB1/SBK1 anywhere in the hierarchy -- just
+    // PRG1/CBK1 (one also has WSQ1/DPI1 Drum Sample data), no Set Lists at
+    // all. Both failed to load entirely before this fix, since every other
+    // real file this project had tested against so far happened to include
+    // at least one Set List. No SDB1 chunk just means zero Set Lists to
+    // show; the loop below already no-ops on an empty `sdbChunks`, so
+    // nothing else needs to change to support this.
     std::vector<ChunkInfo> sdbChunks;
     collectChunks(data, 16, data.size(), "SDB1", sdbChunks, 0);
-    if (sdbChunks.empty()) {
-        error = "No SDB1 (Set List database) chunk found in this file";
-        return false;
-    }
 
     // A single SDB1 chunk holds all of the unit's Set Lists (128 on a real
     // Kronos), not just one -- see README.md for how this was derived by
@@ -895,6 +902,33 @@ bool looksLikeEmptyCombiName(const std::string& name) {
     return lower.find("init combi") != std::string::npos;
 }
 
+// Case-insensitive "does this Program's name look like an untouched/empty
+// slot" check -- CORRECTED 2026-08-15. Every "is this slot free" check
+// below used to test `name.empty()` (a literal blank string), which is
+// wrong for any file actually written by real Kronos hardware: a genuinely
+// untouched Program slot's name field holds Korg's own real factory
+// content, `"Init Program"` (HD-1) or `"Init EXi Program"` (EXi) --
+// confirmed against two independent real backup files, see
+// docs/content/format/index.md §5.5. `name.empty()` only ever matched this
+// app's OWN synthetic test fixtures, never a real file -- reported
+// directly: a real personal Kronos backup's cross-dataset Combi copy
+// reported ZERO free destination banks anywhere, for a dataset that in
+// fact had plenty of genuinely-unused slots. This app's own two "cleared
+// slot" template names (resources/Init-Program-HD1.raw/-EXi.raw,
+// customized 2026-08-14 to read as `"- Init Program (HD1) -"`/`"- Init
+// Program (EXi) -"` so a cleared slot looks visibly different from Korg's
+// own factory content) are matched too, via the substring check -- a slot
+// THIS app cleared must keep reading as free. `name.empty()` is still
+// accepted directly (never actually produced by real hardware per the
+// above, but harmless to keep recognizing, and it's what this project's
+// OWN synthetic test fixtures still use for a "free" slot).
+bool looksLikeEmptyProgramName(const std::string& name) {
+    if (name.empty()) return true;
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    return lower == "init exi program" || lower.find("init program") != std::string::npos;
+}
+
 }  // namespace
 
 PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int bankB, int numberB) {
@@ -1303,7 +1337,7 @@ PcgFile::CombiCrossDatasetAnalysis PcgFile::analyzeCombiCrossDatasetCopy(const P
         for (size_t bankIdx = 0; bankIdx < programBankLocations_.size(); ++bankIdx) {
             if (programBankLocations_[bankIdx].bankType != srcProgram->bankType) continue;
             const bool hasFreeSlot = std::any_of(programs_.begin(), programs_.end(), [&](const ProgramInfo& p) {
-                return p.bank == static_cast<int>(bankIdx) && p.name.empty();
+                return p.bank == static_cast<int>(bankIdx) && looksLikeEmptyProgramName(p.name);
             });
             if (hasFreeSlot) unresolved.candidateBanks.push_back(static_cast<int>(bankIdx));
         }
@@ -1398,14 +1432,30 @@ PcgFile::CombiRearrangeResult PcgFile::applyCombiCrossDatasetCopy(const PcgFile&
         }
 
         int chosenNumber = -1;
-        for (const auto& p : programs_) {
-            if (p.bank == placementIt->dstBank && p.name.empty() && (chosenNumber < 0 || p.number < chosenNumber)) {
-                chosenNumber = p.number;
+        if (placementIt->dstNumber >= 0) {
+            // An exact slot the user picked (e.g. from a per-bank dropdown of that
+            // bank's own empty Program names) -- re-validated fresh here, not
+            // trusted from whatever the UI last knew, in case it's been taken in
+            // the meantime (e.g. by an earlier placement in this SAME apply() call
+            // sharing the same bank, or a write from the opposite pane).
+            const bool stillEmpty = std::any_of(programs_.begin(), programs_.end(), [&](const ProgramInfo& p) {
+                return p.bank == placementIt->dstBank && p.number == placementIt->dstNumber && looksLikeEmptyProgramName(p.name);
+            });
+            if (!stillEmpty) {
+                result.error = "The chosen destination slot for \"" + srcProgram->name + "\" is no longer free -- pick another.";
+                return result;
             }
-        }
-        if (chosenNumber < 0) {
-            result.error = "No free slot left in the chosen bank for \"" + srcProgram->name + "\"";
-            return result;
+            chosenNumber = placementIt->dstNumber;
+        } else {
+            for (const auto& p : programs_) {
+                if (p.bank == placementIt->dstBank && looksLikeEmptyProgramName(p.name) && (chosenNumber < 0 || p.number < chosenNumber)) {
+                    chosenNumber = p.number;
+                }
+            }
+            if (chosenNumber < 0) {
+                result.error = "No free slot left in the chosen bank for \"" + srcProgram->name + "\"";
+                return result;
+            }
         }
 
         resolvedPrograms.push_back({srcProgram->bank, srcProgram->number, placementIt->dstBank, chosenNumber, false});
@@ -1546,7 +1596,7 @@ std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile&
     // there is caught by the DuplicateExists check below instead (it already
     // exists in this file, namely right here), not this one.
     for (const auto& p : programs_) {
-        if (p.bank == dstBank && p.number == dstNumber && !p.name.empty()) return ProgramCopyError::TargetSlotOccupied;
+        if (p.bank == dstBank && p.number == dstNumber && !looksLikeEmptyProgramName(p.name)) return ProgramCopyError::TargetSlotOccupied;
     }
 
     const uint8_t* srcRecord = &src.data_[srcOff];

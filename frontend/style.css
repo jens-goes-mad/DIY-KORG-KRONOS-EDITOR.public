@@ -1213,6 +1213,20 @@ td.has-comment {
   flex-direction: column;
   transition: transform 0.25s ease;
 }
+/* Same bug class this codebase has already hit (and fixed) four times --
+   .bank-filter-row[hidden]/.select-control-row[hidden]/.internals-empty[hidden]
+   and the topbar spinner, all above: this rule's own unconditional
+   `display: flex` is normal author-origin CSS, which beats the `hidden`
+   attribute's UA-stylesheet `display: none` regardless of specificity --
+   so the panel was rendering (at its default, un-slid left-edge position,
+   since neither slide-from-left/-right had ever been applied) from the
+   moment the app loaded, before any drag ever happened, with none of its
+   buttons wired up yet (that only happens inside renderPanel(), which
+   only runs from a real openPanel() call) -- reported directly, not
+   caught before shipping. */
+.cross-dataset-panel[hidden] {
+  display: none;
+}
 .cross-dataset-panel.slide-from-right {
   right: 0;
   transform: translateX(100%);
@@ -1295,6 +1309,34 @@ td.has-comment {
 .cross-dataset-unresolved-empty {
   font-size: 12px;
   color: var(--bulma-danger, #d64545);
+}
+
+/* The per-Program "choose a destination bank + exact free slot" row-editor
+   -- one row per eligible bank (column 1), a dropdown of that bank's own
+   empty Program slots (column 2). Plain flex rows, not a real `<table>` --
+   nested `<table>`/`<tr>`/`<td>` built across several separately-parsed
+   lit-html template literals (a per-bank row nested inside a per-Program
+   row) turned out to render as nothing at all (2026-08-15, reported
+   directly: panel opened but showed no banks/dropdown) -- HTML's own
+   table-context parsing rules are stricter about foster-parenting content
+   than a plain element, and don't play well with lit-html's per-template-
+   literal isolated parsing once nesting gets three levels deep. Flexbox
+   gives the same two-column look without any of that risk. */
+.cross-dataset-slot-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+.cross-dataset-slot-picker-bank {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.cross-dataset-slot-picker-select {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .cross-dataset-panel-footer {
