@@ -253,7 +253,7 @@ document.querySelector(".swap-panes-button").addEventListener("click", swapPanes
 // visual position, not paneId, so this stays correct across swapPanes()
 // either order). "both" is the default/no-class state. Single-select, same
 // is-link-active-button convention as the bank-filter buttons
-// (library.js's renderBankFilterRow()) -- just three fixed buttons here,
+// (pane.js's renderBankFilterRow()) -- just three fixed buttons here,
 // not data-driven, so no need for that helper's full generality.
 const panesEl = document.querySelector(".panes");
 const visibilityButtons = document.querySelectorAll(".pane-visibility-button");

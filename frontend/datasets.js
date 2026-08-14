@@ -1,8 +1,9 @@
 // Shared registry of currently-open datasets (loaded .PCG files), decoupled
 // from any pane -- see docs/content/components/index.md's dataset section
 // and STATE.md's "ARCHITECTURE" notes. Plain script (no build step, no ES
-// modules -- matches every other frontend/*.js file), loaded before pane.js/
-// library.js in index.html so its functions are available as globals.
+// modules -- matches every other frontend/*.js file), loaded before pane.js
+// and the category renderer files in index.html so its functions are
+// available as globals.
 //
 // The native bridge (or mock_bridge.js) is the single source of truth for
 // which datasets exist; this module just caches the last listDatasets()
@@ -49,7 +50,7 @@ function onPaneSelectionChanged(listener) {
 // Repopulates a <select> from the current dataset list, preserving
 // `currentValue` (a datasetId, as a string -- <select> values are always
 // strings) if it's still present, otherwise falling back to the placeholder.
-// Shared by pane.js and library.js so neither duplicates this logic.
+// Called by pane.js's createPane() for its own dataset-select.
 function populateDatasetSelect(selectEl, datasets, currentValue) {
   selectEl.innerHTML = "";
   const placeholder = document.createElement("option");

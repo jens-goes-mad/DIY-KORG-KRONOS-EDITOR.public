@@ -49,6 +49,28 @@ std::vector<uint8_t> bytesArg(const choc::value::ValueView& args, size_t index) 
     return result;
 }
 
+// Reads args[index] as a JS array of {srcBank, srcNumber, dstBank} objects
+// (the user's chosen destination bank per unresolved Program, gathered by
+// the cross-dataset Combi copy panel) into
+// std::vector<kronos::PcgFile::ProgramPlacement>. Empty if the argument is
+// missing or isn't an array.
+std::vector<kronos::PcgFile::ProgramPlacement> placementsArg(const choc::value::ValueView& args, size_t index) {
+    std::vector<kronos::PcgFile::ProgramPlacement> result;
+    if (!args.isArray() || args.size() <= index) return result;
+    auto arr = args[static_cast<uint32_t>(index)];
+    if (!arr.isArray()) return result;
+    result.reserve(arr.size());
+    for (uint32_t i = 0; i < arr.size(); ++i) {
+        auto element = arr[i];
+        kronos::PcgFile::ProgramPlacement placement;
+        placement.srcBank = static_cast<int>(element["srcBank"].getWithDefault<double>(0));
+        placement.srcNumber = static_cast<int>(element["srcNumber"].getWithDefault<double>(0));
+        placement.dstBank = static_cast<int>(element["dstBank"].getWithDefault<double>(0));
+        result.push_back(placement);
+    }
+    return result;
+}
+
 choc::value::Value bytesToValue(const std::vector<uint8_t>& bytes) {
     return choc::value::createArray(static_cast<uint32_t>(bytes.size()),
                                      [&](uint32_t i) { return static_cast<int32_t>(bytes[i]); });
@@ -765,6 +787,94 @@ choc::value::Value EditorBridge::moveCombiToBank(const choc::value::ValueView& a
     if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
 
     auto result = file->moveCombiToBank(srcBank, srcNumber, dstBank, dstNumber);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    return value;
+}
+
+choc::value::Value EditorBridge::copyCombi(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int srcBank = intArg(args, 1);
+    const int srcNumber = intArg(args, 2);
+    const int dstBank = intArg(args, 3);
+    const int dstNumber = intArg(args, 4);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->copyCombi(srcBank, srcNumber, dstBank, dstNumber);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    return value;
+}
+
+choc::value::Value EditorBridge::analyzeCombiCrossDatasetCopy(const choc::value::ValueView& args) {
+    const int srcDatasetId = intArg(args, 0);
+    const int srcBank = intArg(args, 1);
+    const int srcNumber = intArg(args, 2);
+    const int dstDatasetId = intArg(args, 3);
+    const int dstBank = intArg(args, 4);
+    const int dstNumber = intArg(args, 5);
+
+    auto* srcFile = fileOf(srcDatasetId);
+    auto* dstFile = fileOf(dstDatasetId);
+    if (srcFile == nullptr) return makeError("Dataset " + std::to_string(srcDatasetId) + " has no file loaded");
+    if (dstFile == nullptr) return makeError("Dataset " + std::to_string(dstDatasetId) + " has no file loaded");
+
+    auto analysis = dstFile->analyzeCombiCrossDatasetCopy(*srcFile, srcBank, srcNumber, dstBank, dstNumber);
+    if (!analysis.ok) return makeError(analysis.error);
+
+    auto value = makeOk();
+    auto dependencies = choc::value::createEmptyArray();
+    for (const auto& dep : analysis.dependencies) {
+        auto dv = choc::value::createObject("TimbreProgramDependency");
+        dv.setMember("timbreIndex", dep.timbreIndex);
+        dv.setMember("srcBank", dep.srcBank);
+        dv.setMember("srcNumber", dep.srcNumber);
+        dv.setMember("name", dep.name);
+        dv.setMember("bankType", programBankTypeName(dep.bankType));
+        dv.setMember("found", dep.found);
+        dv.setMember("foundBank", dep.foundBank);
+        dv.setMember("foundNumber", dep.foundNumber);
+        dependencies.addArrayElement(dv);
+    }
+    value.setMember("dependencies", dependencies);
+
+    auto unresolved = choc::value::createEmptyArray();
+    for (const auto& u : analysis.unresolved) {
+        auto uv = choc::value::createObject("UnresolvedProgram");
+        uv.setMember("srcBank", u.srcBank);
+        uv.setMember("srcNumber", u.srcNumber);
+        uv.setMember("name", u.name);
+        uv.setMember("bankType", programBankTypeName(u.bankType));
+        auto candidateBanks = choc::value::createArray(static_cast<uint32_t>(u.candidateBanks.size()),
+                                                          [&](uint32_t i) { return u.candidateBanks[i]; });
+        uv.setMember("candidateBanks", candidateBanks);
+        unresolved.addArrayElement(uv);
+    }
+    value.setMember("unresolved", unresolved);
+    return value;
+}
+
+choc::value::Value EditorBridge::applyCombiCrossDatasetCopy(const choc::value::ValueView& args) {
+    const int srcDatasetId = intArg(args, 0);
+    const int srcBank = intArg(args, 1);
+    const int srcNumber = intArg(args, 2);
+    const int dstDatasetId = intArg(args, 3);
+    const int dstBank = intArg(args, 4);
+    const int dstNumber = intArg(args, 5);
+    const auto placements = placementsArg(args, 6);
+
+    auto* srcFile = fileOf(srcDatasetId);
+    auto* dstFile = fileOf(dstDatasetId);
+    if (srcFile == nullptr) return makeError("Dataset " + std::to_string(srcDatasetId) + " has no file loaded");
+    if (dstFile == nullptr) return makeError("Dataset " + std::to_string(dstDatasetId) + " has no file loaded");
+
+    auto result = dstFile->applyCombiCrossDatasetCopy(*srcFile, srcBank, srcNumber, dstBank, dstNumber, placements);
     if (!result.ok) return makeError(result.error);
 
     auto value = makeOk();

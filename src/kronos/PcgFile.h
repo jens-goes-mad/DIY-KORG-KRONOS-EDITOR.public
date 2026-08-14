@@ -547,6 +547,109 @@ public:
     // blank bytes with no ground truth.
     CombiRearrangeResult moveCombiToBank(int srcBank, int srcNumber, int dstBank, int dstNumber);
 
+    // Copies a Combi's entire raw content into a DIFFERENT slot, leaving
+    // the source completely untouched -- unlike the three methods above,
+    // this never moves or repoints anything at the source (its own Set
+    // List references keep pointing at it, unchanged); `setlistRefsRepointed`
+    // is always 0 in the result. The real motivating case: two independent
+    // physical setups (e.g. two different bands) sharing most of a Combi's
+    // patch but needing a few Timbre levels adjusted differently -- keeping
+    // both means never editing the original in place.
+    //
+    // Refuses (ok=false, nothing written) unless the DESTINATION is
+    // currently an empty slot -- its name case-insensitively contains
+    // "init combi" (matches Korg's own literal "Init Combi" AND this app's
+    // own vacated-slot rename from moveCombiToBank(), "- Init Combi -" --
+    // see that method's own doc comment for why the exact bytes differ per
+    // bank and can't be identified any more precisely than by name). This
+    // mirrors copyProgramFrom()'s own TargetSlotOccupied guard (Programs
+    // also only ever copy into an empty slot, never overwrite a real one)
+    // -- a swap (swapCombis() above) is the deliberate way to land on an
+    // OCCUPIED Combi instead. Also refuses if the destination currently has
+    // ANY Set List reference, same defensive reasoning as
+    // moveCombiToBank() even though a genuinely empty "Init Combi" slot
+    // being referenced by a real Set List slot is not expected in practice.
+    CombiRearrangeResult copyCombi(int srcBank, int srcNumber, int dstBank, int dstNumber);
+
+    // One active (non-default), resolvable Timbre of a Combi being analyzed for a
+    // cross-dataset copy -- "resolvable" means its rawBankCode translates to a
+    // confirmed PBK1 file-order bank index (see programBankForConfirmedTimbreCode()
+    // in PcgFile.cpp); a GM reference or a genuinely unidentified raw code isn't
+    // file-specific data to resolve at all, so neither produces an entry here (the
+    // apply step below copies those Timbres' raw bytes through unchanged instead).
+    struct TimbreProgramDependency {
+        int timbreIndex = 0;  // 0-15
+        int srcBank = 0;
+        int srcNumber = 0;
+        std::string name;
+        ProgramBankType bankType = ProgramBankType::Hd1;
+        bool found = false;   // true if a byte-identical (contentHash) Program already exists in the destination
+        int foundBank = 0;    // valid only if found
+        int foundNumber = 0;  // valid only if found
+    };
+
+    // One UNIQUE source Program (several Timbres can share one) that has no
+    // byte-identical match in the destination yet, and needs a destination bank
+    // chosen for it before a cross-dataset copy can proceed.
+    struct UnresolvedProgram {
+        int srcBank = 0;
+        int srcNumber = 0;
+        std::string name;
+        ProgramBankType bankType = ProgramBankType::Hd1;
+        // Destination bank indices of the matching engine type with at least one
+        // empty (name.empty()) Program slot -- may be empty, meaning nowhere in
+        // the destination currently has room for this Program.
+        std::vector<int> candidateBanks;
+    };
+
+    struct CombiCrossDatasetAnalysis {
+        bool ok = false;
+        std::string error;  // set only when !ok, e.g. the destination Combi slot isn't empty
+        std::vector<TimbreProgramDependency> dependencies;
+        std::vector<UnresolvedProgram> unresolved;
+    };
+
+    // Read-only first step of a cross-dataset Combi copy: given `src`'s Combi at
+    // (srcBank, srcNumber), determines for each of its real Program-referencing
+    // Timbres whether an identical copy already exists in THIS (destination) file,
+    // and if not, which of this file's banks (matching engine type, at least one
+    // empty slot) could receive it. Validates THIS file's (dstBank, dstNumber) slot
+    // up front (same empty-slot check copyCombi() uses) so a caller never builds a
+    // placement UI only to have it rejected at apply time. Called on the
+    // DESTINATION file: `dest.analyzeCombiCrossDatasetCopy(srcFile, ...)`.
+    CombiCrossDatasetAnalysis analyzeCombiCrossDatasetCopy(const PcgFile& src, int srcBank, int srcNumber,
+                                                            int dstBank, int dstNumber) const;
+
+    // One decision from analyzeCombiCrossDatasetCopy()'s `unresolved` list: which
+    // destination bank to place `srcBank`/`srcNumber`'s Program into (the specific
+    // slot NUMBER is chosen fresh at apply time -- the first empty slot found in
+    // this bank, not pinned down by the analysis step).
+    struct ProgramPlacement {
+        int srcBank = 0;
+        int srcNumber = 0;
+        int dstBank = 0;
+    };
+
+    // Applies a cross-dataset Combi copy: for each of `src`'s Combi's real Program
+    // dependencies, re-resolves fresh against THIS file (doesn't just trust an
+    // earlier analyzeCombiCrossDatasetCopy() call, in case this file changed in the
+    // meantime, e.g. via the opposite pane) -- reuses an existing byte-identical
+    // Program if one exists now, otherwise consults `placements` for that Program's
+    // chosen destination bank and copies it there via copyProgramFrom() (the first
+    // empty slot found in that bank). Refuses (ok=false, nothing written) if any
+    // dependency still has neither an existing match nor a placement, or if THIS
+    // file's (dstBank, dstNumber) Combi slot is no longer empty. On success,
+    // rewrites the COPY of the source Combi's raw bytes (writeTimbreProgramRef(),
+    // the same helper resolveDuplicates() already uses) so every real Program-
+    // referencing Timbre points at its resolved destination, leaves every GM/
+    // unknown-code/default Timbre's bytes untouched, and writes the result into
+    // (dstBank, dstNumber) -- `src`'s own Combi is never touched, same "source
+    // stays untouched" contract copyCombi() already has. `setlistRefsRepointed` is
+    // always 0 (nothing existing is repointed by a copy). Called on the
+    // DESTINATION file: `dest.applyCombiCrossDatasetCopy(srcFile, ...)`.
+    CombiRearrangeResult applyCombiCrossDatasetCopy(const PcgFile& src, int srcBank, int srcNumber, int dstBank,
+                                                     int dstNumber, const std::vector<ProgramPlacement>& placements);
+
     // Raw 542-byte SBK1 record for one Set List slot, straight from the
     // retained file bytes -- the same two-tier data-flow idea as
     // decodeProgram()/decodeCombi(), applied to Set List slots: a detail

@@ -1,6 +1,7 @@
 #include "PcgFile.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -877,6 +878,25 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
     return result;
 }
 
+namespace {
+
+// Case-insensitive "does this Combi's name look like an empty/placeholder
+// slot" check, used by copyCombi() below to decide whether a drop target is
+// safe to copy into. A substring match (not exact-equals) so it also
+// catches moveCombiToBank()'s own vacated-slot rename, "- Init Combi -", not
+// just Korg's literal "Init Combi" -- both represent "nothing real lives
+// here." Deliberately separate from moveCombiToBank()'s OWN filler search
+// (an exact, case-sensitive match on "Init Combi"), which is answering a
+// different question (find a byte-identical DONOR to vacate a slot into,
+// not "is this slot safe to overwrite") and isn't touched by this helper.
+bool looksLikeEmptyCombiName(const std::string& name) {
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    return lower.find("init combi") != std::string::npos;
+}
+
+}  // namespace
+
 PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int bankB, int numberB) {
     CombiRearrangeResult result;
 
@@ -1094,6 +1114,337 @@ PcgFile::CombiRearrangeResult PcgFile::moveCombiToBank(int srcBank, int srcNumbe
     putCombiRecordBytes(srcBank, srcNumber, *fillerBytes);
 
     result.setlistRefsRepointed = repointSetlistReferences(false, srcBank, srcNumber, dstBank, dstNumber);
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::copyCombi(int srcBank, int srcNumber, int dstBank, int dstNumber) {
+    CombiRearrangeResult result;
+
+    if (srcBank < 0 || srcBank >= static_cast<int>(combiBankLocations_.size()) || srcNumber < 0 ||
+        static_cast<uint32_t>(srcNumber) >= combiBankLocations_[static_cast<size_t>(srcBank)].numRecords) {
+        result.error = "No such source Combi";
+        return result;
+    }
+    if (dstBank < 0 || dstBank >= static_cast<int>(combiBankLocations_.size()) || dstNumber < 0 ||
+        static_cast<uint32_t>(dstNumber) >= combiBankLocations_[static_cast<size_t>(dstBank)].numRecords) {
+        result.error = "No such destination Combi";
+        return result;
+    }
+    if (srcBank == dstBank && srcNumber == dstNumber) {
+        result.error = "Source and destination are the same slot";
+        return result;
+    }
+
+    // Find the destination's current name (from the already-decoded
+    // combis_ cache, no need to re-decode) -- refuse unless it looks empty.
+    // See looksLikeEmptyCombiName()'s own comment for why this is a
+    // substring match, not exact-equals.
+    const CombiInfo* dstCombi = nullptr;
+    for (const auto& combi : combis_) {
+        if (combi.bank == dstBank && combi.number == dstNumber) {
+            dstCombi = &combi;
+            break;
+        }
+    }
+    if (!dstCombi || !looksLikeEmptyCombiName(dstCombi->name)) {
+        result.error = "Can't copy here -- the destination isn't an empty (\"Init Combi\") slot. Drop directly onto a real Combi to swap instead.";
+        return result;
+    }
+
+    // Same defensive reasoning as moveCombiToBank()'s own destination check
+    // -- not expected to ever actually trigger for a genuinely empty slot,
+    // but refuse rather than silently misdirect a real reference if it did.
+    for (const auto& setlist : setlists_) {
+        for (const auto& song : setlist.songs) {
+            if (song.params.found && !song.params.isProgram && song.params.bank == dstBank &&
+                song.params.number == dstNumber) {
+                result.error = "Can't copy here -- the destination Combi is still referenced by at least one Set List slot";
+                return result;
+            }
+        }
+    }
+
+    auto srcBytes = combiRecordBytes(srcBank, srcNumber);
+    if (!srcBytes) {
+        result.error = "Couldn't read the source Combi record";
+        return result;
+    }
+
+    putCombiRecordBytes(dstBank, dstNumber, *srcBytes);
+
+    // Source is deliberately left untouched -- see this method's own doc
+    // comment. Nothing to repoint either: the source's own Set List
+    // references still correctly point at it, and the destination had none
+    // (it was empty) to carry over.
+    result.ok = true;
+    return result;
+}
+
+// Shared by analyzeCombiCrossDatasetCopy()/applyCombiCrossDatasetCopy() below --
+// the same "is (dstBank, dstNumber) a safe copy target" check copyCombi() already
+// runs, just factored out so both the read-only analysis and the actual write
+// enforce it identically rather than risking the two drifting apart.
+namespace {
+std::string checkCombiCopyDestination(const PcgFile& dest, int dstBank, int dstNumber) {
+    // `combis()` is a flat list across every bank, not indexed by bank -- a
+    // direct existence search (rather than a separate bank-count bound
+    // check, which would compare a bank INDEX against a flat TOTAL combi
+    // count and mean nothing) is both correct and sufficient here.
+    const CombiInfo* dstCombi = nullptr;
+    for (const auto& combi : dest.combis()) {
+        if (combi.bank == dstBank && combi.number == dstNumber) {
+            dstCombi = &combi;
+            break;
+        }
+    }
+    if (!dstCombi) return "No such destination Combi";
+    if (!looksLikeEmptyCombiName(dstCombi->name)) {
+        return "Can't copy here -- the destination isn't an empty (\"Init Combi\") slot. Drop directly onto a real Combi to swap instead.";
+    }
+    for (const auto& setlist : dest.setlists()) {
+        for (const auto& song : setlist.songs) {
+            if (song.params.found && !song.params.isProgram && song.params.bank == dstBank &&
+                song.params.number == dstNumber) {
+                return "Can't copy here -- the destination Combi is still referenced by at least one Set List slot";
+            }
+        }
+    }
+    return "";
+}
+}  // namespace
+
+PcgFile::CombiCrossDatasetAnalysis PcgFile::analyzeCombiCrossDatasetCopy(const PcgFile& src, int srcBank,
+                                                                          int srcNumber, int dstBank,
+                                                                          int dstNumber) const {
+    CombiCrossDatasetAnalysis result;
+
+    if (srcBank < 0 || srcBank >= static_cast<int>(src.combiBankLocations_.size()) || srcNumber < 0 ||
+        static_cast<uint32_t>(srcNumber) >= src.combiBankLocations_[static_cast<size_t>(srcBank)].numRecords) {
+        result.error = "No such source Combi";
+        return result;
+    }
+    result.error = checkCombiCopyDestination(*this, dstBank, dstNumber);
+    if (!result.error.empty()) return result;
+
+    const CombiInfo* srcCombi = nullptr;
+    for (const auto& combi : src.combis_) {
+        if (combi.bank == srcBank && combi.number == srcNumber) {
+            srcCombi = &combi;
+            break;
+        }
+    }
+    if (!srcCombi) {
+        result.error = "Couldn't read the source Combi";
+        return result;
+    }
+
+    // Dedup by (srcBank, srcNumber) -- several Timbres can reference the same
+    // Program; each gets its own `dependencies` entry (so the UI can list
+    // every Timbre), but only ONE `unresolved` entry per unique Program.
+    std::vector<std::pair<int, int>> seenUnresolvedPrograms;
+    for (int i = 0; i < static_cast<int>(srcCombi->timbres.size()); ++i) {
+        const auto& t = srcCombi->timbres[static_cast<size_t>(i)];
+        if (t.isDefault) continue;
+        // GM (permanently indexless, built into every unit) or a genuinely
+        // unidentified raw code -- neither is file-specific data to resolve;
+        // the apply step copies these Timbres' raw bytes through unchanged
+        // instead of listing them here.
+        const int programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
+        if (programBank < 0) continue;
+
+        const ProgramInfo* srcProgram = nullptr;
+        for (const auto& p : src.programs_) {
+            if (p.bank == programBank && p.number == t.number) {
+                srcProgram = &p;
+                break;
+            }
+        }
+        if (!srcProgram) continue;  // shouldn't happen -- a confirmed bank/number should always have a real ProgramInfo
+
+        TimbreProgramDependency dep;
+        dep.timbreIndex = i;
+        dep.srcBank = srcProgram->bank;
+        dep.srcNumber = srcProgram->number;
+        dep.name = srcProgram->name;
+        dep.bankType = srcProgram->bankType;
+        for (const auto& p : programs_) {
+            if (p.contentHash == srcProgram->contentHash) {
+                dep.found = true;
+                dep.foundBank = p.bank;
+                dep.foundNumber = p.number;
+                break;
+            }
+        }
+        result.dependencies.push_back(dep);
+
+        if (!dep.found &&
+            std::none_of(seenUnresolvedPrograms.begin(), seenUnresolvedPrograms.end(),
+                         [&](const auto& bn) { return bn.first == dep.srcBank && bn.second == dep.srcNumber; })) {
+            seenUnresolvedPrograms.push_back({dep.srcBank, dep.srcNumber});
+        }
+    }
+
+    for (const auto& [b, n] : seenUnresolvedPrograms) {
+        const ProgramInfo* srcProgram = nullptr;
+        for (const auto& p : src.programs_) {
+            if (p.bank == b && p.number == n) {
+                srcProgram = &p;
+                break;
+            }
+        }
+        if (!srcProgram) continue;
+
+        UnresolvedProgram unresolved;
+        unresolved.srcBank = b;
+        unresolved.srcNumber = n;
+        unresolved.name = srcProgram->name;
+        unresolved.bankType = srcProgram->bankType;
+        for (size_t bankIdx = 0; bankIdx < programBankLocations_.size(); ++bankIdx) {
+            if (programBankLocations_[bankIdx].bankType != srcProgram->bankType) continue;
+            const bool hasFreeSlot = std::any_of(programs_.begin(), programs_.end(), [&](const ProgramInfo& p) {
+                return p.bank == static_cast<int>(bankIdx) && p.name.empty();
+            });
+            if (hasFreeSlot) unresolved.candidateBanks.push_back(static_cast<int>(bankIdx));
+        }
+        result.unresolved.push_back(std::move(unresolved));
+    }
+
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::applyCombiCrossDatasetCopy(const PcgFile& src, int srcBank, int srcNumber,
+                                                                    int dstBank, int dstNumber,
+                                                                    const std::vector<ProgramPlacement>& placements) {
+    CombiRearrangeResult result;
+
+    if (srcBank < 0 || srcBank >= static_cast<int>(src.combiBankLocations_.size()) || srcNumber < 0 ||
+        static_cast<uint32_t>(srcNumber) >= src.combiBankLocations_[static_cast<size_t>(srcBank)].numRecords) {
+        result.error = "No such source Combi";
+        return result;
+    }
+    result.error = checkCombiCopyDestination(*this, dstBank, dstNumber);
+    if (!result.error.empty()) return result;
+
+    const CombiInfo* srcCombi = nullptr;
+    for (const auto& combi : src.combis_) {
+        if (combi.bank == srcBank && combi.number == srcNumber) {
+            srcCombi = &combi;
+            break;
+        }
+    }
+    if (!srcCombi) {
+        result.error = "Couldn't read the source Combi";
+        return result;
+    }
+
+    // Pass 1: resolve every real Program dependency WITHOUT writing anything
+    // yet -- all-or-nothing, same discipline resolveDuplicates() uses for its
+    // own template-size validation pass. Re-resolves "already exists" fresh
+    // here rather than trusting an earlier analyzeCombiCrossDatasetCopy()
+    // call, in case this file changed in the meantime (e.g. the opposite pane).
+    struct Resolution {
+        int timbreIndex;
+        int dstProgramBank;
+        int dstProgramNumber;
+    };
+    struct ResolvedProgram {
+        int srcBank, srcNumber, dstBank, dstNumber;
+        bool alreadyPresent;  // true = an existing match was reused, false = a fresh copy is needed in pass 2
+    };
+    std::vector<Resolution> resolutions;
+    std::vector<ResolvedProgram> resolvedPrograms;
+
+    for (int i = 0; i < static_cast<int>(srcCombi->timbres.size()); ++i) {
+        const auto& t = srcCombi->timbres[static_cast<size_t>(i)];
+        if (t.isDefault) continue;
+        const int programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
+        if (programBank < 0) continue;  // GM/unidentified -- Timbre bytes pass through unchanged below
+
+        const ProgramInfo* srcProgram = nullptr;
+        for (const auto& p : src.programs_) {
+            if (p.bank == programBank && p.number == t.number) {
+                srcProgram = &p;
+                break;
+            }
+        }
+        if (!srcProgram) continue;
+
+        // Already resolved this exact source Program earlier in this same loop?
+        auto already = std::find_if(resolvedPrograms.begin(), resolvedPrograms.end(), [&](const ResolvedProgram& r) {
+            return r.srcBank == srcProgram->bank && r.srcNumber == srcProgram->number;
+        });
+        if (already != resolvedPrograms.end()) {
+            resolutions.push_back({i, already->dstBank, already->dstNumber});
+            continue;
+        }
+
+        auto foundIt = std::find_if(programs_.begin(), programs_.end(),
+                                     [&](const ProgramInfo& p) { return p.contentHash == srcProgram->contentHash; });
+        if (foundIt != programs_.end()) {
+            resolvedPrograms.push_back({srcProgram->bank, srcProgram->number, foundIt->bank, foundIt->number, true});
+            resolutions.push_back({i, foundIt->bank, foundIt->number});
+            continue;
+        }
+
+        auto placementIt = std::find_if(placements.begin(), placements.end(), [&](const ProgramPlacement& pl) {
+            return pl.srcBank == srcProgram->bank && pl.srcNumber == srcProgram->number;
+        });
+        if (placementIt == placements.end()) {
+            result.error = "No destination chosen for \"" + srcProgram->name + "\" (" + std::to_string(srcProgram->bank) +
+                            "/" + std::to_string(srcProgram->number) + ")";
+            return result;
+        }
+
+        int chosenNumber = -1;
+        for (const auto& p : programs_) {
+            if (p.bank == placementIt->dstBank && p.name.empty() && (chosenNumber < 0 || p.number < chosenNumber)) {
+                chosenNumber = p.number;
+            }
+        }
+        if (chosenNumber < 0) {
+            result.error = "No free slot left in the chosen bank for \"" + srcProgram->name + "\"";
+            return result;
+        }
+
+        resolvedPrograms.push_back({srcProgram->bank, srcProgram->number, placementIt->dstBank, chosenNumber, false});
+        resolutions.push_back({i, placementIt->dstBank, chosenNumber});
+    }
+
+    // Pass 2: copy each genuinely new Program (skip ones that reused an
+    // existing match -- copyProgramFrom() would itself reject those as
+    // DuplicateExists, so only the fresh ones need the call at all).
+    for (const auto& rp : resolvedPrograms) {
+        if (rp.alreadyPresent) continue;
+        auto copyError = copyProgramFrom(src, rp.srcBank, rp.srcNumber, rp.dstBank, rp.dstNumber);
+        if (copyError.has_value()) {
+            result.error =
+                "Couldn't copy Program " + std::to_string(rp.srcBank) + "/" + std::to_string(rp.srcNumber) + " into the destination";
+            return result;
+        }
+    }
+
+    // Rewrite a COPY of the source Combi's own bytes so every real Program-
+    // referencing Timbre points at its resolved destination -- src itself is
+    // never touched. GM/unidentified/default Timbres' bytes pass through
+    // unchanged (never in `resolutions`).
+    auto combiBytes = src.combiRecordBytes(srcBank, srcNumber);
+    if (!combiBytes) {
+        result.error = "Couldn't read the source Combi's raw bytes";
+        return result;
+    }
+    for (const auto& res : resolutions) {
+        const int rawCode = confirmedTimbreCodeForProgramBank(res.dstProgramBank);
+        if (rawCode < 0) continue;  // shouldn't happen -- every dest bank here came from a confirmed source translation
+        writeTimbreProgramRef(combiBytes->data(), combiBytes->size(), res.timbreIndex, res.dstProgramNumber, rawCode);
+    }
+
+    if (!putCombiRecordBytes(dstBank, dstNumber, *combiBytes)) {
+        result.error = "Couldn't write the Combi into its destination slot (record size mismatch)";
+        return result;
+    }
+
     result.ok = true;
     return result;
 }

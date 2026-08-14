@@ -77,10 +77,21 @@
        announces a toast as it appears, same as it would the status bar. -->
   <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
+  <!-- Cross-dataset Combi copy's Program-placement panel (combi-cross-
+       dataset-panel.js) -- spans both panes (the Combi being copied lives in
+       one pane's dataset, the destination in the other), so it's mounted
+       here rather than owned by either pane's own DOM, same reasoning as
+       toastContainer above. Slides in from whichever screen edge is nearest
+       the destination pane -- see that file's own slideDirectionFor(). -->
+  <div id="combiCrossDatasetPanelRoot"></div>
+
   <script src="datasets.js"></script>
-  <script src="library.js"></script>
+  <script src="pane-setlist-editor.js"></script>
+  <script src="pane-program-editor.js"></script>
+  <script src="pane-combi-editor.js"></script>
   <script src="pane.js"></script>
   <script src="internals.js"></script>
+  <script src="combi-cross-dataset-panel.js"></script>
   <script src="mock_bridge.js"></script>
   <script src="app.js"></script>
 </body>

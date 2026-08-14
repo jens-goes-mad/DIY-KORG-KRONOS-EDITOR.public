@@ -237,6 +237,31 @@ public:
     // referenced refusal and how the vacated source slot gets filled.
     choc::value::Value moveCombiToBank(const choc::value::ValueView& args);
 
+    // [datasetId, srcBank, srcNumber, dstBank, dstNumber] -> {ok,
+    // setlistRefsRepointed} or {ok:false, error}. Copies a Combi's raw
+    // content into a DIFFERENT slot, leaving the source untouched --
+    // `setlistRefsRepointed` is always 0. Refuses unless the destination is
+    // currently an empty ("Init Combi") slot -- see PcgFile::copyCombi()'s
+    // own doc comment.
+    choc::value::Value copyCombi(const choc::value::ValueView& args);
+
+    // [srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber] -> {ok,
+    // dependencies:[{timbreIndex, srcBank, srcNumber, name, bankType, found,
+    // foundBank, foundNumber}...], unresolved:[{srcBank, srcNumber, name,
+    // bankType, candidateBanks:[...]}...]} or {ok:false, error}. Read-only
+    // first step of a cross-dataset Combi copy -- see
+    // PcgFile::analyzeCombiCrossDatasetCopy()'s own doc comment.
+    choc::value::Value analyzeCombiCrossDatasetCopy(const choc::value::ValueView& args);
+
+    // [srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber,
+    // placements:[{srcBank, srcNumber, dstBank}...]] -> {ok, setlistRefsRepointed}
+    // or {ok:false, error}. Applies a cross-dataset Combi copy using the
+    // caller's chosen destination bank per unresolved Program from a prior
+    // analyzeCombiCrossDatasetCopy() call (`placements` may be empty/omitted
+    // if every dependency was already found) -- see
+    // PcgFile::applyCombiCrossDatasetCopy()'s own doc comment.
+    choc::value::Value applyCombiCrossDatasetCopy(const choc::value::ValueView& args);
+
     // [datasetId] -> {ok, topLevelChunks:[...], programBanks:[{index,
     // bankType, numRecords, bytesPerRecord}...], combiBanks:[{index,
     // numRecords, bytesPerRecord}...]} or {ok:false, error}. Backs the

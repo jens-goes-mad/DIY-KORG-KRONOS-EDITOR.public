@@ -4,19 +4,20 @@
 // only a subset of data selected (this is apparently a real, selectable
 // thing when saving from a Kronos) can actually be SEEN, not silently
 // guessed at from the Programs/Combis tables just coming up short. A peer
-// content renderer to library.js's
-// createLibraryPanels()/pane.js's createSetlistPanel() -- same "read
-// datasetId via getDatasetId(), own no dataset-select of its own" contract
-// as both. Loaded after pane.js in index.html specifically so it can
-// reference PROGRAM_BANK_NAMES/COMBI_BANK_NAMES/NO_DATASET_MESSAGE
-// directly -- classic <script> tags share one top-level let/const scope,
-// the same thing app.js already relies on to call pane.js's
-// kronosNumber()/formatBankNumber() with no import needed.
+// content renderer to pane.js's own createLibraryPanels()/pane-setlist-
+// editor.js's createSetlistPanel() -- same "read datasetId via
+// getDatasetId(), own no dataset-select of its own" contract as both.
+// Loaded after pane.js in index.html specifically so it can reference
+// PROGRAM_BANK_NAMES/COMBI_BANK_NAMES/NO_DATASET_MESSAGE directly -- classic
+// <script> tags share one top-level let/const scope, the same thing app.js
+// already relies on to call pane.js's kronosNumber()/formatBankNumber() with
+// no import needed.
 //
 // Structure: one Entry per Topic (Top-level chunks / Program banks / Combi
 // banks), reusing the exact same "click a row, an .editor-row appears
-// directly below it" shape library.js's Program/Combi usage rows already
-// use (and, one level further, the .editor-row-stack/.accordion-content
+// directly below it" shape pane-program-editor.js's Program usage rows and
+// pane-combi-editor.js's Combi Timbre rows already use (and, one level
+// further, the .editor-row-stack/.accordion-content
 // wrapper pane.js's Setlist row editors use) -- not a bespoke layout, so
 // this pane's interaction language matches the rest of the app instead of
 // being its own one-off. Several topics can be expanded at once (a Set of
@@ -133,7 +134,7 @@ function createInternalsPanel(container, { getDatasetId, log }) {
   }
 
   // Same bank-filter-button look Programs/Combis already use
-  // (library.js's renderBankFilterRow(): `.bank-filter-row` grid,
+  // (pane.js's renderBankFilterRow(): `.bank-filter-row` grid,
   // `.button.is-small.bank-filter-button`, "Bank (Engine)" caption when
   // an engine type is known) -- but different semantics, since this isn't
   // a filter: Present = deactivated (a real button, nothing to do, this
@@ -197,8 +198,8 @@ function createInternalsPanel(container, { getDatasetId, log }) {
   // -- no bridge call, so toggling a topic open/closed is instant. Each
   // expanded topic's detail is wrapped in `.accordion-content`, the same
   // indentation class a Setlist row's own accordion sections use, and the
-  // row holding it reuses `.editor-row` -- the shared expand-row look from
-  // library.js/pane.js/style.css -- rather than inventing new styling.
+  // row holding it reuses `.editor-row` -- the shared expand-row look every
+  // category renderer/style.css uses -- rather than inventing new styling.
   function renderTopics() {
     topicsBody.innerHTML = "";
     if (!lastResult) return;

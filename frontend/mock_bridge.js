@@ -169,7 +169,7 @@
   // PcgFile.cpp, EditorBridge.cpp's combiToValue()): rawBankCode 0/1/20 all
   // have a confirmed PBK1 index, so the real backend leaves bankName blank
   // and expects the frontend to derive the name from
-  // PROGRAM_BANK_NAMES[programBank] itself (library.js's formatTimbreRef())
+  // PROGRAM_BANK_NAMES[programBank] itself (pane-combi-editor.js's formatTimbreRef())
   // -- hardcoding "INT-B"/"USER-D" here would just be a second copy of that
   // same fact, exactly the kind of drift-prone duplication removed
   // elsewhere (2026-08-11).
@@ -737,6 +737,219 @@
     }
 
     return ok({ setlistRefsRepointed });
+  };
+
+  // Mirrors PcgFile::copyCombi() -- see its own doc comment. Source is left
+  // completely untouched; the destination must look empty (case-insensitive
+  // "init combi" substring, same check as the real backend's
+  // looksLikeEmptyCombiName()) or this refuses.
+  window.copyCombi = (datasetId, srcBank, srcNumber, dstBank, dstNumber) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+    if (srcBank === dstBank && srcNumber === dstNumber) return fail("Source and destination are the same slot");
+
+    const src = dataset.combis.find((c) => c.bank === srcBank && c.number === srcNumber);
+    if (!src) return fail("No such source Combi");
+    const dst = dataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
+    if (!dst) return fail("No such destination Combi");
+
+    if (!(dst.name || "").toLowerCase().includes("init combi")) {
+      return fail('Can\'t copy here -- the destination isn\'t an empty ("Init Combi") slot. Drop directly onto a real Combi to swap instead.');
+    }
+
+    const dstReferenced = Object.keys(dataset.songs).some((setlistIndex) =>
+      dataset.songs[setlistIndex].some((song) => !song.isProgram && song.bank === dstBank && song.number === dstNumber)
+    );
+    if (dstReferenced) {
+      return fail("Can't copy here -- the destination Combi is still referenced by at least one Set List slot");
+    }
+
+    Object.assign(dst, {
+      name: src.name,
+      setlistReferenceCount: src.setlistReferenceCount,
+      setlistUsages: src.setlistUsages,
+      timbres: src.timbres,
+    });
+
+    return ok({ setlistRefsRepointed: 0 });
+  };
+
+  // Minimal mock-only mirror of PcgFile.cpp's kConfirmedTimbreBanks -- only
+  // the raw codes makeFakeTimbres() actually uses (0/1/20/6), not the full
+  // 20-bank table (no mock scenario needs the rest, same "flag the real
+  // scope, don't over-build" reasoning as every other simplification in this
+  // file). Returns null for a code with no matching bank in mock's own tiny
+  // 2-bank `programs` array (20/6 included -- correctly "not resolvable
+  // here", same as the real backend would report for a genuinely absent
+  // bank, not a guess).
+  function mockProgramBankForTimbreCode(rawBankCode) {
+    if (rawBankCode === 0) return 0;
+    if (rawBankCode === 1) return 1;
+    return null;
+  }
+
+  // Mirrors PcgFile::analyzeCombiCrossDatasetCopy() -- see its own doc
+  // comment. Uses NAME equality as the mock stand-in for the real backend's
+  // contentHash comparison (mock Programs have no real bytes to hash), same
+  // convention window.findDuplicatePrograms() below already uses for
+  // same-file dedup.
+  //
+  // Known mock-testing limitation, not silently glossed over: every mock
+  // dataset is built by the same makeFakePrograms()/makeFakeCombis()
+  // generator, so any two mock datasets' Programs are always name-identical
+  // -- a cross-dataset copy between two freshly-opened mock files will
+  // always resolve every dependency as "found" and never exercise the
+  // sliding panel's bank-picker path. That path is covered by
+  // tests/pcg_file_test.cpp's real two-file fixture and a real-file smoke
+  // probe instead, not by mock/manual testing.
+  window.analyzeCombiCrossDatasetCopy = (srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber) => {
+    const srcDataset = datasets[srcDatasetId];
+    const dstDataset = datasets[dstDatasetId];
+    if (!srcDataset) return fail(`Dataset ${srcDatasetId} has no file loaded`);
+    if (!dstDataset) return fail(`Dataset ${dstDatasetId} has no file loaded`);
+
+    const dstCombi = dstDataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
+    if (!dstCombi) return fail("No such destination Combi");
+    if (!(dstCombi.name || "").toLowerCase().includes("init combi")) {
+      return fail('Can\'t copy here -- the destination isn\'t an empty ("Init Combi") slot. Drop directly onto a real Combi to swap instead.');
+    }
+    const dstReferenced = Object.keys(dstDataset.songs).some((setlistIndex) =>
+      dstDataset.songs[setlistIndex].some((song) => !song.isProgram && song.bank === dstBank && song.number === dstNumber)
+    );
+    if (dstReferenced) {
+      return fail("Can't copy here -- the destination Combi is still referenced by at least one Set List slot");
+    }
+
+    const srcCombi = srcDataset.combis.find((c) => c.bank === srcBank && c.number === srcNumber);
+    if (!srcCombi) return fail("No such source Combi");
+
+    const dependencies = [];
+    const seenUnresolved = [];
+    srcCombi.timbres.forEach((t, i) => {
+      if (t.isDefault) return;
+      const programBank = mockProgramBankForTimbreCode(t.rawBankCode);
+      if (programBank == null) return;
+      const srcProgram = srcDataset.programs.find((p) => p.bank === programBank && p.number === t.number);
+      if (!srcProgram || !srcProgram.name) return;
+
+      const match = dstDataset.programs.find((p) => p.name && p.name === srcProgram.name);
+      const dep = {
+        timbreIndex: i,
+        srcBank: srcProgram.bank,
+        srcNumber: srcProgram.number,
+        name: srcProgram.name,
+        bankType: srcProgram.bankType,
+        found: !!match,
+        foundBank: match ? match.bank : 0,
+        foundNumber: match ? match.number : 0,
+      };
+      dependencies.push(dep);
+      if (!dep.found && !seenUnresolved.some((u) => u.srcBank === dep.srcBank && u.srcNumber === dep.srcNumber)) {
+        seenUnresolved.push({ srcBank: dep.srcBank, srcNumber: dep.srcNumber, name: dep.name, bankType: dep.bankType });
+      }
+    });
+
+    const dstBanks = [...new Set(dstDataset.programs.map((p) => p.bank))];
+    const unresolved = seenUnresolved.map((u) => {
+      const candidateBanks = dstBanks
+        .filter((bank) => dstDataset.programs.find((p) => p.bank === bank)?.bankType === u.bankType)
+        .filter((bank) => dstDataset.programs.some((p) => p.bank === bank && !p.name))
+        .sort((a, b) => a - b);
+      return Object.assign({ candidateBanks }, u);
+    });
+
+    return ok({ dependencies, unresolved });
+  };
+
+  // Mirrors PcgFile::applyCombiCrossDatasetCopy() -- see its own doc
+  // comment. Re-resolves fresh (name-equality, same mock stand-in as
+  // analyzeCombiCrossDatasetCopy() above) rather than trusting a prior
+  // analyze() call, same "don't trust stale analysis" discipline as the
+  // real backend.
+  window.applyCombiCrossDatasetCopy = (srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber, placements) => {
+    const srcDataset = datasets[srcDatasetId];
+    const dstDataset = datasets[dstDatasetId];
+    if (!srcDataset) return fail(`Dataset ${srcDatasetId} has no file loaded`);
+    if (!dstDataset) return fail(`Dataset ${dstDatasetId} has no file loaded`);
+
+    const dstCombi = dstDataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
+    if (!dstCombi) return fail("No such destination Combi");
+    if (!(dstCombi.name || "").toLowerCase().includes("init combi")) {
+      return fail('Can\'t copy here -- the destination isn\'t an empty ("Init Combi") slot. Drop directly onto a real Combi to swap instead.');
+    }
+    const dstReferenced = Object.keys(dstDataset.songs).some((setlistIndex) =>
+      dstDataset.songs[setlistIndex].some((song) => !song.isProgram && song.bank === dstBank && song.number === dstNumber)
+    );
+    if (dstReferenced) {
+      return fail("Can't copy here -- the destination Combi is still referenced by at least one Set List slot");
+    }
+
+    const srcCombi = srcDataset.combis.find((c) => c.bank === srcBank && c.number === srcNumber);
+    if (!srcCombi) return fail("No such source Combi");
+
+    const resolvedTimbres = [];  // {timbreIndex, dstBank, dstNumber}
+    const resolvedPrograms = [];  // {srcBank, srcNumber, dstBank, dstNumber, alreadyPresent}
+    for (let i = 0; i < srcCombi.timbres.length; i++) {
+      const t = srcCombi.timbres[i];
+      if (t.isDefault) continue;
+      const programBank = mockProgramBankForTimbreCode(t.rawBankCode);
+      if (programBank == null) continue;
+      const srcProgram = srcDataset.programs.find((p) => p.bank === programBank && p.number === t.number);
+      if (!srcProgram || !srcProgram.name) continue;
+
+      const already = resolvedPrograms.find((r) => r.srcBank === srcProgram.bank && r.srcNumber === srcProgram.number);
+      if (already) {
+        resolvedTimbres.push({ timbreIndex: i, dstBank: already.dstBank, dstNumber: already.dstNumber });
+        continue;
+      }
+
+      const match = dstDataset.programs.find((p) => p.name && p.name === srcProgram.name);
+      if (match) {
+        resolvedPrograms.push({ srcBank: srcProgram.bank, srcNumber: srcProgram.number, dstBank: match.bank, dstNumber: match.number, alreadyPresent: true });
+        resolvedTimbres.push({ timbreIndex: i, dstBank: match.bank, dstNumber: match.number });
+        continue;
+      }
+
+      const placement = (placements || []).find((pl) => pl.srcBank === srcProgram.bank && pl.srcNumber === srcProgram.number);
+      if (!placement) return fail(`No destination chosen for "${srcProgram.name}" (${srcProgram.bank}/${srcProgram.number})`);
+      const free = dstDataset.programs.filter((p) => p.bank === placement.dstBank && !p.name).sort((a, b) => a.number - b.number)[0];
+      if (!free) return fail(`No free slot left in the chosen bank for "${srcProgram.name}"`);
+
+      resolvedPrograms.push({ srcBank: srcProgram.bank, srcNumber: srcProgram.number, dstBank: free.bank, dstNumber: free.number, alreadyPresent: false });
+      resolvedTimbres.push({ timbreIndex: i, dstBank: free.bank, dstNumber: free.number });
+    }
+
+    for (const rp of resolvedPrograms) {
+      if (rp.alreadyPresent) continue;
+      const slot = dstDataset.programs.find((p) => p.bank === rp.dstBank && p.number === rp.dstNumber);
+      const srcProgram = srcDataset.programs.find((p) => p.bank === rp.srcBank && p.number === rp.srcNumber);
+      Object.assign(slot, {
+        name: srcProgram.name,
+        bankType: srcProgram.bankType,
+        setlistReferenceCount: 0,
+        combiReferenceCountAvailable: true,
+        combiReferenceCount: 0,
+      });
+    }
+
+    const newTimbres = srcCombi.timbres.map((t, i) => {
+      const resolved = resolvedTimbres.find((r) => r.timbreIndex === i);
+      if (!resolved) return t;
+      // Mock has no rawBankCode<->bank translation to invert (see
+      // mockProgramBankForTimbreCode()'s own comment on why it's partial) --
+      // number is enough for mock's own find-by-(bank,number) lookups
+      // elsewhere to keep working; rawBankCode is left as-is, matching
+      // whichever bank this Timbre already pointed at.
+      return Object.assign({}, t, { number: resolved.dstNumber });
+    });
+    Object.assign(dstCombi, {
+      name: srcCombi.name,
+      setlistReferenceCount: 0,
+      setlistUsages: [],
+      timbres: newTimbres,
+    });
+
+    return ok({ setlistRefsRepointed: 0 });
   };
 
   window.findDuplicatePrograms = (datasetId) => {

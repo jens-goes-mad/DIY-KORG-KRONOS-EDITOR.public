@@ -2999,5 +2999,227 @@ App/UI:
         (attempting to overwrite a bank whose only spare Combi -- an INT
         factory bank -- turned out to have zero "Init Combi" slots at all,
         correctly refused rather than fabricating bytes).
+  35. **BUILT (2026-08-14)**: Combi copy, a fourth Combi rearrange gesture
+      alongside entry 34's swap/move-within-bank/move-to-bank -- requested
+      directly for a real, concrete use case (keeping two variations of the
+      same Combi across two physical band setups -- e.g. one with a brass
+      section and one without -- without ever editing the shared original).
+      A prior reality-check question surfaced that dropping a Combi onto an
+      empty ("Init Combi") slot was silently just running the SAME
+      `swapCombis()` entry 34 uses for dropping onto any occupied Combi --
+      correct per how it was built, but not a copy: the source's own slot
+      would become "Init Combi" too, losing it. This is the real, separate
+      operation that keeps the source untouched.
+      - `PcgFile::copyCombi(srcBank, srcNumber, dstBank, dstNumber)`, same
+        `CombiRearrangeResult` shape as the other three (`setlistRefsRepointed`
+        is always 0 -- nothing is repointed, since the source keeps its own
+        references and the destination had none). Refuses (writes nothing)
+        unless the destination's name case-insensitively CONTAINS "init
+        combi" -- a substring match, not exact-equals, specifically so it
+        also accepts entry 34's own vacated-slot rename, `"- Init Combi -"`,
+        not just Korg's literal `"Init Combi"`. Mirrors `copyProgramFrom()`'s
+        own `TargetSlotOccupied` guard (Programs also only ever copy into an
+        empty slot) -- new `looksLikeEmptyCombiName()` helper, deliberately
+        separate from `moveCombiToBank()`'s own filler search (an exact,
+        case-sensitive match answering a different question: finding a
+        byte-identical DONOR to vacate a slot into, not "is this safe to
+        overwrite"). Also refuses if the destination is still referenced by
+        any Set List slot, same defensive reasoning as `moveCombiToBank()`
+        even though a real reference to an empty placeholder isn't expected
+        in practice.
+      - Frontend gesture: the Combi row drop handler's "onto" branch
+        (`pane-combi-editor.js`) now checks the target's name
+        (`/init combi/i`) before deciding swap vs. copy -- copy if it
+        matches, swap otherwise (unchanged). Before/after (move within/
+        between banks) is untouched -- copy is only reachable via the
+        direct-onto gesture, matching how it was actually requested.
+      - `EditorBridge::copyCombi()`/`main.cpp` binding/`mock_bridge.js` fake
+        follow entries 31-34's exact pattern.
+      - Verified: `tests/pcg_file_test.cpp`'s Combi rearrange fixture grew a
+        4th real Song (referencing bank0/4, "Init Combi") and a 3rd Combi in
+        bank 1 (`"- iNit COMBI -"`, mixed case, unreferenced) specifically
+        to exercise `copyCombi()`'s case-insensitive match, a cross-bank
+        copy, and a destination-referenced refusal without disturbing any
+        existing swap/move-within/move-to-bank assertions; `testCombiRearrange()`
+        extended with a happy path (source untouched, including its own 1
+        Set List reference) plus occupied-destination/referenced-destination/
+        same-slot/out-of-range refusals -- full `pcg_file_test` rebuild
+        clean. Real-file smoke probe against `setlist_test_2.PCG` confirmed
+        the happy path end to end (a genuinely 3-Set-List-referenced Combi
+        copied onto a real "Init Combi" slot, source's own 3 references
+        unchanged after) and that re-copying onto the now-occupied
+        destination correctly refuses.
+      - User Guide (`docs/content/guide/index.md`) and the Hugo Overview
+        page both updated the same day to describe all four Combi
+        rearrange gestures, not just entry 34's three.
+  36. **RESOLVED (2026-08-14)**: real-world use surfaced two bugs and one
+      column-width complaint after entries 34/35 shipped, all reported
+      directly rather than caught by this project's own tests (the Combi
+      rearrange fixture is real Set List repointing behavior, correctly
+      verified server-side -- these were both purely frontend gaps that
+      synthetic backend tests can't see).
+      - **Combis table column widths**: Bank/Name/#STL all stretched too
+        wide, per direct report -- `renderCombisPanel()`'s colgroup was
+        `[2.6, null, 4, 1.3]` (Name the flexible one). Combis have no
+        engine-type suffix to make room for the way Programs' own Bank
+        column does, so Bank/Name/#STL all got narrow FIXED widths instead
+        (`[1.6, 3, null, 0.9]`), moving the flexible slot to Set Lists --
+        the column whose content genuinely varies most (a handful of pill
+        badges vs. a dozen), matching the request to stretch there instead.
+      - **Set List references went stale after a Combi swap/move
+        (real bug, not a report of intended behavior)**: after swapping two
+        Combis, a Setlist row that referenced the moved content kept
+        showing its OLD bank/number -- confirmed the *data* was correct
+        (PcgFile::swapCombis() writes the right bytes, per entry 34's own
+        test coverage and real-file smoke probe) but the Setlist PANE's own
+        cached `entries` (bank/number/instrumentName per slot, fetched once
+        via `getEntries()`) was never told to re-fetch. `onNeedsFullReload`/
+        `onRefreshOppositeLibrary` (entries 32-35) only ever refreshed the
+        Programs/Combis/Duplicates tables, never the separate Setlist panel
+        in either pane -- the exact same staleness *class* entry 33 already
+        fixed once for the opposite pane's Library view, just never
+        extended to the Setlist view at all, in either pane. Same root
+        cause additionally affected `resolveDuplicateProgram()` (entry 33)
+        -- it also repoints real Set List references and had the identical
+        gap, just never reported before now.
+      - Fixed with one new function, `refreshSetlistEverywhere(datasetId)`
+        in `pane.js`'s `createPane()` (refreshes THIS pane's own
+        `setlistPanel.refreshEntries()` AND the opposite pane's, if it's
+        showing the same dataset -- mirrors `refreshOppositeLibrary()`'s own
+        shape, just for Setlist instead of Library, and covering both
+        panes, not just the opposite one), threaded down through
+        `createLibraryPanels()` as `onSetlistRefsRepointed` to
+        `createCombisPanel()` (`pane-combi-editor.js`) and
+        `createDuplicatesPanel()` (`pane-program-editor.js`). Both call it
+        (guarded on `result.setlistRefsRepointed > 0`, so a Combi copy --
+        which never repoints anything, entry 35 -- doesn't trigger a wasted
+        refetch) right after their existing `onNeedsFullReload()`/
+        `onRefreshOppositeLibrary()` calls.
+      - Verified: `node --check` on all three touched files, full
+        `pcg_file_test`/`kronos_editor`/`generate_setlist_test_matrix`
+        rebuild clean, confirmed the new callback is correctly wired end to
+        end (grepped the built binary's embedded assets for the new
+        function/parameter names). No backend change needed or made --
+        `pcg_file_test` was already green and stays green, since the actual
+        byte-level repointing was already correct; this was purely a
+        missing frontend refresh call.
+  37. **BUILT (2026-08-14)**: cross-dataset Combi copy, with Program
+      dependency resolution -- the first Combi rearrange operation that
+      crosses datasets at all (entries 34/35's swap/move/copy are all
+      same-dataset only, and cross-dataset was explicitly refused before
+      this). Planned via Plan Mode, not built ad hoc, given the size (a new
+      backend analysis+apply pair, a new bridge round-trip, and this app's
+      first-ever modal-like UI). Two decisions made directly with the user
+      rather than guessed, before writing any code:
+      - **Scope**: only the drop-onto-empty-slot (copy) gesture goes
+        cross-dataset. Swap/overwrite-move stay same-dataset-only -- a
+        cross-dataset swap would need this same resolution run
+        bidirectionally, real but separate future work. This also explains
+        why entries 34/35 never needed this at all: within ONE file a
+        Timbre's raw `(rawBankCode, number)` pointer keeps meaning the same
+        Program regardless of where the Combi itself moves -- only crossing
+        files can land that same pointer on a completely different Program,
+        or nothing.
+      - **UI shape**: not a modal (this app has none) -- a sliding side
+        panel (a tablet/mobile drawer pattern), sliding in from whichever
+        screen edge is nearest wherever the Combi was actually dropped. Only
+        appears when a real decision is needed -- if every one of the
+        Combi's Program dependencies already exists byte-identical in the
+        destination, it applies immediately with no panel, same "write
+        immediately, no confirmation" convention as every other edit here.
+      - `PcgFile::analyzeCombiCrossDatasetCopy(src, srcBank, srcNumber,
+        dstBank, dstNumber)` (read-only, called on the DESTINATION file):
+        for each of the source Combi's active Timbres with a CONFIRMED raw
+        bank code (now all 20 Program banks, per entry 30), checks whether
+        an identical Program (by `contentHash` -- already existed on
+        `ProgramInfo`, never previously exposed to JS, stays backend-only
+        here too, same as `findDuplicatePrograms()`) already exists
+        anywhere in the destination, and for each UNIQUE one that doesn't,
+        which destination banks (matching engine type, >=1 slot with
+        `name.empty()`) could receive it. GM (raw code 6, permanently
+        indexless) and any genuinely unidentified raw code aren't
+        resolved at all -- not file-specific data, copied through
+        unchanged by the apply step instead of being guessed at. Validates
+        the destination Combi slot up front (reusing entry 35's own
+        `looksLikeEmptyCombiName()`/Set-List-reference checks via a new
+        shared `checkCombiCopyDestination()` helper) so a caller never
+        opens the panel only to fail at Apply time.
+      - `PcgFile::applyCombiCrossDatasetCopy(src, srcBank, srcNumber,
+        dstBank, dstNumber, placements)` (called on DEST): re-resolves
+        fresh rather than trusting an earlier analyze() call (the
+        destination could have changed via the opposite pane in between) --
+        a two-pass, all-or-nothing structure mirroring `resolveDuplicates()`'s
+        own validate-then-write discipline: pass 1 resolves every
+        dependency (existing match, or the caller's chosen bank's first
+        free slot right now) without writing anything, refusing outright if
+        any dependency has neither; pass 2 copies each genuinely-new
+        Program via the EXISTING `copyProgramFrom()` (already supported
+        cross-file copying, never needed new Program-copy logic), then
+        rewrites a COPY of the source Combi's raw bytes
+        (`writeTimbreProgramRef()`, the same helper `resolveDuplicates()`
+        already uses) so every real dependency points at its resolved
+        destination, leaves GM/unknown-code/default Timbres' bytes
+        untouched, and writes the result -- `src` itself is never read
+        again after snapshotting its Combi/Program bytes, matching entry
+        35's own "source stays untouched" contract.
+      - `EditorBridge::analyzeCombiCrossDatasetCopy()`/
+        `applyCombiCrossDatasetCopy()`, `main.cpp` bindings, and
+        `mock_bridge.js` fakes (name-equality as the mock stand-in for
+        `contentHash` comparison, same convention `findDuplicatePrograms()`'s
+        own mock already uses -- flagged in its own comment that every mock
+        dataset shares one generator, so two freshly-opened mock files will
+        always resolve as fully "found" and never exercise the panel's
+        bank-picker path; that path is covered by the real backend test and
+        real-file smoke probe instead, not mock/manual testing).
+      - `pane-combi-editor.js`'s Combi row drop handler: the blanket
+        same-dataset-only guard now only applies to swap/before-after; the
+        `zone === "on" && looks-like-empty` branch additionally allows a
+        different `source.datasetId`, routing to a new orchestrating
+        function instead of calling `window.copyCombi()` directly.
+      - New `frontend/combi-cross-dataset-panel.js`: the sliding panel
+        itself, mounted once at the app level (`index.html`, alongside
+        `toastContainer` -- spans both panes, like `onDropProgram()`/
+        `onCopySetlist()` in `app.js`, not owned by either pane's own
+        closure). Slide direction read from the destination pane's actual
+        DOM position (`.pane:first-of-type` vs `:last-of-type`), NOT
+        `paneId` -- `swapPanes()` already means those aren't the same
+        thing. Lists every dependency (found ones grayed out,
+        informational only) plus one radio-button-bar bank picker per
+        unresolved Program (reuses the same `.is-link`-active button look
+        `renderBankFilterRow()`/`createSelectControlRow()` already use,
+        single-select instead of their own toggle semantics) -- Apply
+        stays disabled until every unresolved Program has a selection; one
+        with zero candidate banks shows that inline with nothing to
+        select, Cancel the only path. New CSS in `style.css` for the
+        slide-in/backdrop (z-index below the toast container, so an error
+        toast still reads on top).
+      - Verified: `tests/pcg_file_test.cpp` gained a genuinely two-file
+        fixture pair (`buildCrossDatasetSrcFixture()`/
+        `buildCrossDatasetDstFixture()` -- every other Combi test uses one
+        shared fixture, which can't exercise a cross-file operation) and
+        `testCombiCrossDatasetCopy()`, covering: found-by-hash-at-a-
+        DIFFERENT-position (proving matching is by content, not position),
+        an unresolved Program with a real candidate bank, GM/default
+        Timbres passed through untouched, all three destination refusals
+        (not empty / still referenced / missing placement), zero-candidate-
+        banks reported honestly, and the source file byte-for-byte
+        untouched after a successful apply. Hit the SAME (bank=0,
+        number=0) all-zero Set-List-slot collision entry 34's own fixture
+        already had to work around (docs/content/format/index.md §5.4) --
+        fixed the identical way, a dummy "Unused" record at number 0 so no
+        real target ever sits where every unused slot in the fixture
+        also decodes to. Real-file smoke probes against
+        `setlist_test_2.PCG`/`test_1.PCG` (two independent real backups):
+        confirmed a real 16-Timbre Combi copies cross-file with everything
+        found (all 652 real Combis in one file turned out fully resolvable
+        against the other -- both apparently share the same factory
+        content) and, after deliberately blanking one destination Program
+        in memory only (never saved) to force a genuine unresolved case,
+        confirmed the full analyze -> placement -> apply -> Timbre-rewrite
+        path end to end against real 7810-byte Combi records, with the
+        source file's own Combi bytes verified byte-identical before and
+        after. Full `pcg_file_test`/`kronos_editor`/
+        `generate_setlist_test_matrix` rebuild clean, `node --check` on
+        every touched/new JS file.
 
 === END STATE BLOCK ===

@@ -1124,7 +1124,8 @@ std::vector<uint8_t> buildCombiRearrangeFixture() {
     pushNameRecord(sdb1, "Song A", kRecordSize);
     pushNameRecord(sdb1, "Song B", kRecordSize);
     pushNameRecord(sdb1, "Song C", kRecordSize);
-    for (uint32_t k = 3; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+    pushNameRecord(sdb1, "Song D", kRecordSize);
+    for (uint32_t k = 4; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
 
     std::vector<uint8_t> sbk1;
     pushU32BE(sbk1, 1);
@@ -1133,10 +1134,15 @@ std::vector<uint8_t> buildCombiRearrangeFixture() {
     auto songA = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/1, 1, 0, 100, 0, 0, 0, "");
     auto songB = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/2, 1, 0, 100, 0, 0, 0, "");
     auto songC = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/1, /*number=*/0, 1, 0, 100, 0, 0, 0, "");
+    // References bank0/4 ("Init Combi") directly -- exists specifically so
+    // copyCombi()'s destination-referenced refusal has a real referenced
+    // "Init Combi"-looking slot to test against, see testCombiRearrange().
+    auto songD = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/4, 1, 0, 100, 0, 0, 0, "");
     sbk1.insert(sbk1.end(), songA.begin(), songA.end());
     sbk1.insert(sbk1.end(), songB.begin(), songB.end());
     sbk1.insert(sbk1.end(), songC.begin(), songC.end());
-    for (uint32_t k = 3; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+    sbk1.insert(sbk1.end(), songD.begin(), songD.end());
+    for (uint32_t k = 4; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
 
     std::vector<uint8_t> cbk1BankA;
     pushU32BE(cbk1BankA, 5);
@@ -1148,10 +1154,14 @@ std::vector<uint8_t> buildCombiRearrangeFixture() {
     pushNameRecord(cbk1BankA, "Init Combi", kCombiRecordSize);
 
     std::vector<uint8_t> cbk1BankB;
-    pushU32BE(cbk1BankB, 2);
+    pushU32BE(cbk1BankB, 3);
     pushU32BE(cbk1BankB, static_cast<uint32_t>(kCombiRecordSize));
     pushNameRecord(cbk1BankB, "Other Bank Combi", kCombiRecordSize);
     pushNameRecord(cbk1BankB, "Empty Target", kCombiRecordSize);  // unreferenced -- a real destination for moveCombiToBank()
+    // Mixed-case, dash-wrapped, and unreferenced -- exercises both
+    // copyCombi()'s case-insensitive "init combi" substring match AND a
+    // cross-bank copy in the same fixture entry.
+    pushNameRecord(cbk1BankB, "- iNit COMBI -", kCombiRecordSize);
 
     std::vector<uint8_t> sls1Content;
     appendChunk(sls1Content, "SDB1", sdb1);
@@ -1300,6 +1310,354 @@ void testCombiRearrange() {
         CHECK(stillC.has_value());
         if (stillC) CHECK_EQ(stillC->name, std::string("Combi C"), "rejected move writes nothing");
     }
+
+    // --- copyCombi(): happy path (cross-bank, case-insensitive "init
+    // combi" match), source untouched, and three refusal paths -----------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        // Happy path: copy Combi A (bank0/1, referenced by Song A) onto
+        // bank1/2 ("- iNit COMBI -" -- mixed case, dash-wrapped, and a
+        // DIFFERENT bank, exercising both the case-insensitive substring
+        // match and that a copy doesn't care about same/different bank the
+        // way moveCombiWithinBank()/moveCombiToBank() do).
+        auto copied = pcg.copyCombi(0, 1, 1, 2);
+        CHECK(copied.ok);
+        if (!copied.ok) std::fprintf(stderr, "  copyCombi() error: %s\n", copied.error.c_str());
+        CHECK_EQ(copied.setlistRefsRepointed, 0, "a copy never repoints anything");
+
+        auto atDest = pcg.decodeCombi(1, 2);
+        CHECK(atDest.has_value());
+        if (atDest) CHECK_EQ(atDest->name, std::string("Combi A"), "destination now holds a copy of the source's content");
+
+        auto sourceStill = pcg.decodeCombi(0, 1);
+        CHECK(sourceStill.has_value());
+        if (sourceStill) CHECK_EQ(sourceStill->name, std::string("Combi A"), "source is left completely untouched by a copy");
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.bank, 0, "Song A's reference to the SOURCE is untouched");
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 1, "Song A's reference to the SOURCE is untouched");
+
+        // Rejected: destination isn't empty (a real, named Combi already
+        // lives there) -- writes nothing.
+        auto occupied = pcg.copyCombi(0, 1, 0, 2);
+        CHECK(!occupied.ok);
+        auto stillB = pcg.decodeCombi(0, 2);
+        CHECK(stillB.has_value());
+        if (stillB) CHECK_EQ(stillB->name, std::string("Combi B"), "rejected copy writes nothing");
+
+        // Rejected: destination LOOKS empty ("Init Combi") but is still
+        // referenced (bank0/4, referenced by Song D) -- same defensive
+        // reasoning as moveCombiToBank()'s own destination check.
+        auto referenced = pcg.copyCombi(0, 1, 0, 4);
+        CHECK(!referenced.ok);
+
+        // Rejected: source and destination are the same slot.
+        auto sameSlot = pcg.copyCombi(0, 1, 0, 1);
+        CHECK(!sameSlot.ok);
+
+        // Rejected: out-of-range destination bank.
+        auto outOfRange = pcg.copyCombi(0, 1, 99, 0);
+        CHECK(!outOfRange.ok);
+    }
+}
+
+// --- Cross-dataset Combi copy: two independent files (not one shared
+// fixture -- this feature is inherently cross-file, unlike every other
+// Combi test above) -----------------------------------------------------
+//
+// The SOURCE file's one Combi has:
+//  - Timbre 0 (rawBankCode=0/INT-A, number=2) -> "Shared Lead", a Program
+//    that will exist BYTE-IDENTICAL in the destination but at a DIFFERENT
+//    (bank, number) -- proves matching is by contentHash, not position.
+//  - Timbre 1 (rawBankCode=1/INT-B, number=3) -> "Unique Brass", a Program
+//    that does NOT exist in the destination at all -- needs a placement.
+//  - Timbre 2 (rawBankCode=6, GM) -- permanently indexless, must be copied
+//    through unchanged and never listed as a dependency.
+//  - Timbres 3-15: default (all-zero) -- must be skipped entirely.
+constexpr size_t kCrossDsTimbreBase = 4806;
+constexpr size_t kCrossDsTimbreStride = 188;
+constexpr size_t kCrossDsCombiRecordSize = kCrossDsTimbreBase + kCrossDsTimbreStride * 16;
+constexpr size_t kCrossDsProgramRecordSize = 64;  // small synthetic stride, real files use ~4960
+
+std::vector<uint8_t> makeCrossDsSourceCombiRecord(const std::string& name) {
+    std::vector<uint8_t> rec(kCrossDsCombiRecordSize, 0);
+    for (size_t i = 0; i < name.size() && 4 + i < rec.size(); ++i) rec[4 + i] = static_cast<uint8_t>(name[i]);
+    auto setTimbre = [&](int index, int number, int rawBankCode) {
+        size_t h = kCrossDsTimbreBase + static_cast<size_t>(index) * kCrossDsTimbreStride;
+        rec[h] = static_cast<uint8_t>(number);
+        rec[h + 1] = static_cast<uint8_t>(rawBankCode);
+        rec[h + 2] = static_cast<uint8_t>(1 << 5);  // status Internal
+    };
+    setTimbre(0, 2, 0);   // -> INT-A/2 "Shared Lead"
+    setTimbre(1, 3, 1);   // -> INT-B/3 "Unique Brass"
+    setTimbre(2, 91, 6);  // -> GM (number is arbitrary -- GM has no real Program lookup)
+    return rec;
+}
+
+// One PBK1 bank's worth of records from (number, name) pairs -- a number
+// not listed within [0, max explicit number] decodes to name="" (a "free"
+// slot, this fixture's own stand-in for copyProgramFrom()'s real
+// name.empty() check).
+std::vector<uint8_t> buildCrossDsProgramBank(const std::vector<std::pair<int, std::string>>& entries) {
+    int maxNumber = 0;
+    for (const auto& entry : entries) maxNumber = std::max(maxNumber, entry.first);
+    std::vector<std::string> names(static_cast<size_t>(maxNumber) + 1);
+    for (const auto& entry : entries) names[static_cast<size_t>(entry.first)] = entry.second;
+
+    std::vector<uint8_t> bank;
+    pushU32BE(bank, static_cast<uint32_t>(names.size()));
+    pushU32BE(bank, static_cast<uint32_t>(kCrossDsProgramRecordSize));
+    for (const auto& name : names) pushNameRecord(bank, name, kCrossDsProgramRecordSize);
+    return bank;
+}
+
+// Shared skeleton for both cross-dataset fixtures below: one Set List (128
+// slots, slot 0 optionally referencing a Combi -- `referencedCombi`), two
+// PBK1 Program banks (INT-A/INT-B, both HD-1 -- MBK1/EXi isn't needed to
+// exercise this feature), and one CBK1 Combi bank built from
+// `combiRecordBytes` directly (letting each fixture supply already-built
+// per-slot records: the source needs one real-Timbre record
+// (makeCrossDsSourceCombiRecord()), the destination needs several plain
+// name-only ones, see pushNameRecord()).
+std::vector<uint8_t> buildCrossDatasetFixture(const std::vector<uint8_t>& combiBankRecords, int combiCount,
+                                               const std::vector<std::pair<int, std::string>>& programBank0,
+                                               const std::vector<std::pair<int, std::string>>& programBank1,
+                                               std::optional<std::pair<int, int>> referencedCombi) {
+    constexpr uint32_t kSongsPerSetlist = 128;
+    constexpr size_t kRecordSize = 28;
+    constexpr size_t kSbkHeaderSize = 40;
+    constexpr size_t kSbkRecordSize = 542;
+
+    std::vector<uint8_t> sdb1;
+    pushU32BE(sdb1, 1);
+    pushU32BE(sdb1, (kSongsPerSetlist + 1) * kRecordSize);
+    pushNameRecord(sdb1, "Test Setlist", kRecordSize);
+    pushNameRecord(sdb1, "Song A", kRecordSize);
+    for (uint32_t k = 1; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+
+    std::vector<uint8_t> sbk1;
+    pushU32BE(sbk1, 1);
+    pushU32BE(sbk1, static_cast<uint32_t>(kSbkHeaderSize + kSongsPerSetlist * kSbkRecordSize));
+    pushZeros(sbk1, kSbkHeaderSize);
+    if (referencedCombi.has_value()) {
+        auto songA = makeSbkSongRecord(/*isProgram=*/false, referencedCombi->first, referencedCombi->second, 1, 0,
+                                        100, 0, 0, 0, "");
+        sbk1.insert(sbk1.end(), songA.begin(), songA.end());
+    } else {
+        pushZeros(sbk1, kSbkRecordSize);
+    }
+    for (uint32_t k = 1; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+
+    std::vector<uint8_t> cbk1;
+    pushU32BE(cbk1, static_cast<uint32_t>(combiCount));
+    pushU32BE(cbk1, static_cast<uint32_t>(kCrossDsCombiRecordSize));
+    cbk1.insert(cbk1.end(), combiBankRecords.begin(), combiBankRecords.end());
+
+    std::vector<uint8_t> sls1Content;
+    appendChunk(sls1Content, "SDB1", sdb1);
+    appendChunk(sls1Content, "SBK1", sbk1);
+
+    std::vector<uint8_t> prg1Content;
+    appendChunk(prg1Content, "PBK1", buildCrossDsProgramBank(programBank0));
+    appendChunk(prg1Content, "PBK1", buildCrossDsProgramBank(programBank1));
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "SLS1", sls1Content);
+    appendChunk(pcg1Content, "PRG1", prg1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+std::vector<uint8_t> buildCrossDatasetSrcFixture() {
+    auto combi0 = makeCrossDsSourceCombiRecord("Source Combi");
+    return buildCrossDatasetFixture(combi0, 1, {{2, "Shared Lead"}}, {{3, "Unique Brass"}}, std::nullopt);
+}
+
+// Destination CBK1 bank 0: number0="Unused" -- deliberately never a real
+// target. Every genuinely-unused Set List slot in this fixture ALSO decodes
+// as a reference to (bank=0, number=0) (the documented all-zero collision,
+// docs/content/format/index.md §5.4 -- an unassigned slot is
+// byte-indistinguishable from a real reference to bank 0/number 0), so a
+// real target ever placed at (0, 0) would spuriously read as
+// Set-List-referenced by all 127 of this fixture's own unused slots. Same
+// fix buildCombiRearrangeFixture() already uses for the identical reason.
+// number1="Init Combi" (unreferenced -- the happy-path target),
+// number2="Occupied Combi" (not empty -- "target not empty" refusal),
+// number3="Init Combi" too, but Set List slot 0 references it
+// (Set-List-referenced refusal). PBK1 bank0 (INT-A) already holds "Shared
+// Lead" at a DIFFERENT number (5, not 2) than the source -- the
+// contentHash match must still find it. PBK1 bank1 (INT-B) is entirely
+// empty (a single free slot, number 0) -- "Unique Brass" isn't there, but
+// there's exactly one candidate slot to place it into.
+std::vector<uint8_t> buildCrossDatasetDstFixture() {
+    std::vector<uint8_t> combiBank;
+    pushNameRecord(combiBank, "Unused", kCrossDsCombiRecordSize);
+    pushNameRecord(combiBank, "Init Combi", kCrossDsCombiRecordSize);
+    pushNameRecord(combiBank, "Occupied Combi", kCrossDsCombiRecordSize);
+    pushNameRecord(combiBank, "Init Combi", kCrossDsCombiRecordSize);
+    return buildCrossDatasetFixture(combiBank, 4, {{5, "Shared Lead"}}, {}, std::make_pair(0, 3));
+}
+
+void testCombiCrossDatasetCopy() {
+    kronos::PcgFile src;
+    kronos::PcgFile dst;
+    std::string error;
+    bool srcLoaded = src.loadFromMemory(buildCrossDatasetSrcFixture(), error);
+    CHECK(srcLoaded);
+    if (!srcLoaded) { std::fprintf(stderr, "  source fixture load error: %s\n", error.c_str()); return; }
+    bool dstLoaded = dst.loadFromMemory(buildCrossDatasetDstFixture(), error);
+    CHECK(dstLoaded);
+    if (!dstLoaded) { std::fprintf(stderr, "  destination fixture load error: %s\n", error.c_str()); return; }
+
+    // --- analyzeCombiCrossDatasetCopy(): happy-path destination ----------
+    {
+        auto analysis = dst.analyzeCombiCrossDatasetCopy(src, 0, 0, 0, 1);
+        CHECK(analysis.ok);
+        if (!analysis.ok) std::fprintf(stderr, "  analyze() error: %s\n", analysis.error.c_str());
+
+        // Exactly 2 dependencies -- Timbre 0 (found) and Timbre 1 (unresolved).
+        // GM (Timbre 2) and every default Timbre are never listed.
+        CHECK_EQ(static_cast<int>(analysis.dependencies.size()), 2, "GM and default Timbres aren't dependencies");
+        bool sawFound = false, sawUnresolved = false;
+        for (const auto& dep : analysis.dependencies) {
+            if (dep.timbreIndex == 0) {
+                sawFound = true;
+                CHECK_EQ(dep.name, std::string("Shared Lead"), "Timbre 0's dependency is Shared Lead");
+                CHECK(dep.found);
+                CHECK_EQ(dep.foundBank, 0, "found at dest bank 0");
+                CHECK_EQ(dep.foundNumber, 5, "found at dest number 5 -- a DIFFERENT position than the source's 2");
+            } else if (dep.timbreIndex == 1) {
+                sawUnresolved = true;
+                CHECK_EQ(dep.name, std::string("Unique Brass"), "Timbre 1's dependency is Unique Brass");
+                CHECK(!dep.found);
+            }
+        }
+        CHECK(sawFound);
+        CHECK(sawUnresolved);
+
+        CHECK_EQ(static_cast<int>(analysis.unresolved.size()), 1, "exactly one UNIQUE unresolved Program");
+        if (!analysis.unresolved.empty()) {
+            const auto& u = analysis.unresolved[0];
+            CHECK_EQ(u.srcBank, 1, "Unique Brass's own source bank");
+            CHECK_EQ(u.srcNumber, 3, "Unique Brass's own source number");
+            // Both dest banks qualify -- bank 0 (INT-A) has free slots too
+            // (only number 5 is filled, "Shared Lead"), not just bank 1.
+            CHECK_EQ(static_cast<int>(u.candidateBanks.size()), 2, "both dest banks have a free slot of the matching type");
+            if (u.candidateBanks.size() == 2) {
+                CHECK_EQ(u.candidateBanks[0], 0, "candidate banks come back sorted ascending");
+                CHECK_EQ(u.candidateBanks[1], 1, "candidate banks come back sorted ascending");
+            }
+        }
+    }
+
+    // --- analyzeCombiCrossDatasetCopy(): destination refusals -------------
+    {
+        auto occupied = dst.analyzeCombiCrossDatasetCopy(src, 0, 0, 0, 2);
+        CHECK(!occupied.ok);
+        auto referenced = dst.analyzeCombiCrossDatasetCopy(src, 0, 0, 0, 3);
+        CHECK(!referenced.ok);
+    }
+
+    // --- applyCombiCrossDatasetCopy(): refused without a placement for the
+    // unresolved Program -- writes nothing ---------------------------------
+    {
+        auto missingPlacement = dst.applyCombiCrossDatasetCopy(src, 0, 0, 0, 1, {});
+        CHECK(!missingPlacement.ok);
+        auto stillEmpty = dst.decodeCombi(0, 1);
+        CHECK(stillEmpty.has_value());
+        if (stillEmpty) CHECK_EQ(stillEmpty->name, std::string("Init Combi"), "refused apply writes nothing");
+    }
+
+    // --- applyCombiCrossDatasetCopy(): happy path -------------------------
+    {
+        kronos::PcgFile::ProgramPlacement placement;
+        placement.srcBank = 1;
+        placement.srcNumber = 3;
+        placement.dstBank = 1;
+        auto result = dst.applyCombiCrossDatasetCopy(src, 0, 0, 0, 1, {placement});
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  apply() error: %s\n", result.error.c_str());
+        CHECK_EQ(result.setlistRefsRepointed, 0, "a copy never repoints anything");
+
+        auto copiedCombi = dst.decodeCombi(0, 1);
+        CHECK(copiedCombi.has_value());
+        if (copiedCombi) {
+            CHECK_EQ(copiedCombi->name, std::string("Source Combi"), "destination now holds the source Combi's content");
+            CHECK(!copiedCombi->timbres[0].isDefault);
+            CHECK_EQ(copiedCombi->timbres[0].number, 5, "Timbre 0 rewritten to the FOUND Program's dest number");
+            CHECK_EQ(copiedCombi->timbres[0].rawBankCode, 0, "Timbre 0 still points at INT-A (raw code 0)");
+            CHECK(!copiedCombi->timbres[1].isDefault);
+            CHECK_EQ(copiedCombi->timbres[1].number, 0, "Timbre 1 rewritten to the newly-copied Program's dest number (dest PBK1 bank 1's only slot)");
+            CHECK_EQ(copiedCombi->timbres[1].rawBankCode, 1, "Timbre 1 still points at INT-B (raw code 1)");
+            CHECK(!copiedCombi->timbres[2].isDefault);
+            CHECK_EQ(copiedCombi->timbres[2].number, 91, "GM Timbre's bytes pass through UNCHANGED");
+            CHECK_EQ(copiedCombi->timbres[2].rawBankCode, 6, "GM Timbre's raw bank code is untouched");
+            CHECK(copiedCombi->timbres[3].isDefault);  // a default Timbre stays default
+        }
+
+        auto newProgram = dst.decodeProgram(1, 0);
+        CHECK(newProgram.has_value());
+        if (newProgram) CHECK_EQ(newProgram->name, std::string("Unique Brass"), "Unique Brass really got copied into dest");
+
+        // Source is COMPLETELY untouched by a copy -- re-decode it fresh and
+        // compare against what it held before this whole test ran.
+        auto sourceStill = src.decodeCombi(0, 0);
+        CHECK(sourceStill.has_value());
+        if (sourceStill) {
+            CHECK_EQ(sourceStill->name, std::string("Source Combi"), "source Combi itself is untouched");
+            CHECK_EQ(sourceStill->timbres[1].number, 3, "source Timbre 1 still points at its OWN original Program");
+        }
+        auto sourceProgramStill = src.decodeProgram(1, 3);
+        CHECK(sourceProgramStill.has_value());
+        if (sourceProgramStill) CHECK_EQ(sourceProgramStill->name, std::string("Unique Brass"), "source's own Program copy is untouched");
+    }
+
+    // --- Zero candidate banks reports an empty list, not a guess ----------
+    {
+        kronos::PcgFile srcFresh;
+        kronos::PcgFile dstNoFreeSlot;
+        std::string loadError;
+        CHECK(srcFresh.loadFromMemory(buildCrossDatasetSrcFixture(), loadError));
+        // Same destination shape, but EVERY slot in BOTH PBK1 banks is
+        // filled -- not just bank 1 (INT-B) but also bank 0 (INT-A, which
+        // in the main fixture above has plenty of free slots at 0-4) --
+        // Unique Brass genuinely has nowhere left to go anywhere. number0 is
+        // the same "Unused" dummy buildCrossDatasetDstFixture() uses, for
+        // the same (bank=0, number=0) all-zero-collision reason (see that
+        // function's own comment) -- every unused Set List slot in this
+        // fixture ALSO decodes as referencing (0, 0).
+        std::vector<uint8_t> combiBank;
+        pushNameRecord(combiBank, "Unused", kCrossDsCombiRecordSize);
+        pushNameRecord(combiBank, "Init Combi", kCrossDsCombiRecordSize);
+        auto fixture = buildCrossDatasetFixture(
+            combiBank, 2,
+            {{0, "Filler A"}, {1, "Filler B"}, {2, "Filler C"}, {3, "Filler D"}, {4, "Filler E"}, {5, "Shared Lead"}},
+            {{0, "Already Full"}}, std::nullopt);
+        CHECK(dstNoFreeSlot.loadFromMemory(fixture, loadError));
+
+        auto analysis = dstNoFreeSlot.analyzeCombiCrossDatasetCopy(srcFresh, 0, 0, 0, 1);
+        CHECK(analysis.ok);
+        CHECK_EQ(static_cast<int>(analysis.unresolved.size()), 1, "still one unresolved Program");
+        if (!analysis.unresolved.empty()) {
+            CHECK_EQ(static_cast<int>(analysis.unresolved[0].candidateBanks.size()), 0,
+                     "no bank has a free slot -- reported honestly, not guessed");
+        }
+
+        // Applying with no valid placement available is refused the same way.
+        auto applied = dstNoFreeSlot.applyCombiCrossDatasetCopy(srcFresh, 0, 0, 0, 1, {});
+        CHECK(!applied.ok);
+    }
 }
 
 }  // namespace
@@ -1313,6 +1671,7 @@ int main() {
     testSaveRoundTrip();
     testResolveDuplicates();
     testCombiRearrange();
+    testCombiCrossDatasetCopy();
 
     if (g_failures > 0) {
         std::fprintf(stderr, "\n%d check(s) FAILED\n", g_failures);

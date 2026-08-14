@@ -76,7 +76,7 @@ int main() {
     choc::messageloop::initialise();
 
     choc::ui::DesktopWindow window({100, 100, 1100, 650});
-    window.setWindowTitle("DIY Kronos Editor (jens-goes-mad with claude)");
+    window.setWindowTitle("DIY Kronos Editor (jens-goes-mad with claude) -- built " __DATE__ " " __TIME__);
     window.setResizable(true);
     window.setMinimumSize(800, 500);
     window.windowClosed = [] { choc::messageloop::stop(); };
@@ -140,6 +140,13 @@ int main() {
                    [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiWithinBank(args); });
         view.bind("moveCombiToBank",
                    [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiToBank(args); });
+        view.bind("copyCombi", [&bridge](const choc::value::ValueView& args) { return bridge.copyCombi(args); });
+        view.bind("analyzeCombiCrossDatasetCopy", [&bridge](const choc::value::ValueView& args) {
+            return bridge.analyzeCombiCrossDatasetCopy(args);
+        });
+        view.bind("applyCombiCrossDatasetCopy", [&bridge](const choc::value::ValueView& args) {
+            return bridge.applyCombiCrossDatasetCopy(args);
+        });
         view.bind("getDatasetInternals",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getDatasetInternals(args); });
     };
