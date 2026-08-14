@@ -16,6 +16,33 @@ together for real editing sessions. For how the file format itself works, see
 [The file format](/format); for how the app is built internally, see
 [App architecture & components](/components).
 
+## Key features at a glance
+
+- **Open one or more datasets** (`.PCG`/`.SNG` backups) at once -- each stays independently
+  loaded in memory until you close it.
+- **One or two datasets shown side by side**, in a Norton-Commander-style dual pane -- the
+  same dataset from two angles, two different Set Lists of one dataset, or two entirely
+  different backups for comparison.
+- **Setlist**: browse/filter all 128 Set Lists; A→Z/Z→A physical re-sort; drag-and-drop to
+  reorder or copy a slot (cross-pane, same dataset); edit Name/Color/Volume/Comment/Font
+  size inline; copy a whole Set List onto the opposite pane's.
+- **Programs**: browse/filter every Program bank; drag one Program onto an empty slot to
+  copy it -- same dataset *or* a different one, since a Program's own reference isn't tied
+  to any other file.
+- **Combis**: browse/filter every Combi bank, with each Timbre's own Program reference shown
+  as a jump button; drag-and-drop to swap, move within/between banks, or copy onto an empty
+  slot -- copying also works *across datasets*, automatically finding (or letting you place)
+  every Program a Combi's Timbres depend on in the destination file.
+- **Duplicates**: finds byte-for-byte identical Programs and resolves a group in one click,
+  repointing every reference that pointed at a cleared copy.
+- **Cross-links everywhere**: click any bank/number reference to jump straight to it, with
+  per-pane Back/Forward history; **Shift+click any jump** to show it in the *opposite* pane
+  instead, switching that pane to the same dataset first if it isn't already.
+- **Internals**: a read-only view of exactly which chunks/banks a loaded backup actually
+  contains, for backups saved with only a subset of data.
+- **Save As** writes a pane's in-memory dataset (including every edit made this session)
+  to a file via a native Save dialog.
+
 ## Opening a file
 
 Click **Open...** in the topbar. This shows a native file picker (not a browser upload --
@@ -135,8 +162,12 @@ same pane switches to the right category, expands that exact row, and scrolls it
 - A Combi's own "Set Lists" column (in the Combis table) shows a pill per Set List that
   references it -- click a pill to jump to that slot, same as above.
 
-Every jump always stays within the pane you clicked in -- it never affects the opposite
-pane, even if both are showing the same dataset.
+A normal click always stays within the pane you clicked in. **Shift+click any jump button**
+to show it in the *opposite* pane instead, leaving this pane exactly where it was -- handy
+for inspecting a cross-reference (e.g. a Combi's Timbre Program) side by side with whatever
+you're already looking at. If the opposite pane isn't currently showing the same dataset (a
+different one, or none at all), Shift+click switches it to this pane's dataset first, then
+jumps.
 
 ### Back and Forward
 
@@ -198,6 +229,55 @@ assigned) as a jump button, and its on/off/engine-type status.
 
 ![Combi References](DIY-KE-006-CombiReferences.png)
 
+#### Rearranging Combis by drag-and-drop
+
+Combi rows are draggable, same as Setlist slots -- but a Combi is only ever referenced by
+Set List slots (never by anything else, unlike a Program, which a Combi's own Timbres can
+also reference), so every one of these writes immediately, repoints every affected Set List
+reference, and never touches anything else in the file:
+
+- **Drop it directly onto an empty slot** (one still named "Init Combi," Korg's own default
+  -- shown in the Name column) to **copy** it there. The source is left completely
+  untouched, including its own Set List references -- this is how you keep two variations
+  of the same Combi, e.g. one tuned for a band with a brass section and one without, without
+  ever editing the original.
+- **Drop it directly onto any other (already-used) Combi** to **swap** the two -- both
+  keep their content, just at each other's position, and every Set List slot referencing
+  either one follows it to its new spot. Works across banks too, since nothing is destroyed.
+- **Drop it between two rows in the same bank** (or before the first / after the last) to
+  **move** it there, shifting the intervening Combis down one to make room -- same insert
+  behavior as a Setlist slot.
+- **Drop it between two rows in a different bank** to move it there, **overwriting**
+  whatever Combi currently occupies that exact slot. This is refused if the slot being
+  overwritten is still referenced by any Set List -- move or copy it elsewhere first. The
+  vacated source slot is refilled with a real "Init Combi" record from its own bank (renamed
+  `- Init Combi -` so a cleared slot is unmistakable, same visibility idea as Duplicates'
+  `- Init Program (HD1) -`), so this only works if the source's own bank has at least one
+  spare "Init Combi" slot to draw from.
+
+Every one of these shows a toast reporting how many Set List slots got repointed.
+
+#### Copying a Combi to a different dataset
+
+Dragging a Combi onto an empty slot works across datasets too, not just within one file --
+drop it onto an "Init Combi" slot in the *other* pane's dataset to copy it there. Unlike a
+same-dataset copy, this has real work to do first: each of the Combi's Timbres references a
+specific Program, and that Program has to actually exist in the destination file for the
+copy to mean anything.
+
+- If every Program the Combi's Timbres depend on **already exists byte-for-byte identical**
+  in the destination, the copy applies immediately -- no extra step, same as any other
+  drag-and-drop write in this app.
+- If **any Program doesn't exist yet**, a panel slides in from whichever side of the screen
+  the drop landed on, listing every Timbre (the ones already resolved grayed out) and, for
+  each Program that's missing, a row of destination-bank buttons to pick where it should be
+  copied to -- only banks of the matching engine type with a free slot are offered. Apply
+  copies each chosen Program and repoints the new Combi's Timbres to match, all in one step;
+  Cancel abandons the whole drop.
+
+The source Combi (and its dataset) is never touched by any of this -- exactly like a
+same-dataset copy, only the destination changes.
+
 ### Duplicates
 
 Groups Programs that are byte-for-byte identical (a real hash of the raw record, not just a
@@ -226,8 +306,9 @@ looking for isn't showing up anywhere else either.
 ## Saving your changes
 
 Every edit above (Sort, drag-and-drop reorders/copies, Color/Volume/Comment, Program
-copies, resolving a duplicate) writes straight into the dataset's own in-memory copy of the
-file's bytes. **Nothing is written to disk until you explicitly save.**
+copies, Combi swap/move/copy including cross-dataset copy, resolving a duplicate) writes
+straight into the dataset's own in-memory copy of the file's bytes. **Nothing is written to
+disk until you explicitly save.**
 
 Click **Save As...** next to a pane's dataset selector to write that pane's dataset to a
 file via a native Save dialog, pre-filled with its original filename. There's no
@@ -252,3 +333,6 @@ you built.
   safely repointed the toast says so explicitly rather than silently skipping it).
 - No dirty-tracking or autosave, as above -- save deliberately, and often, if you're doing
   a long editing session.
+- Cross-dataset Combi copying only supports the **copy onto an empty slot** gesture --
+  cross-dataset swap and cross-dataset move-to-a-different-bank (overwrite) aren't
+  supported yet, only within one dataset.

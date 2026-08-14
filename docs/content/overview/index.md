@@ -83,11 +83,17 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   Both / Right only) makes this usable on a small screen too.
 - Real editing that writes straight into the loaded file's own bytes: Set List slot
   reordering and copying by drag-and-drop, Color/Volume/Comment/Font-size editing, A-Z/Z-A
-  physical re-sorting, and copying a Program's raw bytes into another slot (same file or a
-  different one).
+  physical re-sorting, copying a Program's raw bytes into another slot (same file or a
+  different one), and rearranging Combis by drag-and-drop -- swap, move within or between
+  banks, or copy onto an empty slot -- with every affected Set List reference repointed
+  automatically. Copying a Combi onto an empty slot works *across datasets* too: every
+  Program its Timbres depend on is matched byte-for-byte against the destination file, and
+  a sliding panel lets you choose where to place any that don't exist there yet before the
+  copy applies.
 - Cross-links between everywhere a Program/Combi/Set List slot references another --
   clicking one jumps straight to it, with per-pane Back/Forward history that returns you to
-  the exact row you came from, not just its category.
+  the exact row you came from, not just its category. Shift+click any of these to jump in
+  the *opposite* pane instead, switching it to the same dataset first if needed.
 - A Duplicates panel that finds byte-for-byte identical Programs and can resolve a group in
   one click: keep one copy, clear the rest back to a real blank slot, and repoint every
   Set List/Combi reference that pointed at a cleared one to the copy you kept.
