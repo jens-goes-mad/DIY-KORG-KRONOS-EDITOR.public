@@ -64,12 +64,92 @@ time, even though `-DCMAKE_BUILD_TYPE=Release` is also needed at configure time 
 what this project's own `CMakeLists.txt` checks to decide whether to embed resources at
 all).
 
-## Where the binary ends up
+### Where the binary ends up
 
 - macOS / Linux: `build/kronos_editor`
 - Windows: `build/Release/kronos_editor.exe` (or `build/Debug/kronos_editor.exe` for a
   Debug build -- MSVC's multi-config generator puts each configuration in its own
   subfolder)
+
+## Debugging, especially the JavaScript side
+
+The editor's UI is plain HTML/JS/CSS running inside CHOC's native webview, and there are
+three different ways to debug it depending on what you're actually chasing.
+
+### Real DevTools attached to the running app
+
+`main.cpp` already sets `options.enableDebugMode = true` on the `choc::ui::WebView`, which
+CHOC wires up per platform:
+
+- **macOS**: enables `developerExtrasEnabled` on the WKWebView -- right-click anywhere in
+  the app and choose **Inspect Element**, or use Safari's **Develop menu** (turn it on via
+  Safari -> Settings -> Advanced -> "Show Develop menu") to attach the full Web Inspector
+  to the running app remotely.
+- **Windows (WebView2)**: the same flag sets `AreDevToolsEnabled` -- **F12**, or right-click
+  -> Inspect, opens Chrome DevTools attached to the embedded WebView2.
+- **Linux (WebKitGTK)**: right-click -> Inspect Element works the same way.
+
+This gives you breakpoints, a live console, and the DOM inspector against the *real*
+native bridge (`window.copyProgram`, `window.listDatasets`, actual file bytes) -- not
+fabricated data. One gotcha: `console.log` inside the webview only goes to that DevTools
+console, never to the terminal `kronos_editor` was launched from.
+
+Combined with a Debug build reading `frontend/` live off disk (see "Build" above), this
+means the normal edit loop for JS/CSS changes is: edit the file, reload the window
+(Cmd+R/Ctrl+R works inside the webview), no C++ rebuild at all -- only changes under
+`src/` need `cmake --build build` again.
+
+### Plain-browser mode -- no native app at all
+
+Open `frontend/index.html` directly in a real browser (or serve the `frontend/` folder,
+e.g. `python3 -m http.server` from inside it). `frontend/mock_bridge.js` auto-detects that
+there's no native bridge and fabricates Set Lists/Programs/Combis, so drag-and-drop,
+filters, the Unload button, the cross-dataset copy panel, and so on can all be exercised
+with completely unrestricted Chrome/Safari DevTools. This is the fastest loop for UI/logic
+work that doesn't need real file data. The one thing it genuinely can't do is open a real
+`.PCG`/`.SNG` file -- a plain browser page has no filesystem access, so "Open..." falls
+back to a `window.prompt()` stub instead of a real file picker.
+
+### Headless, per-component tests
+
+For the pure `decode`/`encode` codec modules under `frontend/components/kronos/*.js` (no
+DOM at all), run the headless test directly in Node:
+
+```bash
+node frontend/components/kronos/setlist-comment.test.js
+```
+
+Each of these also has a browser-based `.test.html` harness (open it via a static file
+server) if you want to see the component actually rendered. See
+[App architecture & components](/components)'s "Committed, headless test suites" section
+for how the two fit together.
+
+For most day-to-day JS bug hunting, the first option -- DevTools attached to the real
+running app -- is the one to reach for: real data, real bridge, and a reload is all a JS
+edit needs.
+
+## Debugging (setup)
+
+### MacOSX / Safari
+
+Allow Safari remotely connect to CHOC. 
+
+Select: `Safari -> Preferences -> Show features for Web Developers`
+
+![Safari Preferences](Debug-Safari-Setup.png)
+
+Now start Safari and select: `Develop -> <YOUR MAC> -> Kronos Editor, choc.choc`<br>
+And here you go: Full browser dev tools support from inspections to break points. Just press CTRL+R to refresh the UI (CSS/JS/HTML), no build required. 
+
+![Safari Preferences](Debug-Safari-KE.png)
+
+### Linux
+
+TODO
+
+### Windows
+
+TODO
 
 ## A note for contributors touching `main.cpp` on Linux
 
