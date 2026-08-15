@@ -21,9 +21,19 @@ function setStatus(message) {
 // rather than growing this by hand.
 const toastContainer = document.getElementById("toastContainer");
 
-function showToast(message, durationMs = 3500) {
+// `isError` (2026-08-15) switches the toast to Bulma's semantic "danger"
+// color instead of the default "warning" one (style.css's .toast-error),
+// same "reuse Bulma's real color system" reasoning the default color
+// already used -- reported directly that every toast, success or failure,
+// looked identical, and that errors in general were easy to miss entirely
+// when they only went to the persistent status bar (setStatus() above,
+// whose own doc comment already admits this). No existing call site passed
+// a second positional arg (grepped first to confirm), so this is a safe,
+// non-breaking signature change from a bare `durationMs` number to an
+// options object.
+function showToast(message, { isError = false, durationMs = 3500 } = {}) {
   const toast = document.createElement("div");
-  toast.className = "toast";
+  toast.className = isError ? "toast toast-error" : "toast";
   toast.textContent = message;
   toastContainer.appendChild(toast);
 
@@ -84,9 +94,10 @@ const panes = {};
 // data-loss question deliberately not tackled yet.
 async function onDropEntry(source, target) {
   if (source.datasetId !== target.datasetId) {
-    setStatus(
+    showToast(
       "Can't copy Set List slots between different datasets yet -- they reference physical Program/Combi " +
-        "bank positions that aren't portable across datasets. See STATE.md's EXPLORATION section."
+        "bank positions that aren't portable across datasets. See STATE.md's EXPLORATION section.",
+      { isError: true }
     );
     return;
   }
@@ -103,7 +114,7 @@ async function onDropEntry(source, target) {
     if (toIndex === source.index) return;  // no real move
     result = await window.reorderSongEntry(target.datasetId, target.setlistIndex, source.index, toIndex);
     if (!result.ok) {
-      setStatus(`Move failed: ${result.error}`);
+      showToast(`Move failed: ${result.error}`, { isError: true });
       return;
     }
     setStatus(`Moved slot ${kronosNumber(source.index)} to position ${kronosNumber(toIndex)}.`);
@@ -119,7 +130,7 @@ async function onDropEntry(source, target) {
       window.getNameRecordBytes(target.datasetId, source.setlistIndex, source.index),
     ]);
     if (!srcParams.ok || !srcName.ok) {
-      setStatus(`Copy failed: ${srcParams.ok ? srcName.error : srcParams.error}`);
+      showToast(`Copy failed: ${srcParams.ok ? srcName.error : srcParams.error}`, { isError: true });
       return;
     }
     const [putParams, putName] = await Promise.all([
@@ -127,7 +138,7 @@ async function onDropEntry(source, target) {
       window.putNameRecordBytes(target.datasetId, target.setlistIndex, target.index, srcName.bytes),
     ]);
     if (!putParams.ok || !putName.ok) {
-      setStatus(`Copy failed: ${putParams.ok ? putName.error : putParams.error}`);
+      showToast(`Copy failed: ${putParams.ok ? putName.error : putParams.error}`, { isError: true });
       return;
     }
     setStatus(`Copied slot ${kronosNumber(source.index)} -> slot ${kronosNumber(target.index)}.`);
@@ -137,7 +148,7 @@ async function onDropEntry(source, target) {
       target.datasetId, target.setlistIndex, target.index
     );
     if (!result.ok) {
-      setStatus(`Copy failed: ${result.error}`);
+      showToast(`Copy failed: ${result.error}`, { isError: true });
       return;
     }
     setStatus(`Copied slot ${kronosNumber(source.index)} -> slot ${kronosNumber(target.index)}.`);
@@ -171,7 +182,7 @@ async function onDropProgram(source, target) {
     target.datasetId, target.bank, target.number
   );
   if (!result.ok) {
-    setStatus(`Copy failed: ${result.error}`);
+    showToast(`Copy failed: ${result.error}`, { isError: true });
     return;
   }
   setStatus(
@@ -187,6 +198,52 @@ async function onDropProgram(source, target) {
   }
 }
 
+// Shift+drag a Program row onto another SWAPS their entire content instead
+// of copying (pane-program-editor.js's own dragover/drop handlers pick
+// this vs. onDropProgram above based on ev.shiftKey at drop time, with a
+// "move" vs. "copy" cursor hint during the drag itself) -- per direct
+// request: copyProgram()'s own DuplicateExists guard makes a plain copy
+// meaningless between two slots that are BOTH genuinely empty ("Init
+// Program" -- every one is byte-identical to every other one, so copying
+// one onto another always trips it, even though nothing is actually
+// wrong), and a swap sidesteps that scenario entirely since it never
+// creates a new copy of anything -- see EditorBridge::swapProgram()'s own
+// doc comment. Same-dataset only (unlike onDropProgram's copy, which
+// works across datasets too) -- PcgFile::swapPrograms() itself refuses a
+// cross-dataset call, checked here first for a clearer message than
+// letting the bridge round-trip just to reject it.
+async function onSwapProgram(source, target) {
+  if (source.datasetId !== target.datasetId) {
+    showToast("Can't swap Programs between different datasets -- drag without Shift to copy instead.", { isError: true });
+    return;
+  }
+  if (source.bank === target.bank && source.number === target.number) return;
+
+  const result = await window.swapProgram(source.datasetId, source.bank, source.number, target.bank, target.number);
+  if (!result.ok) {
+    showToast(`Swap failed: ${result.error}`, { isError: true });
+    return;
+  }
+  showToast(
+    `Swapped ${formatBankNumber({ isProgram: true, bank: source.bank, number: source.number })} <-> ` +
+      `${formatBankNumber({ isProgram: true, bank: target.bank, number: target.number })} -- ` +
+      `repointed ${result.setlistRefsRepointed} Set List slot(s), ${result.combiRefsRepointed} Combi Timbre(s)` +
+      (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
+  );
+
+  // Both positions are in the SAME dataset (checked above) -- refresh every
+  // pane currently showing it, same "which panes need refreshing" pattern
+  // onDropProgram/onCopySetlist already use. A swap can repoint Set List
+  // slots too (unlike a copy), so the Setlist tab needs refreshing as well
+  // when that happened, not just the Library tables.
+  for (const pane of Object.values(panes)) {
+    if (pane.getCurrentDatasetId() === target.datasetId) {
+      await pane.refreshLibrary();
+      if (result.setlistRefsRepointed > 0) await pane.refreshEntries();
+    }
+  }
+}
+
 // "Copy all to opposite" (the Setlist panel's setlist-info row, pane.js) --
 // overwrites every one of the opposite pane's current Set List's 128 slots
 // with this pane's current Set List's content, in one native call
@@ -199,7 +256,7 @@ async function onDropProgram(source, target) {
 async function onCopySetlist(source, target) {
   const result = await window.copySetlistEntries(source.datasetId, source.setlistIndex, target.setlistIndex);
   if (!result.ok) {
-    setStatus(`Copy Set List failed: ${result.error}`);
+    showToast(`Copy Set List failed: ${result.error}`, { isError: true });
     return;
   }
   setStatus(`Copied Set List ${kronosNumber(source.setlistIndex)} onto Set List ${kronosNumber(target.setlistIndex)}.`);
@@ -218,6 +275,7 @@ document.querySelectorAll(".pane").forEach((root) => {
   panes[paneId] = createPane(paneId, root, {
     onDropEntry,
     onDropProgram,
+    onSwapProgram,
     onCopySetlist,
     // Lazy on purpose -- at THIS point in the forEach loop, the opposite
     // pane may not exist in `panes` yet (both panes are created in the same
@@ -292,7 +350,7 @@ openFileButton.addEventListener("click", async () => {
     const result = await window.openFileDialog();
     if (result.cancelled) return;  // user closed the dialog -- not an error, nothing to log
     if (!result.ok) {
-      setStatus(result.error);
+      showToast(result.error, { isError: true });
       return;
     }
     if (result.alreadyOpen) setStatus(`${result.displayName} is already open -- showing the existing dataset.`);
@@ -304,7 +362,7 @@ openFileButton.addEventListener("click", async () => {
       setStatus(`Opened ${result.displayName} -- pick it from a pane's dataset selector to view it (both panes already show something).`);
     }
   } catch (err) {
-    setStatus(String(err));
+    showToast(String(err), { isError: true });
   } finally {
     topbarLoading.hidden = true;
   }

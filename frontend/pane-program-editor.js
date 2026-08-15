@@ -32,7 +32,7 @@
 // getter rather than this panel's own state.
 function createProgramsPanel(
   { panelTable, bankFilterRow, selectControlRow },
-  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onJumpToSetlist, onJumpToInstrument, log }
+  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log }
 ) {
   // Set during a Programs row's own dragstart, cleared on dragend -- lets a
   // row being dragged OVER (not just dropped on) show immediate reject
@@ -213,7 +213,7 @@ function createProgramsPanel(
       const nameTd = document.createElement("td");
       nameTd.textContent = p.name || "(empty)";
       const typeTd = document.createElement("td");
-      typeTd.textContent = p.bankType || "";
+      typeTd.textContent = p.bankType != null ? programBankTypeName(p.bankType) : "";
       tr.append(
         bankCell(true, p.bank, p.number),
         nameTd,
@@ -234,15 +234,25 @@ function createProgramsPanel(
       });
 
       // Drag this Program onto another Program row (same pane or a
-      // different pane's dataset) to copy its raw bytes into that slot --
-      // see onDropProgram in app.js. Copy, not move: dragstart's payload
-      // never mutates the source, only drop() (on the TARGET row) calls
-      // into the bridge.
+      // different pane's dataset) to COPY its raw bytes into that slot --
+      // see onDropProgram in app.js. Hold Shift while dropping to SWAP the
+      // two Programs' content instead (same dataset only) -- see
+      // onSwapProgram in app.js for why this exists (copyProgram()'s own
+      // DuplicateExists guard makes a plain copy meaningless between two
+      // slots that are both genuinely empty "Init Program" -- every one is
+      // byte-identical to every other one, so it always trips that guard
+      // even though nothing's actually wrong; a swap sidesteps it
+      // entirely). `effectAllowed = "copyMove"` (not just "copy") is what
+      // lets dragover below actually switch the cursor to a "move" hint
+      // when Shift is held -- effectAllowed set at dragstart caps which
+      // dropEffect values the browser will honor later. dragstart's
+      // payload never mutates the source either way -- only drop() (on the
+      // TARGET row) calls into the bridge.
       tr.draggable = true;
       tr.addEventListener("dragstart", (ev) => {
         draggedProgram = { datasetId: getDatasetId(), bank: p.bank, number: p.number, bankType: p.bankType };
         ev.dataTransfer.setData("application/json", JSON.stringify(draggedProgram));
-        ev.dataTransfer.effectAllowed = "copy";
+        ev.dataTransfer.effectAllowed = "copyMove";
       });
       tr.addEventListener("dragend", () => {
         draggedProgram = null;
@@ -251,14 +261,15 @@ function createProgramsPanel(
         // Reject up front (no preventDefault -- the browser's own "not
         // allowed" cursor takes over, no `drop` fires here at all) if the
         // dragged Program's engine type doesn't match this row's own bank.
-        // EditorBridge::copyProgram() enforces this regardless; this is
-        // just immediate hover feedback instead of only after the drop.
+        // EditorBridge::copyProgram()/swapProgram() enforce this
+        // regardless; this is just immediate hover feedback instead of
+        // only after the drop.
         if (draggedProgram != null && draggedProgram.bankType !== p.bankType) {
           tr.classList.remove("drop-target");
           return;
         }
         ev.preventDefault();
-        ev.dataTransfer.dropEffect = "copy";
+        ev.dataTransfer.dropEffect = ev.shiftKey ? "move" : "copy";
         tr.classList.add("drop-target");
       });
       tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
@@ -268,7 +279,9 @@ function createProgramsPanel(
         tr.classList.remove("drop-target");
         const raw = ev.dataTransfer.getData("application/json");
         if (!raw) return;
-        onDropProgram(JSON.parse(raw), { datasetId: getDatasetId(), bank: p.bank, number: p.number });
+        const target = { datasetId: getDatasetId(), bank: p.bank, number: p.number };
+        if (ev.shiftKey) onSwapProgram(JSON.parse(raw), target);
+        else onDropProgram(JSON.parse(raw), target);
       });
 
       tbody.appendChild(tr);
@@ -333,7 +346,9 @@ function createProgramsPanel(
     return programs.find((p) => p.bank === bank && p.number === number);
   }
 
-  return { onDatasetChanged, refresh, render, jumpToEntry, findProgram };
+  // getProgramCount exposed so pane.js's own updateCategoryTabAvailability()
+  // can disable the Programs tab for a dataset with none at all.
+  return { onDatasetChanged, refresh, render, jumpToEntry, findProgram, getProgramCount: () => programs.length };
 }
 
 // Duplicates table: read-only, no bank filter of its own (unlike Programs/
@@ -393,7 +408,7 @@ function createDuplicatesPanel(
       btn.addEventListener("click", async () => {
         const result = await window.resolveDuplicateProgram(getDatasetId(), p.bank, p.number);
         if (!result.ok) {
-          showToast(result.error);
+          showToast(result.error, { isError: true });
           return;
         }
         showToast(
@@ -495,5 +510,9 @@ function createDuplicatesPanel(
     render();
   }
 
-  return { onDatasetChanged, refresh, render };
+  // getGroupCount exposed so pane.js's own updateCategoryTabAvailability()
+  // can disable the Duplicates tab for a dataset with no duplicate groups
+  // at all -- the common case for most real files, unlike Setlist/Programs/
+  // Combis actually being genuinely empty.
+  return { onDatasetChanged, refresh, render, getGroupCount: () => duplicateGroups.length };
 }

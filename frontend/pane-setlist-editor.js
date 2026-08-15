@@ -56,6 +56,19 @@ const SETLIST_COLOR_HEX = [
   "#2a3149", // Slate
 ];
 
+// Mirrors kronos::FontSize (PcgFile.h: `enum class FontSize { S, XS, M, L,
+// XL }`) -- indexed by the RAW enum value the bridge now sends
+// (EditorBridge stopped formatting this to a string 2026-08-15; naming is a
+// JS/encoder-layer job, not native C++'s -- see STATE.md). Deliberately a
+// SEPARATE small array from frontend/components/kronos/setlist-comment.js's
+// own FONT_SIZE_BY_VALUE, not a shared import -- that codec is lazily
+// loaded on first editor-panel open (loadSlotCodecs(), see below), but this
+// file's row-summary label (buildEditorRow()'s "comment" section text)
+// needs a name the instant rows first render, before any panel has ever
+// opened. Same 5-entry values, same order -- if FontSize's own enum ever
+// changes, both need updating together.
+const FONT_SIZE_NAMES = ["S", "XS", "M", "L", "XL"];
+
 // Purely cosmetic UI legibility boost -- NOT a hardware value, just a
 // display-time brightening so the real palette's fairly dark/muted swatches
 // (SETLIST_COLOR_HEX above, confirmed against real hardware) don't
@@ -1014,6 +1027,14 @@ function createSetlistPanel(
       entries = [];
     } else {
       entries = await window.getEntries(datasetId, currentSetlistIndex);
+      // getEntries() now sends FontSize as EditorBridge's raw
+      // kronos::FontSize value (0-4), not a formatted name -- named here,
+      // once, right at the data boundary, so every consumer below
+      // (buildEditorRow()'s summary label, same field an open editor's own
+      // codec later overwrites with its OWN name string -- see
+      // commitSlotBytes()) can keep treating entry.fontSize as a plain
+      // display string, unchanged.
+      for (const entry of entries) entry.fontSize = FONT_SIZE_NAMES[entry.fontSize] ?? entry.fontSize;
     }
     renderRows();
   }
@@ -1190,5 +1211,15 @@ function createSetlistPanel(
     log(`[Pane ${paneId}] Showing ${displayName}`);
   }
 
-  return { refreshEntries, onDatasetChanged, getCurrentSetlistIndex: () => currentSetlistIndex, jumpToEntry };
+  // Exposed so pane.js's own updateCategoryTabAvailability() can disable
+  // the Setlist tab entirely for a dataset with none at all (a real,
+  // possible state -- see the SDB1-is-optional fix, STATE.md entry 38: a
+  // sound-bank-only PCG can legitimately have zero Set Lists).
+  return {
+    refreshEntries,
+    onDatasetChanged,
+    getCurrentSetlistIndex: () => currentSetlistIndex,
+    jumpToEntry,
+    getSetlistCount: () => setlists.length,
+  };
 }

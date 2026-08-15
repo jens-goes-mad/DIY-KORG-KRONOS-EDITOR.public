@@ -88,30 +88,19 @@ int countAt(const std::vector<std::vector<int>>& counts, int bank, int number) {
     return counts[bank][number];
 }
 
-std::string fontSizeName(kronos::FontSize size) {
-    switch (size) {
-        case kronos::FontSize::S: return "S";
-        case kronos::FontSize::XS: return "XS";
-        case kronos::FontSize::M: return "M";
-        case kronos::FontSize::L: return "L";
-        case kronos::FontSize::XL: return "XL";
-        default: return "S";
-    }
-}
-
-std::string timbreStatusName(kronos::TimbreStatus status) {
-    switch (status) {
-        case kronos::TimbreStatus::Off: return "Off";
-        case kronos::TimbreStatus::Internal: return "Internal";
-        case kronos::TimbreStatus::External: return "External";
-        case kronos::TimbreStatus::Ex2: return "Ex2";
-        default: return "Unknown";
-    }
-}
-
-std::string programBankTypeName(kronos::ProgramBankType type) {
-    return type == kronos::ProgramBankType::Exi ? "EXi" : "HD-1";
-}
+// Deliberately no fontSizeName()/timbreStatusName()/programBankTypeName()
+// here anymore (removed 2026-08-15) -- this bridge sends raw enum values
+// (static_cast<int>) for FontSize/TimbreStatus/ProgramBankType now, not
+// formatted display strings. Per-project convention: C++ only handles raw
+// data and bulk/native-speed operations; naming/formatting for display is
+// an encoder/decoder-layer (JS) responsibility. This also removed a real,
+// confirmed duplicate -- fontSizeName()'s exact mapping already existed
+// independently in frontend/components/kronos/setlist-comment.js
+// (FONT_SIZE_BY_VALUE), used for the real byte-level editable path; this
+// bridge's copy was only ever feeding a REAL-ONLY summary label.
+// PROGRAM_BANK_TYPE_NAMES (frontend/pane.js) and a local FONT_SIZE_NAMES
+// (frontend/pane-setlist-editor.js) are the new JS-side homes for the
+// other two.
 
 choc::value::Value setlistUsagesToValue(const std::vector<kronos::SetlistUsage>& usages) {
     auto result = choc::value::createEmptyArray();
@@ -176,7 +165,7 @@ choc::value::Value EditorBridge::songToValue(const kronos::Song& song) {
     v.setMember("color", song.params.color);
     v.setMember("holdTime", song.params.holdTime);
     v.setMember("volume", song.params.volume);
-    v.setMember("fontSize", fontSizeName(song.params.fontSize));
+    v.setMember("fontSize", static_cast<int>(song.params.fontSize));
     v.setMember("transpose", song.params.transpose);
     v.setMember("comment", song.comment);
     // The actual Combi's own name (cross-referenced from CMB1/CBK1) --
@@ -193,7 +182,7 @@ choc::value::Value EditorBridge::programToValue(const kronos::ProgramInfo& progr
     // "HD-1"/"EXi" -- see ProgramBankType's doc comment in PcgFile.h. Not
     // yet cross-checked against a real backup's actual bytes, see
     // docs/external/README.md's caveat before trusting this in the UI.
-    v.setMember("bankType", programBankTypeName(program.bankType));
+    v.setMember("bankType", static_cast<int>(program.bankType));
     return v;
 }
 
@@ -224,7 +213,7 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
         // non-zero Program reference while switched off (see TimbreRef's
         // doc comment in PcgFile.h). Exposed separately so the UI can show
         // "referenced but inactive" rather than conflating the two.
-        tv.setMember("status", timbreStatusName(t.status));
+        tv.setMember("status", static_cast<int>(t.status));
         timbres.addArrayElement(tv);
     }
     v.setMember("timbres", timbres);
@@ -250,6 +239,7 @@ choc::value::Value EditorBridge::datasetResultValue(int datasetId, const Dataset
     result.setMember("datasetId", datasetId);
     result.setMember("displayName", dataset.displayName);
     result.setMember("setlistCount", static_cast<int>(dataset.file.setlists().size()));
+    result.setMember("dirty", dataset.file.isDirty());
     return result;
 }
 
@@ -305,6 +295,7 @@ choc::value::Value EditorBridge::listDatasets(const choc::value::ValueView&) {
         v.setMember("datasetId", datasetId);
         v.setMember("displayName", dataset.displayName);
         v.setMember("setlistCount", static_cast<int>(dataset.file.setlists().size()));
+        v.setMember("dirty", dataset.file.isDirty());
         result.addArrayElement(v);
     }
     return result;
@@ -314,6 +305,16 @@ choc::value::Value EditorBridge::closeDataset(const choc::value::ValueView& args
     const int datasetId = intArg(args, 0);
     m_datasets.erase(datasetId);
     return makeOk();
+}
+
+choc::value::Value EditorBridge::isDatasetDirty(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    auto it = m_datasets.find(datasetId);
+    if (it == m_datasets.end()) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = makeOk();
+    result.setMember("dirty", it->second.file.isDirty());
+    return result;
 }
 
 choc::value::Value EditorBridge::listSetlists(const choc::value::ValueView& args) {
@@ -367,23 +368,6 @@ choc::value::Value EditorBridge::copyEntry(const choc::value::ValueView& args) {
     kronos::Song copied = srcSetlist->songs[srcIndex];
     copied.index = dstOriginalIndex;  // keep destination slot's position, only its content changes
     dstSetlist->songs[dstIndex] = std::move(copied);
-    return makeOk();
-}
-
-choc::value::Value EditorBridge::setComment(const choc::value::ValueView& args) {
-    const int datasetId = intArg(args, 0);
-    const int setlistIndex = intArg(args, 1);
-    const int songIndex = intArg(args, 2);
-    const std::string newComment = stringArg(args, 3);
-
-    auto* setlist = setlistOf(datasetId, setlistIndex);
-    if (setlist == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no such Set List loaded");
-
-    if (songIndex < 0 || songIndex >= static_cast<int>(setlist->songs.size())) {
-        return makeError("Entry index out of range");
-    }
-
-    setlist->songs[songIndex].comment = newComment;
     return makeOk();
 }
 
@@ -639,7 +623,7 @@ choc::value::Value EditorBridge::getProgramBankTypes(const choc::value::ValueVie
     for (const auto& entry : file->programBankTypes()) {
         auto v = choc::value::createObject("ProgramBankTypeEntry");
         v.setMember("bank", entry.bank);
-        v.setMember("bankType", programBankTypeName(entry.bankType));
+        v.setMember("bankType", static_cast<int>(entry.bankType));
         result.addArrayElement(v);
     }
     return result;
@@ -660,7 +644,7 @@ choc::value::Value EditorBridge::getDatasetInternals(const choc::value::ValueVie
     for (const auto& b : file->programBankInfo()) {
         auto v = choc::value::createObject("ProgramBankInfo");
         v.setMember("index", b.index);
-        v.setMember("bankType", programBankTypeName(b.bankType));
+        v.setMember("bankType", static_cast<int>(b.bankType));
         v.setMember("numRecords", b.numRecords);
         v.setMember("bytesPerRecord", b.bytesPerRecord);
         programBanks.addArrayElement(v);
@@ -718,6 +702,26 @@ choc::value::Value EditorBridge::copyProgram(const choc::value::ValueView& args)
     auto error = dstFile->copyProgramFrom(*srcFile, srcBank, srcNumber, dstBank, dstNumber);
     if (error.has_value()) return makeError(programCopyErrorMessage(*error));
     return makeOk();
+}
+
+choc::value::Value EditorBridge::swapProgram(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bankA = intArg(args, 1);
+    const int numberA = intArg(args, 2);
+    const int bankB = intArg(args, 3);
+    const int numberB = intArg(args, 4);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->swapPrograms(bankA, numberA, bankB, numberB);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    value.setMember("combiRefsRepointed", result.combiRefsRepointed);
+    value.setMember("combiRefsSkipped", result.combiRefsSkipped);
+    return value;
 }
 
 choc::value::Value EditorBridge::resolveDuplicateProgram(const choc::value::ValueView& args) {
@@ -840,7 +844,7 @@ choc::value::Value EditorBridge::analyzeCombiCrossDatasetCopy(const choc::value:
         dv.setMember("srcBank", dep.srcBank);
         dv.setMember("srcNumber", dep.srcNumber);
         dv.setMember("name", dep.name);
-        dv.setMember("bankType", programBankTypeName(dep.bankType));
+        dv.setMember("bankType", static_cast<int>(dep.bankType));
         dv.setMember("found", dep.found);
         dv.setMember("foundBank", dep.foundBank);
         dv.setMember("foundNumber", dep.foundNumber);
@@ -854,13 +858,23 @@ choc::value::Value EditorBridge::analyzeCombiCrossDatasetCopy(const choc::value:
         uv.setMember("srcBank", u.srcBank);
         uv.setMember("srcNumber", u.srcNumber);
         uv.setMember("name", u.name);
-        uv.setMember("bankType", programBankTypeName(u.bankType));
+        uv.setMember("bankType", static_cast<int>(u.bankType));
         auto candidateBanks = choc::value::createArray(static_cast<uint32_t>(u.candidateBanks.size()),
                                                           [&](uint32_t i) { return u.candidateBanks[i]; });
         uv.setMember("candidateBanks", candidateBanks);
         unresolved.addArrayElement(uv);
     }
     value.setMember("unresolved", unresolved);
+
+    auto unmappable = choc::value::createEmptyArray();
+    for (const auto& u : analysis.unmappableTimbres) {
+        auto uv = choc::value::createObject("UnmappableTimbre");
+        uv.setMember("timbreIndex", u.timbreIndex);
+        uv.setMember("rawBankCode", u.rawBankCode);
+        uv.setMember("rawNumber", u.rawNumber);
+        unmappable.addArrayElement(uv);
+    }
+    value.setMember("unmappableTimbres", unmappable);
     return value;
 }
 

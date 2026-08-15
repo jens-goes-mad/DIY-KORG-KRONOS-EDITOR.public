@@ -100,11 +100,12 @@ int main() {
                    [&bridge](const choc::value::ValueView& args) { return bridge.listDatasets(args); });
         view.bind("closeDataset",
                    [&bridge](const choc::value::ValueView& args) { return bridge.closeDataset(args); });
+        view.bind("isDatasetDirty",
+                   [&bridge](const choc::value::ValueView& args) { return bridge.isDatasetDirty(args); });
         view.bind("listSetlists",
                    [&bridge](const choc::value::ValueView& args) { return bridge.listSetlists(args); });
         view.bind("getEntries", [&bridge](const choc::value::ValueView& args) { return bridge.getEntries(args); });
         view.bind("copyEntry", [&bridge](const choc::value::ValueView& args) { return bridge.copyEntry(args); });
-        view.bind("setComment", [&bridge](const choc::value::ValueView& args) { return bridge.setComment(args); });
         view.bind("getSongRecordBytes",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getSongRecordBytes(args); });
         view.bind("putSongRecordBytes",
@@ -132,6 +133,7 @@ int main() {
         view.bind("getProgramBankTypes",
                    [&bridge](const choc::value::ValueView& args) { return bridge.getProgramBankTypes(args); });
         view.bind("copyProgram", [&bridge](const choc::value::ValueView& args) { return bridge.copyProgram(args); });
+        view.bind("swapProgram", [&bridge](const choc::value::ValueView& args) { return bridge.swapProgram(args); });
         view.bind("resolveDuplicateProgram", [&bridge](const choc::value::ValueView& args) {
             return bridge.resolveDuplicateProgram(args);
         });

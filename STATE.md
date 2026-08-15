@@ -3444,5 +3444,423 @@ App/UI:
       useful on its own), decide the sidebar-reuse question separately
       once there's a second real consumer, not bundled into one task.
       Explicitly deferred -- "We look at it later," not committed to yet.
+  43. **BUILT (2026-08-15)**: "Unload" a dataset (per-pane header, between the
+      dataset dropdown and "Save As..."), the first real dirty-tracking in
+      this app -- STATE.md previously listed "no dirty-tracking/undo" as a
+      standing limitation. `EditorBridge::closeDataset(datasetId)` already
+      existed and already frees a dataset unconditionally; Unload is the
+      first UI wired to it, gated on a real "would this lose anything?"
+      confirmation.
+      - First design (dirty-tracking marked individually at each of
+        `EditorBridge.cpp`'s 12 write methods) was reconsidered after
+        review: `PcgFile.cpp` was grepped for every actual
+        `std::copy(..., data_.begin() + offset)` write and turned out to
+        have only 5 of them (`copyProgramFrom()`, `putCombiRecordBytes()`,
+        `putProgramRecordBytes()`, `putSongRecordBytes()`,
+        `putNameRecordBytes()`) -- every one of the 12 `EditorBridge`
+        methods bottoms out in one of these 5. Centralized instead: a new
+        private `PcgFile::writeIntoData(offset, src, length)` does the
+        actual `std::copy` AND sets a new `dirty_` member; all 5 call sites
+        route through it instead of writing `data_` directly. Result: zero
+        changes needed anywhere in `EditorBridge.cpp`'s 12 write methods --
+        `PcgFile::isDirty()` is automatically correct for all of them,
+        including any FUTURE write method, with no per-caller
+        "remember to mark dirty" discipline required at all.
+      - `copyEntry()`/`setComment()` correctly excluded -- both only mutate
+        the in-memory `Setlist` struct, confirmed by their own doc comments,
+        never `data_`, so an edit through either can't be saved anyway.
+      - `PcgFile::save()` changed from `const` to non-const (confirmed safe
+        -- every real call site already only ever calls it on a non-const
+        object) so it can clear `dirty_` on a successful write, entirely
+        internally -- `EditorBridge`'s `saveFileAs()`/`saveFileDialog()`
+        needed no changes for the clear-on-save side either.
+      - `EditorBridge::listDatasets()`/`datasetResultValue()` each gained
+        one line exposing `dataset.file.isDirty()` as `dirty` -- the
+        `Dataset` struct itself gained no new field.
+      - `pane.js`: new `.unload-dataset-button`, enabled/disabled exactly
+        like the existing `saveFileButton`. Click handler reads this
+        pane's own dataset's `dirty` flag from the already-cached
+        `knownDatasets` (no extra bridge round-trip), shows a plain native
+        `window.confirm()` if dirty (project owner's own explicit choice --
+        this app has no modal dialogs today, a native confirm needs zero
+        new UI code), then calls `closeDataset()` + the existing
+        `refreshDatasets()` -- every pane showing that dataset (this one or
+        the opposite one) already resets itself via its own
+        `onDatasetsChanged` listener, no new pane-reset logic needed at
+        all.
+      - `mock_bridge.js` mirrors the real bridge's write surface 1:1 (12
+        fake write functions) but has no equivalent shared low-level
+        primitive to hook once -- each of the 12 sets
+        `datasets[datasetId].dirty = true` on its own success path instead
+        (the two cross-dataset ones, `copyProgram`/
+        `applyCombiCrossDatasetCopy`, mark the destination dataset only).
+      - **Deferred, not built this pass**: the project owner's own larger
+        idea -- collapsing `putSongRecordBytes`/`putNameRecordBytes`/
+        `putCombiRecordBytes`/`putProgramRecordBytes` into fewer (or one)
+        generic put method(s), with `getSongRecordBytes()`/etc. also
+        returning the record's own offset so JS echoes it back instead of
+        re-supplying indices every time -- agreed as a real, worthwhile
+        simplification (all 4 are already "get raw bytes, decode/mutate in
+        JS via the existing codec files, re-encode, write the exact bytes
+        back" round trips), but a separate, larger refactor (offset-vs-
+        index addressing, per-record-type size validation, and cache-
+        refresh logic all need to move together, plus the JS call sites in
+        `pane-setlist-editor.js`). Noted here so it isn't lost, not
+        bundled into this pass.
+      - Verified: `tests/pcg_file_test.cpp` gained `testDirtyTracking()`
+        (`PcgFile`-only, so unlike the original per-`EditorBridge`-method
+        design this is now actually exercisable by the existing CHOC-free
+        test target) -- covers a fresh load never being dirty, each of the
+        5 `writeIntoData()` call sites setting it, a REJECTED write (wrong
+        byte length) leaving it false, and `save()` clearing it on
+        success. Full `pcg_file_test`/`kronos_editor` rebuild clean,
+        `node --check` on `pane.js`/`mock_bridge.js`.
+      - **Bug found and fixed the same day, reported directly**: the
+        Unload confirmation above read `dirty` from `knownDatasets`
+        (`pane.js`'s own cache, populated only by the global
+        `refreshDatasets()`/`onDatasetsChanged()` broadcast) -- but a
+        Combi swap/move/copy (and every other write across the app) only
+        refreshes its OWN pane's view (`onNeedsFullReload()`/
+        `refreshEntries()`), never that broadcast, so the cached `dirty`
+        went stale the instant any edit happened anywhere and never caught
+        up. Root design issue, not a one-off bug: the dirty flag lives on
+        the raw data itself and is meant to be asked fresh, not cached
+        alongside a dataset-selector list built for a different purpose.
+        Fixed properly instead of patched: new
+        `EditorBridge::isDatasetDirty(datasetId)` (`main.cpp`-bound,
+        `mock_bridge.js`-mirrored) -- a direct point query straight from
+        `PcgFile::isDirty()`, no cache involved at all. The Unload click
+        handler now calls this instead of `refreshDatasets()`/
+        `knownDatasets`. `listDatasets()`'s own `dirty` field is left in
+        place (harmless, matches the dataset-info cluster already there,
+        available for a possible future dirty indicator) but is no longer
+        what Unload itself relies on.
+  44. **BUILT (2026-08-15)**: `EditorBridge` no longer formats any value to
+      a display string -- `fontSizeName()`, `timbreStatusName()`, and
+      `programBankTypeName()` (three small enum->string switch/ternary
+      helpers) are gone, per direct architectural instruction: "The only
+      reason for native C++ handling is speed or bulk modifications.
+      Anything else belongs to encoder/decoder components" -- i.e. this
+      project's own JS. `songToValue()`/`programToValue()`/`combiToValue()`/
+      `getProgramBankTypes()`/`getDatasetInternals()`/
+      `analyzeCombiCrossDatasetCopy()` now send the RAW `kronos::FontSize`/
+      `TimbreStatus`/`ProgramBankType` enum values (`static_cast<int>`)
+      instead.
+      - `fontSizeName()` was a CONFIRMED real duplicate before this --
+        `frontend/components/kronos/setlist-comment.js` already had its own
+        independent `FONT_SIZE_BY_VALUE` table decoding the exact same
+        field for the real byte-level editor; the C++ copy only ever fed a
+        read-only summary label. `pane-setlist-editor.js` gained its own
+        small `FONT_SIZE_NAMES` array (deliberately a SEPARATE array from
+        the codec's, not a shared import -- the codec is lazily loaded on
+        first editor-panel open, but the row-summary label needs a name
+        the instant rows first render; `refreshEntries()` now converts the
+        raw value to a name once, right at the data boundary, so every
+        display site downstream is unaffected).
+      - `timbreStatusName()`/`programBankTypeName()` had NO existing JS
+        duplicate (checked directly, not assumed) -- `programBankTypeName()`
+        specifically has no raw per-record byte to decode in the first
+        place, since `ProgramBankType` comes from classifying an entire
+        BANK by its chunk tag once at load time, not a per-record field.
+        New homes: `pane.js` gained `PROGRAM_BANK_TYPE_NAMES`/
+        `programBankTypeName()` (used everywhere a "HD-1"/"EXi" string is
+        shown, including inside `formatBankNumber()` itself now, so most
+        callers needed no change at all); `pane-combi-editor.js` gained a
+        single `TIMBRE_STATUS_OFF = 0` constant (the ONLY TimbreStatus
+        value ever actually branched on anywhere in this app -- Internal/
+        External/Ex2 are never shown as text -- so no full name table was
+        needed there at all).
+      - **Real bug caught and fixed while migrating, not yet reported
+        live**: several existing display sites checked `bankType`
+        truthily (`bankType ? ... : ...`, `p.bankType || ""`) -- harmless
+        while `bankType` was a non-empty STRING, but `kronos::
+        ProgramBankType::Hd1 == 0`, and `0` is falsy in JS. Left as-is,
+        this would have silently dropped "(HD-1)" labels/Type column text
+        specifically for HD-1 banks the moment the raw value replaced the
+        string. Fixed at every site found (`pane.js`'s `formatBankNumber()`,
+        `internals.js`, `pane-program-editor.js`) by checking `!= null`
+        instead.
+      - `mock_bridge.js` updated to match the new contract exactly, not
+        just superficially -- `entry.fontSize`'s OWN internal
+        representation changed from a string to the raw value throughout
+        (not just at the `getEntries()` boundary), which incidentally
+        simplified `makeFakeSlotBytes()`/`putSongRecordBytes()`'s mock (the
+        `FONT_SIZE_VALUE`/`FONT_SIZE_BY_VALUE` strings-to-bits lookup
+        tables it used are gone -- the raw value already IS the bit-pattern
+        index). Every `"HD-1"`/`"EXi"`/`"Off"`/`"Internal"` literal
+        replaced with its raw `0`/`1` equivalent at all 9 mock call sites.
+      - **Also removed** (flagged in the same review, same principle):
+        `EditorBridge::setComment()` -- an older in-memory-only Comment
+        setter, confirmed genuinely dead (grepped every frontend file: no
+        real UI ever called `window.setComment`, only its own doc comment
+        and mock stub referenced it, both already saying it was superseded
+        by `getSongRecordBytes()`/`putSongRecordBytes()`). Deleted outright
+        (header, implementation, `main.cpp` binding, mock stub) rather than
+        migrated, since there was no live functionality to preserve.
+      - Verified: full `pcg_file_test`/`kronos_editor` rebuild clean
+        (`pcg_file_test` itself is unaffected -- confirmed it has zero
+        `EditorBridge`/CHOC dependency, per its own `CMakeLists.txt`
+        scoping), `node --check` on all 6 touched JS files, grepped the
+        embedded binary to confirm `setComment` is fully gone and the new
+        JS constants are present.
+      - **One truthy-`bankType` site missed in the first pass, reported
+        directly the same day**: `pane.js`'s `renderBankFilterRow()` (the
+        Programs bank-filter buttons) still had the exact falsy-zero bug
+        described above -- `const bankType = getBankType && getBankType(bank)`
+        then `bankType ? ... : name`, so HD-1 banks (raw value 0) showed
+        no type marker at all ("nothing"), and EXi banks (raw value 1)
+        showed the un-named raw value literally, `"(1)"`. Fixed the same
+        way as the other three sites: `!= null` instead of truthiness, and
+        `programBankTypeName(bankType)` instead of interpolating the raw
+        value directly. All `bankType`-truthiness and raw-`${bankType}`
+        interpolation patterns re-grepped across the whole frontend
+        afterward to confirm no fourth site was still hiding.
+      - **Follow-up consolidation, same day, direct instruction**: two
+        "is this slot empty" checks were independently reimplemented at
+        multiple call sites instead of sharing one definition --
+        `looksLikeEmptyCombiName()` (a case-insensitive "init combi"
+        substring match) was inlined 5 times across `pane-combi-editor.js`
+        (a plain regex, twice) and `mock_bridge.js` (a
+        `.toLowerCase().includes(...)` call, three times);
+        `looksLikeEmptyProgramName()` already existed as a named function
+        but was DEFINED independently, with an identical body, in both
+        `combi-cross-dataset-panel.js` and `mock_bridge.js`. Both are now
+        single shared definitions in `pane.js` (the established home for
+        cross-file display helpers -- `PROGRAM_BANK_NAMES`/
+        `formatBankNumber()`/`programBankTypeName()` already live there),
+        with every other file's own copy deleted and its call sites
+        switched to the shared one -- including `mock_bridge.js`, which
+        can reach these safely since `pane.js` loads before it in
+        `index.html`'s script order.
+      - Also found and fixed the same way: `mock_bridge.js` had its OWN
+        internal duplication, unrelated to the real bridge -- the "which
+        type is this bank" rule (`bank === 0 ? 0 : 1`, this mock's fixed
+        2-bank world) was written out independently at 5 call sites across
+        `makeFakePrograms()`/`copyProgram()`/`getProgramBankTypes()`/
+        `getDatasetInternals()`. Consolidated into one local
+        `mockBankType(bank)` helper, used at all 5.
+      - Verified: re-grepped the whole frontend afterward for the removed
+        patterns (`/init combi/i.test`, `.includes("init combi")`, a
+        second `function looksLikeEmptyProgramName`/
+        `looksLikeEmptyCombiName` definition, any remaining
+        `bank === 0 ? 0 : 1` outside `mockBankType()` itself) -- all
+        confirmed at exactly zero/one occurrence as expected. Full
+        `pcg_file_test`/`kronos_editor` rebuild clean, `node --check` on
+        all 4 touched files.
+  45. **BUILT (2026-08-15)**: category tabs (Setlist/Programs/Combis/
+      Duplicates) grey out and become unclickable when the current dataset
+      has zero rows for that category, checked after every dataset
+      selection change (`pane.js`'s `loadDataset()`/`resetToEmpty()`) --
+      per direct request. Internals stays exempt (always relevant, even to
+      show "0 of everything"). Each sub-panel gained a small count
+      accessor (`getSetlistCount()`/`getProgramCount()`/`getCombiCount()`/
+      `getGroupCount()`) reading its own already-fetched array -- no new
+      bridge calls needed. New `.is-tab-disabled` CSS class
+      (opacity + `pointer-events: none`); the tab click handler also
+      checks the class directly, not just CSS, since a tab can become
+      disabled programmatically after being opened. If the active tab
+      becomes disabled, falls back to the first available one (Internals
+      as the final fallback).
+      - **Real, pre-existing bug found the same day, reported directly**:
+        HALEN-SPLIT.PCG (a real donated file, confirmed earlier this
+        session to have a real Combi) showed its Combis tab disabled
+        despite having real content. Root cause: `createLibraryPanels()`'s
+        own `onDatasetChanged()` called `load({resetFilters: true})`
+        without `async`/`return` -- so `await
+        libraryPanels.onDatasetChanged()` (`loadDataset()`/
+        `resetToEmpty()`) resolved immediately, before Programs/Combis/
+        Duplicates had actually finished fetching. Harmless before now --
+        nothing previously depended on that completion timing, the UI just
+        caught up a moment later once `load()` itself finished and called
+        `renderCurrentTab()` -- until `updateCategoryTabAvailability()`
+        became the first caller that needed the counts to be accurate the
+        instant it ran, reading stale (usually empty, pre-fetch) data as a
+        result. Fixed by returning `load()`'s own promise.
+        `setlistPanel`/`internalsPanel`'s own `onDatasetChanged()` were
+        checked too and are correctly `async` already -- this was the one
+        gap.
+  46. **BUILT (2026-08-15)**: error messages now show as a red toast
+      (`showToast(message, {isError: true})`, Bulma's semantic `--bulma-
+      danger`/`-invert` pair, same "reuse Bulma's real color system"
+      reasoning the existing default warning-yellow toast already used) --
+      per direct request, after the persistent status bar (`setStatus()`,
+      whose own doc comment already admitted "easy to miss, and
+      overwritten by the next status message") turned out to be where
+      EVERY error in `app.js` (Setlist move/copy, Program copy, Set List
+      copy, Open file -- 9 call sites) was still going, while newer files
+      (`pane-combi-editor.js`/`pane-program-editor.js`/`combi-cross-
+      dataset-panel.js`) already used `showToast()` for errors but with no
+      color distinction from a success message (5 more call sites
+      switched to the new red variant for consistency). Success/
+      informational `setStatus()` calls untouched -- only genuine failure
+      paths moved.
+      - `EditorBridge::programCopyErrorMessage()` (also flagged the same
+        session, same "should this be JS's job" principle that removed
+        `fontSizeName()`/`timbreStatusName()`/`programBankTypeName()`
+        earlier) was DELIBERATELY KEPT in C++, unlike those three: this
+        app's entire error-handling convention (~40+ bridge call sites)
+        assumes `result.error` always arrives as a ready-to-show string:
+        sending a raw `ProgramCopyError` code instead would mean this one
+        call site alone needs its own JS-side code-to-text table, a
+        special-cased shape used nowhere else in the app -- more
+        inconsistency introduced than removed. Reasoning shared directly
+        rather than silently complying or silently ignoring the
+        suggestion.
+      - Verified: `node --check` on all touched JS files, full
+        `kronos_editor` rebuild clean.
+  47. **FIXED (2026-08-15)**: the cross-dataset Combi copy panel's per-bank
+      slot dropdowns (entry 40) didn't behave as a radio group -- picking a
+      slot in a SECOND bank never visually cleared the first bank's own
+      dropdown, so both looked selected at once. Root cause: resetting the
+      other dropdown used `?selected` on its `<option>` elements -- a
+      lit-html boolean-ATTRIBUTE binding, which only affects an `<option>`'s
+      initial parse state, not a live `<select>`'s actual displayed value
+      once the browser has already rendered it (attribute vs. the real
+      `.value` PROPERTY diverge for a `<select>` that already exists in the
+      DOM). `selections` itself was already correctly single-valued
+      underneath the whole time -- this was purely a display bug. Fixed by
+      binding the `<select>`'s own `.value` PROPERTY directly (lit-html's
+      leading-dot property-binding syntax) instead, which forces the
+      browser's actual selection to match on every render regardless of
+      prior user interaction. Also added true radio-group behavior per
+      direct request: once one bank has a selection, every OTHER bank's
+      dropdown for that Program is now disabled too (not just reset) until
+      the selection is cleared back to the placeholder.
+  48. **BUILT (2026-08-15)**: `PcgFile::swapPrograms()` -- a Program swap,
+      mirroring `swapCombis()`'s own shape but repointing TWO kinds of
+      reference instead of one (Combis are only ever referenced by Set
+      List slots; Programs are referenced by Set List slots AND Combi
+      Timbres). Built specifically because `copyProgramFrom()`'s own
+      `DuplicateExists` guard makes a plain drag-and-drop copy meaningless
+      between two slots that are BOTH genuinely empty ("Init Program") --
+      every Init Program is byte-identical to every other one in the same
+      bank type, so copying one onto another always trips that guard, even
+      though nothing is actually wrong -- reported directly against a real
+      same-dataset drag (I-A 108 -> I-A 100). A swap never creates a new
+      copy of anything, so `DuplicateExists` doesn't apply to it at all.
+      - Same-dataset only, matching `swapCombis()`'s own existing scope
+        decision (a cross-dataset swap raises the same "resolve
+        dependencies first" question cross-dataset Combi copy already
+        needed a whole panel for -- out of scope here). Rejects a bank-type
+        (HD-1/EXi) or record-size mismatch, same two guards
+        `copyProgramFrom()` already has. A no-op (nothing written) for the
+        same slot twice.
+      - Set List repoint: reuses `swapCombis()`'s own single-pass, both-
+        directions-at-once shape (checking each song against BOTH original
+        positions in one loop) -- NOT two sequential calls, which would
+        have the second one immediately re-catch and undo what the first
+        just wrote.
+      - Combi Timbre repoint (the genuinely new part, Combis never needed
+        this): same single-pass-both-directions idea, per Timbre instead
+        of per Set List slot, gated per-direction on the DESTINATION
+        bank's own confirmed raw Timbre code
+        (`confirmedTimbreCodeForProgramBank()`) -- mirrors
+        `resolveDuplicates()`'s own `combiRefsSkipped` reasoning
+        (structurally can't happen today, all 20 Program banks are
+        confirmed, kept for the same defensive reason).
+      - `EditorBridge::swapProgram()`/`main.cpp` binding/`mock_bridge.js`
+        fake (same-dataset-only, engine-type guard, Set-List + Combi-
+        Timbre repoint, all mirroring the real backend) all added the same
+        shape as `copyProgram()`/`swapCombis()` already established.
+      - Frontend: Shift+drag on a Program row now swaps instead of copies
+        (`pane-program-editor.js`) -- `effectAllowed` changed from `"copy"`
+        to `"copyMove"` at dragstart (required for `dropEffect = "move"` to
+        actually take effect during a Shift-held dragover; `effectAllowed`
+        set at dragstart caps which `dropEffect` values the browser honors
+        later), `ev.shiftKey` read fresh at both dragover (cursor hint) and
+        drop (which bridge call to make) since the key can be pressed/
+        released mid-drag. New `app.js` `onSwapProgram()` mirrors
+        `onDropProgram()`'s own shape -- red-toast on failure, refreshes
+        every pane showing the affected dataset's Library tables, plus the
+        Setlist tab too if `setlistRefsRepointed > 0` (a swap can repoint
+        Set List slots, unlike a copy, which never does). Cross-dataset
+        Shift-drop is rejected client-side first, with a clear message,
+        before even reaching the bridge.
+      - Verified: `tests/pcg_file_test.cpp` gained `testProgramSwap()` --
+        happy path swaps two Programs each referenced by a DIFFERENT kind
+        of pointer (a Set List slot vs. a Combi Timbre) so both repoint
+        directions are exercised in one pass, confirming each reference
+        followed its CONTENT (not stayed at its original position) to the
+        new location; plus a same-slot no-op, a bank-type-mismatch
+        rejection, and an out-of-range rejection. Full
+        `pcg_file_test`/`kronos_editor` rebuild clean, `node --check` on
+        all touched JS files.
+  49. **FIXED (2026-08-15)**: Unload's "unsaved changes" confirmation never
+      appeared for a dirty dataset -- the click just silently did nothing.
+      Reported directly ("no dialog appears, z-ordering issue?"). Root
+      cause wasn't z-ordering at all: on macOS, WKWebView only shows a
+      native JS `confirm()`/`alert()` dialog if its UIDelegate implements
+      `runJavaScriptConfirmPanelWithMessage:initiatedByFrame:
+      completionHandler:` -- CHOC's WebView
+      (`third_party/choc/choc/gui/choc_WebView.h`) registers a UIDelegate
+      for the open-file panel only
+      (`runOpenPanelWithParameters:initiatedByFrame:completionHandler:`)
+      and never implements that method, so WKWebView just drops the call
+      entirely: `confirm()` resolves immediately to `undefined` (falsy),
+      and Unload's own `if (!confirmed) return;` no-opped every time with
+      nothing visibly wrong. This was the app's only `window.confirm()`
+      call site (grepped to confirm) -- fixed by never relying on a native
+      dialog anywhere in this app instead of patching around this one
+      call site. New `frontend/confirm-dialog.js`: a generic
+      `window.showConfirmDialog(message, {confirmLabel, cancelLabel,
+      isDanger})` -> `Promise<boolean>`, rendered as an in-page Bulma
+      `.modal` (CSS already shipped by `vendor/bulma.min.css`, no new
+      library) via lit-html -- same pilot pattern
+      `combi-cross-dataset-panel.js` established, second file to use it.
+      Mounted at the app level (`#confirmDialogRoot` in `index.html`),
+      same reasoning as `toastContainer`/`combiCrossDatasetPanelRoot`.
+      Bulma's own modal-card background variables
+      (`--bulma-modal-card-*-background-color`) only turn dark under a
+      real OS-level `prefers-color-scheme: dark`, but this app forces a
+      dark look regardless of OS setting -- `style.css`'s
+      `.confirm-dialog-modal` overrides them explicitly with the same
+      `var(--bulma-scheme-main, #1b1d22)` fallback the cross-dataset
+      panel already uses, rather than trusting Bulma's own scheme
+      variables. `pane.js`'s Unload handler now awaits
+      `showConfirmDialog()` instead of calling `window.confirm()`.
+      Verified: full `kronos_editor` rebuild clean (confirms the new file
+      is picked up by the embedded-assets glob automatically), `node
+      --check` on all touched JS files.
+  50. **BUILT (2026-08-15)**: cross-dataset Combi copy now warns about
+      Timbre references it can't identify at all, instead of silently
+      carrying them through. Reported directly: "In case a timbre
+      references a bank which does not exist in the destination dataset
+      at all, ... apply creates a non working copy in the destination,
+      but why not" -- i.e. don't block, just tell the user. Root cause
+      wasn't really "a bank absent from the destination" -- it's a raw
+      Combi Timbre bank code this project has never identified at all
+      (`programBankForConfirmedTimbreCode()` returns -1 for it), distinct
+      from the ALREADY-handled GM/G(1..4)/g(5..7)/g(9) codes (permanently
+      indexless, hardware-builtin, universal across every unit --
+      `kronos::timbreBankName()` has a name for those, correctly no
+      warning needed). Both cases were previously lumped into the same
+      silent `continue` in `analyzeCombiCrossDatasetCopy()`'s Timbre loop.
+      - `PcgFile.h`: new `CombiCrossDatasetAnalysis::unmappableTimbres`
+        (a `UnmappableTimbre { timbreIndex, rawBankCode, rawNumber }`
+        list) -- populated only when `programBankForConfirmedTimbreCode()`
+        returns -1 AND `timbreBankName()` is also empty (i.e. genuinely
+        unidentified, not GM/G(n)/g(n)).
+      - `EditorBridge.cpp`: serializes the new list alongside
+        `dependencies`/`unresolved`.
+      - `mock_bridge.js`: mirrors the same distinction via each fake
+        Timbre's own `bankName` field (populated = GM-like, empty =
+        unmappable) -- reuses `makeFakeTimbres()`'s existing raw-code-20
+        entry (already had no `bankName`) as the mock's stand-in.
+      - `combi-cross-dataset-panel.js`: new "Unrecognized references"
+        section, amber (Bulma's warning color, same "reuse Bulma's real
+        color system" convention the toast-error styling already
+        follows) -- explicitly NOT part of `applyDisabled`'s check, since
+        this warns without blocking (apply still copies the raw Timbre
+        bytes through unchanged, exactly as it already does for GM).
+      - Verified: `tests/pcg_file_test.cpp`'s
+        `testCombiCrossDatasetCopy()` fixture gained a 4th source Timbre
+        (raw code 16, a real, genuinely-unconfirmed gap between the
+        confirmed `g(n)` block and `USER-A`) -- asserts it's absent from
+        both `dependencies` and `unresolved`, present in
+        `unmappableTimbres` with its raw code/number preserved, and that
+        `applyCombiCrossDatasetCopy()` still copies its raw bytes through
+        unchanged (same as the existing GM Timbre assertion). Full
+        `pcg_file_test`/`kronos_editor` rebuild clean, `node --check` on
+        all touched JS files.
 
 === END STATE BLOCK ===

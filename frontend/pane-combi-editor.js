@@ -29,6 +29,16 @@
 // move to a different bank).
 let draggedCombi = null;
 
+// Mirrors kronos::TimbreStatus's Off value (PcgFile.h: `enum class
+// TimbreStatus { Off, Internal, External, Ex2, Unknown }`, Off = 0) -- the
+// bridge sends this as a raw int now (EditorBridge stopped formatting it to
+// a string 2026-08-15, see STATE.md), and "Off" is the only status this
+// file ever actually branches on (Internal/External/Ex2 are never shown as
+// text anywhere in this app today), so a single named constant is enough --
+// no need for a full name-lookup table here the way FontSize/ProgramBankType
+// (pane-setlist-editor.js/pane.js) need one for real display strings.
+const TIMBRE_STATUS_OFF = 0;
+
 // Combis table: filter/search + per-bank filter buttons + a Combis-only Set
 // List filter dropdown (elements.bankFilterRow/selectControlRow -- the
 // shared coordinator in pane.js owns their surrounding DOM/show-hide, this
@@ -300,11 +310,11 @@ function createCombisPanel(
     let name = "";
     if (programBank !== null) {
       const bankType = getProgramBankType(programBank);
-      if (bankType) ref += ` (${bankType})`;
+      if (bankType != null) ref += ` (${programBankTypeName(bankType)})`;
       const program = findProgram(programBank, t.number);
       if (program && program.name) name = program.name;
     }
-    if (t.status === "Off") ref += " (off)";
+    if (t.status === TIMBRE_STATUS_OFF) ref += " (off)";
     // `programBank` (not just `ref`) is returned too -- buildTimbreRow()
     // below needs it to know both WHETHER a jump target exists (only for a
     // confirmed bank -- an unidentified "code N" reference has no real
@@ -347,7 +357,7 @@ function createCombisPanel(
       combi.timbres.forEach((t, i) => {
         if (t.isDefault) return;
         const li = document.createElement("li");
-        li.className = t.status === "Off" ? "timbre-inactive-ref" : "";
+        li.className = t.status === TIMBRE_STATUS_OFF ? "timbre-inactive-ref" : "";
         const label = document.createElement("span");
         label.className = "timbre-label";
         label.textContent = `Timbre ${i + 1}:`;
@@ -486,7 +496,7 @@ function createCombisPanel(
         // COPY gesture -- see this row's own dragstart/drop comment above
         // for why that's the one exception to "same dataset only".
         const sameDataset = draggedCombi != null && draggedCombi.datasetId === getDatasetId();
-        const crossDatasetCopyTarget = draggedCombi != null && !sameDataset && /init combi/i.test(c.name || "");
+        const crossDatasetCopyTarget = draggedCombi != null && !sameDataset && looksLikeEmptyCombiName(c.name);
         if (!sameDataset && !crossDatasetCopyTarget) {
           tr.classList.remove("drop-target");
           return;
@@ -508,7 +518,7 @@ function createCombisPanel(
         const zone = dropZoneForEvent(tr, ev);
         const sourceLabel = formatBankNumber({ isProgram: false, bank: source.bank, number: source.number });
         const targetLabel = formatBankNumber({ isProgram: false, bank: c.bank, number: c.number });
-        const targetLooksEmpty = /init combi/i.test(c.name || "");
+        const targetLooksEmpty = looksLikeEmptyCombiName(c.name);
 
         if (source.datasetId !== getDatasetId()) {
           // Only the empty-slot COPY gesture goes cross-dataset -- see this
@@ -549,7 +559,7 @@ function createCombisPanel(
         }
 
         if (!result.ok) {
-          showToast(result.error);
+          showToast(result.error, { isError: true });
           return;
         }
         showToast(`${description} -- repointed ${result.setlistRefsRepointed} Set List slot(s).`);
@@ -629,5 +639,7 @@ function createCombisPanel(
     if (row) scrollRowBelowHeader(row);
   }
 
-  return { onDatasetChanged, refresh, render, jumpToEntry };
+  // getCombiCount exposed so pane.js's own updateCategoryTabAvailability()
+  // can disable the Combis tab for a dataset with none at all.
+  return { onDatasetChanged, refresh, render, jumpToEntry, getCombiCount: () => combis.length };
 }

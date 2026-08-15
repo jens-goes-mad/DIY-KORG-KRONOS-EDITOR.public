@@ -437,7 +437,7 @@ bool PcgFile::load(const std::string& path, std::string& error) {
     return loadFromMemory(std::move(data), error);
 }
 
-bool PcgFile::save(const std::string& path, std::string& error) const {
+bool PcgFile::save(const std::string& path, std::string& error) {
     if (data_.empty()) {
         error = "No file loaded";
         return false;
@@ -455,12 +455,14 @@ bool PcgFile::save(const std::string& path, std::string& error) const {
         return false;
     }
 
+    dirty_ = false;  // now on disk -- see isDirty()
     return true;
 }
 
 bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
     setlists_.clear();
     sdbSongsStart_.clear();
+    dirty_ = false;  // a freshly loaded file is never dirty -- see isDirty()
 
     if (data.size() < 16 || std::memcmp(data.data(), "KORG", 4) != 0) {
         error = "Not a KORG PCG/SNG file (missing 'KORG' magic)";
@@ -1280,12 +1282,21 @@ PcgFile::CombiCrossDatasetAnalysis PcgFile::analyzeCombiCrossDatasetCopy(const P
     for (int i = 0; i < static_cast<int>(srcCombi->timbres.size()); ++i) {
         const auto& t = srcCombi->timbres[static_cast<size_t>(i)];
         if (t.isDefault) continue;
-        // GM (permanently indexless, built into every unit) or a genuinely
-        // unidentified raw code -- neither is file-specific data to resolve;
-        // the apply step copies these Timbres' raw bytes through unchanged
-        // instead of listing them here.
+        // GM/G(n)/g(n) (permanently indexless, built into every unit) or a
+        // genuinely unidentified raw code -- neither is file-specific data
+        // to resolve; the apply step copies these Timbres' raw bytes
+        // through unchanged instead of listing them here. Only the latter
+        // (timbreBankName() has no name for it either) is worth telling the
+        // caller about -- GM/G(n)/g(n) are confirmed, universal, hardware-
+        // builtin content, guaranteed meaningful in ANY destination file, so
+        // there's nothing uncertain to warn about there.
         const int programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
-        if (programBank < 0) continue;
+        if (programBank < 0) {
+            if (timbreBankName(t.rawBankCode).empty()) {
+                result.unmappableTimbres.push_back({i, t.rawBankCode, t.number});
+            }
+            continue;
+        }
 
         const ProgramInfo* srcProgram = nullptr;
         for (const auto& p : src.programs_) {
@@ -1611,10 +1622,129 @@ std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile&
         if (p.contentHash == srcHash) return ProgramCopyError::DuplicateExists;
     }
 
-    std::copy(srcRecord, srcRecord + dstLoc.bytesPerRecord, data_.begin() + static_cast<long>(dstOff));
+    writeIntoData(dstOff, srcRecord, dstLoc.bytesPerRecord);
     refreshProgramInfo(dstBank, dstNumber);
 
     return std::nullopt;
+}
+
+PcgFile::ProgramSwapResult PcgFile::swapPrograms(int bankA, int numberA, int bankB, int numberB) {
+    ProgramSwapResult result;
+
+    if (bankA < 0 || bankA >= static_cast<int>(programBankLocations_.size()) || numberA < 0 ||
+        static_cast<uint32_t>(numberA) >= programBankLocations_[static_cast<size_t>(bankA)].numRecords) {
+        result.error = "No such Program at the first position";
+        return result;
+    }
+    if (bankB < 0 || bankB >= static_cast<int>(programBankLocations_.size()) || numberB < 0 ||
+        static_cast<uint32_t>(numberB) >= programBankLocations_[static_cast<size_t>(bankB)].numRecords) {
+        result.error = "No such Program at the second position";
+        return result;
+    }
+    if (bankA == bankB && numberA == numberB) {
+        result.ok = true;  // no-op, same as swapCombis()'s own convention
+        return result;
+    }
+
+    const auto& locA = programBankLocations_[static_cast<size_t>(bankA)];
+    const auto& locB = programBankLocations_[static_cast<size_t>(bankB)];
+    if (locA.bankType != locB.bankType) {
+        result.error = "Can't swap: the two banks are different engine types (HD-1/EXi) -- "
+                        "a Program can only be loaded into a bank of the matching type.";
+        return result;
+    }
+    if (locA.bytesPerRecord != locB.bytesPerRecord) {
+        result.error = "Can't swap: the two banks don't share the same record size.";
+        return result;
+    }
+
+    auto bytesA = programRecordBytes(bankA, numberA);
+    auto bytesB = programRecordBytes(bankB, numberB);
+    if (!bytesA || !bytesB) {
+        result.error = "Couldn't read one of the two Program records";
+        return result;
+    }
+
+    putProgramRecordBytes(bankA, numberA, *bytesB);
+    putProgramRecordBytes(bankB, numberB, *bytesA);
+
+    // Set List repoint -- a single pass checking each song against BOTH
+    // original positions at once, same reasoning as swapCombis()'s own
+    // identical loop: two SEQUENTIAL repointSetlistReferences() calls (A->B
+    // then B->A) would have the second call immediately re-catch the slots
+    // the first one just wrote (they now legitimately reference B) and
+    // swap them straight back to A.
+    for (auto& setlist : setlists_) {
+        for (auto& song : setlist.songs) {
+            if (!song.params.found || !song.params.isProgram) continue;
+            int toBank, toNumber;
+            if (song.params.bank == bankA && song.params.number == numberA) {
+                toBank = bankB;
+                toNumber = numberB;
+            } else if (song.params.bank == bankB && song.params.number == numberB) {
+                toBank = bankA;
+                toNumber = numberA;
+            } else {
+                continue;
+            }
+
+            auto bytes = songRecordBytes(setlist.index, song.index);
+            if (!bytes) continue;  // shouldn't happen -- this song was just read from setlists_ itself
+            (*bytes)[kSbkBankOffset] =
+                static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toBank & kSbkBankMask));
+            (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(toNumber);
+            putSongRecordBytes(setlist.index, song.index, *bytes);
+            result.setlistRefsRepointed++;
+        }
+    }
+
+    // Combi Timbre repoint -- same single-pass-both-directions shape, per
+    // Timbre instead of per Set List slot. Gated per-direction on the
+    // DESTINATION bank having a confirmed raw Timbre code to repoint INTO
+    // (mirrors resolveDuplicates()'s own combiRefsSkipped reasoning) --
+    // structurally can't happen today since all 20 Program banks are
+    // confirmed, kept for the same defensive reason.
+    const int rawCodeA = confirmedTimbreCodeForProgramBank(bankA);
+    const int rawCodeB = confirmedTimbreCodeForProgramBank(bankB);
+    for (const auto& combi : combis_) {
+        struct Repoint {
+            int timbreIndex;
+            int newNumber;
+            int newRawCode;
+        };
+        std::vector<Repoint> repoints;
+        int skipped = 0;
+        for (int i = 0; i < static_cast<int>(combi.timbres.size()); ++i) {
+            const auto& t = combi.timbres[static_cast<size_t>(i)];
+            if (t.isDefault) continue;
+            if (rawCodeA >= 0 && t.rawBankCode == rawCodeA && t.number == numberA) {
+                if (rawCodeB < 0) {
+                    ++skipped;
+                    continue;
+                }
+                repoints.push_back({i, numberB, rawCodeB});
+            } else if (rawCodeB >= 0 && t.rawBankCode == rawCodeB && t.number == numberB) {
+                if (rawCodeA < 0) {
+                    ++skipped;
+                    continue;
+                }
+                repoints.push_back({i, numberA, rawCodeA});
+            }
+        }
+        result.combiRefsSkipped += skipped;
+        if (repoints.empty()) continue;
+
+        auto bytes = combiRecordBytes(combi.bank, combi.number);
+        if (!bytes) continue;  // shouldn't happen -- this combi was just read from combis_ itself
+        for (const auto& r : repoints) {
+            writeTimbreProgramRef(bytes->data(), bytes->size(), r.timbreIndex, r.newNumber, r.newRawCode);
+            result.combiRefsRepointed++;
+        }
+        putCombiRecordBytes(combi.bank, combi.number, *bytes);
+    }
+
+    result.ok = true;
+    return result;
 }
 
 void PcgFile::refreshProgramInfo(int bank, int number) {
@@ -1684,7 +1814,7 @@ bool PcgFile::putCombiRecordBytes(int bank, int number, const std::vector<uint8_
     size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
     if (off + loc.bytesPerRecord > data_.size()) return false;
 
-    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(off));
+    writeIntoData(off, bytes.data(), bytes.size());
     refreshCombiInfo(bank, number);
     return true;
 }
@@ -1710,7 +1840,7 @@ bool PcgFile::putProgramRecordBytes(int bank, int number, const std::vector<uint
     size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
     if (off + loc.bytesPerRecord > data_.size()) return false;
 
-    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(off));
+    writeIntoData(off, bytes.data(), bytes.size());
     refreshProgramInfo(bank, number);
     return true;
 }
@@ -1742,7 +1872,7 @@ bool PcgFile::putSongRecordBytes(int setlistIndex, int songIndex, const std::vec
     size_t songOff = start + static_cast<size_t>(songIndex) * kSbkRecordSize;
     if (songOff + kSbkRecordSize > data_.size()) return false;
 
-    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(songOff));
+    writeIntoData(songOff, bytes.data(), bytes.size());
 
     Song& song = setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)];
     song.params = readSlotParams(data_.data(), songOff, data_.size());
@@ -1793,7 +1923,7 @@ bool PcgFile::putNameRecordBytes(int setlistIndex, int songIndex, const std::vec
     size_t nameOff = start + static_cast<size_t>(songIndex) * kRecordSize;
     if (nameOff + kRecordSize > data_.size()) return false;
 
-    std::copy(bytes.begin(), bytes.end(), data_.begin() + static_cast<long>(nameOff));
+    writeIntoData(nameOff, bytes.data(), bytes.size());
 
     setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)].name =
         readRecordName(data_.data(), nameOff, data_.size());

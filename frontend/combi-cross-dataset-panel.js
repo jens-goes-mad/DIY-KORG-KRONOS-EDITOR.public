@@ -33,18 +33,9 @@
 
 const combiCrossDatasetPanelRoot = document.getElementById("combiCrossDatasetPanelRoot");
 
-// Mirrors PcgFile.cpp's looksLikeEmptyProgramName() (see its own doc
-// comment) -- a genuinely untouched Program slot on real Kronos hardware is
-// named Korg's own factory "Init Program"/"Init EXi Program", not a blank
-// string, so the dropdown below must recognize the same names the backend
-// does or it'll show "no free slot" for a destination that actually has
-// plenty of room (reported directly, 2026-08-15, against a real personal
-// Kronos backup).
-function looksLikeEmptyProgramName(name) {
-  if (!name) return true;
-  const lower = name.toLowerCase();
-  return lower === "init exi program" || lower.includes("init program");
-}
+// looksLikeEmptyProgramName() is a shared global now (pane.js, 2026-08-15)
+// -- used below for the per-bank slot dropdown, same as everywhere else in
+// the app that needs to recognize a genuinely-empty Program slot.
 
 // Lazily loads lit-html the same way pane-setlist-editor.js's
 // loadSlotCodecs() loads the SBK1 codecs -- a dynamic import() works from
@@ -148,6 +139,23 @@ function renderSession(mounted, open, session) {
   // below" (the actual bank-picker lives in the unresolved section, grouped
   // by unique Program so several Timbres sharing one Program share one
   // decision).
+  // Timbres whose raw bank code isn't a confirmed Program bank AND isn't one
+  // of the confirmed permanently-indexless hardware codes either (GM/G(n)/
+  // g(n) -- see PcgFile.h's UnmappableTimbre doc comment) -- this project
+  // genuinely doesn't know what these reference yet. Apply still copies
+  // their raw bytes through unchanged (same as GM), so this is a warning,
+  // not a blocker: `applyDisabled` below deliberately does NOT look at this
+  // list. Reported directly, 2026-08-15: these were being silently carried
+  // over with no indication anything was uncertain.
+  const unmappableRows = (analysis.unmappableTimbres || []).map(
+    (u) => lit.html`
+      <div class="cross-dataset-unmappable-row">
+        Timbre ${u.timbreIndex + 1}: reference not recognized (raw code ${u.rawBankCode}) -- will be copied as-is;
+        may not point at a valid Program in the destination.
+      </div>
+    `
+  );
+
   const depRows = analysis.dependencies.map(
     (dep) => lit.html`
       <div class="cross-dataset-dep-row ${dep.found ? "is-found" : ""}">
@@ -170,14 +178,35 @@ function renderSession(mounted, open, session) {
   // told us WHICH banks have room, not the actual free slot numbers).
   // Picking a slot in any one bank's dropdown is this Program's selection
   // (stored as `{bank, number}` in the session's own selections Map, keyed
-  // by source bank/number) -- re-rendering resets every OTHER bank's own
-  // dropdown back to its placeholder, since only one selection can be live
-  // per Program at a time. If a genuinely empty bank turns out to have zero
-  // actual free slots in `dstPrograms` (stale between analyze() and now --
-  // e.g. a write from the opposite pane), its dropdown is simply empty
-  // (disabled with a placeholder) rather than pretending a slot exists;
-  // applyCombiCrossDatasetCopy() re-validates the chosen slot fresh either
-  // way, so this is a UX nicety, not the only safety net.
+  // by source bank/number) -- true single-select ACROSS the whole group of
+  // per-bank dropdowns, like a radio-button group spanning several
+  // controls, not independent selects. Two real bugs fixed here 2026-08-15,
+  // reported directly:
+  //  1. Resetting the OTHER banks' dropdowns back to their placeholder used
+  //     `?selected` on each <option> -- a lit-html boolean-ATTRIBUTE
+  //     binding, which only affects an <option>'s initial parse state, not
+  //     a live <select>'s actual displayed value once the browser has
+  //     already rendered it (attribute vs. the real `.value` PROPERTY are
+  //     different things for a <select> that already exists in the DOM).
+  //     So picking a slot in bank B never visually cleared bank A's own
+  //     already-rendered dropdown, even though `selections` itself was
+  //     already correctly single-valued underneath -- looked like "two
+  //     banks both have a value chosen" when only one really did. Fixed by
+  //     binding the <select>'s own `.value` PROPERTY directly (a lit-html
+  //     property binding, the leading `.`), which DOES force the browser's
+  //     actual displayed selection to match on every render, regardless of
+  //     prior user interaction.
+  //  2. Per direct request: once one bank has a selection, every OTHER
+  //     bank's dropdown for this SAME Program is now also disabled (not
+  //     just visually reset) until the selection is cleared -- true radio-
+  //     group behavior, not just several independent selects that happen
+  //     to reset each other.
+  // If a genuinely empty bank turns out to have zero actual free slots in
+  // `dstPrograms` (stale between analyze() and now -- e.g. a write from the
+  // opposite pane), its dropdown is simply empty (disabled with a
+  // placeholder) rather than pretending a slot exists; applyCombiCrossDatasetCopy()
+  // re-validates the chosen slot fresh either way, so this is a UX nicety,
+  // not the only safety net.
   const unresolvedRows = analysis.unresolved.map((program) => {
     const key = `${program.srcBank}-${program.srcNumber}`;
     const selected = selections.get(key);
@@ -198,18 +227,21 @@ function renderSession(mounted, open, session) {
                     .filter((p) => p.bank === bank && looksLikeEmptyProgramName(p.name))
                     .sort((a, b) => a.number - b.number);
                   const isSelectedBank = selected != null && selected.bank === bank;
+                  // Disabled if this bank genuinely has nothing to offer, OR
+                  // a DIFFERENT bank already holds this Program's one
+                  // allowed selection (the radio-group behavior).
+                  const isDisabled = freeSlots.length === 0 || (selected != null && !isSelectedBank);
                   const options = [lit.html`<option value="">${freeSlots.length === 0 ? "-- no free slot --" : "-- choose a slot --"}</option>`];
                   for (const p of freeSlots) {
-                    options.push(
-                      lit.html`<option value=${p.number} ?selected=${isSelectedBank && selected.number === p.number}>${kronosNumber(p.number)} (${p.name || "empty"})</option>`
-                    );
+                    options.push(lit.html`<option value=${p.number}>${kronosNumber(p.number)} (${p.name || "empty"})</option>`);
                   }
                   return lit.html`
                     <div class="cross-dataset-slot-picker-row">
                       <span class="cross-dataset-slot-picker-bank">${PROGRAM_BANK_NAMES[bank] || String(bank)}</span>
                       <select
                         class="cross-dataset-slot-picker-select"
-                        ?disabled=${freeSlots.length === 0}
+                        ?disabled=${isDisabled}
+                        .value=${isSelectedBank ? String(selected.number) : ""}
                         @change=${(ev) => {
                           if (ev.target.value === "") selections.delete(key);
                           else selections.set(key, { bank, number: parseInt(ev.target.value, 10) });
@@ -256,6 +288,12 @@ function renderSession(mounted, open, session) {
             analysis.dependencies.length > 0
               ? lit.html`<h3 class="cross-dataset-section-heading">Timbres</h3>
                 ${depRows}`
+              : lit.nothing
+          }
+          ${
+            unmappableRows.length > 0
+              ? lit.html`<h3 class="cross-dataset-section-heading">Unrecognized references</h3>
+                ${unmappableRows}`
               : lit.nothing
           }
           <h3 class="cross-dataset-section-heading">Choose a destination bank</h3>
@@ -317,14 +355,14 @@ async function startCombiCrossDatasetCopy({
 }) {
   const analysis = await window.analyzeCombiCrossDatasetCopy(srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber);
   if (!analysis.ok) {
-    showToast(analysis.error);
+    showToast(analysis.error, { isError: true });
     return;
   }
 
   if (analysis.unresolved.length === 0) {
     const result = await window.applyCombiCrossDatasetCopy(srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber, []);
     if (!result.ok) {
-      showToast(result.error);
+      showToast(result.error, { isError: true });
       return;
     }
     showToast(`Copied ${sourceLabel} -> ${targetLabel}.`);
@@ -361,7 +399,7 @@ async function startCombiCrossDatasetCopy({
         placements
       );
       if (!result.ok) {
-        showToast(result.error);
+        showToast(result.error, { isError: true });
         return false;
       }
       showToast(`Copied ${sourceLabel} -> ${targetLabel} -- placed ${placements.length} Program(s).`);

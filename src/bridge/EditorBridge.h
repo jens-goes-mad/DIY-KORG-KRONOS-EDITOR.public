@@ -58,6 +58,18 @@ public:
     // listDatasets() refresh it was already subscribed to).
     choc::value::Value closeDataset(const choc::value::ValueView& args);   // [datasetId]
 
+    // [datasetId] -> {ok, dirty} or {ok:false, error}. A direct point query
+    // of PcgFile::isDirty() -- deliberately NOT routed through
+    // listDatasets()'s cached/broadcast list (that exists to populate
+    // dataset selectors, and every pane's own copy of it only refreshes on
+    // a full open/close broadcast, not after every write elsewhere in the
+    // app -- reported directly, 2026-08-15: the Unload button's own
+    // confirmation went stale immediately after a Combi swap/move/copy for
+    // exactly this reason). The dirty flag lives on the raw data itself
+    // (PcgFile) and is always current the instant it's asked for -- this
+    // is that ask, with no cache in between.
+    choc::value::Value isDatasetDirty(const choc::value::ValueView& args);  // [datasetId]
+
     choc::value::Value listSetlists(const choc::value::ValueView& args);  // [datasetId]
     choc::value::Value getEntries(const choc::value::ValueView& args);    // [datasetId, setlistIndex]
 
@@ -72,15 +84,6 @@ public:
     // is gone -- fully superseded by the new byte-level copy-over/insert
     // gestures.
     choc::value::Value copyEntry(const choc::value::ValueView& args);
-
-    // [datasetId, setlistIndex, songIndex, newComment] -- in-memory only,
-    // like move/copy; nothing is written back to disk (see README.md/STATE.md).
-    // Superseded by getSongRecordBytes()/putSongRecordBytes() for the real
-    // Setlist row editors (frontend/pane.js), which read-modify-write the
-    // Comment field through the same raw-byte path Color/Volume use --
-    // this older struct-only setter is unused by them, kept only in case
-    // something else still calls it directly.
-    choc::value::Value setComment(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, songIndex] -> {ok, bytes:[0-255 x 542]} or
     // {ok:false, error}. The raw SBK1 record for one Set List slot -- see
@@ -204,6 +207,20 @@ public:
     // method that writes directly into a dataset's retained raw bytes rather
     // than only mutating in-memory bookkeeping -- see STATE.md.
     choc::value::Value copyProgram(const choc::value::ValueView& args);
+
+    // [datasetId, bankA, numberA, bankB, numberB] -> {ok, setlistRefsRepointed,
+    // combiRefsRepointed, combiRefsSkipped} or {ok:false, error}. Swaps two
+    // Programs' entire content (same dataset only -- see
+    // PcgFile::swapPrograms()'s own doc comment for why, unlike copyProgram()
+    // above, this doesn't go cross-dataset) and repoints every Set List slot
+    // AND Combi Timbre reference pointing at either one to follow its
+    // content. Built so a plain drag-and-drop between two slots that are
+    // both genuinely empty ("Init Program") doesn't have to fight
+    // copyProgramFrom()'s own DuplicateExists guard (every Init Program is
+    // byte-identical to every other one, so copying one onto another always
+    // trips it) -- a swap never creates a new copy of anything, so that
+    // check doesn't apply here at all.
+    choc::value::Value swapProgram(const choc::value::ValueView& args);
 
     // [datasetId, bank, number] -> {ok, clearedPrograms, setlistRefsRepointed,
     // combiRefsRepointed, combiRefsSkipped} or {ok:false, error}. Makes the

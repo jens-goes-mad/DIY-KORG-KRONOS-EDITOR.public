@@ -157,7 +157,7 @@ function createInternalsPanel(container, { getDatasetId, log }) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "button is-small bank-filter-button" + (isPresent ? "" : " is-warning");
-        btn.textContent = info && info.bankType ? `${name} (${info.bankType})` : name;
+        btn.textContent = info && info.bankType != null ? `${name} (${programBankTypeName(info.bankType)})` : name;
         btn.disabled = isPresent;
         btn.title = isPresent
           ? `${name}: present -- already has data`

@@ -28,7 +28,8 @@ together for real editing sessions. For how the file format itself works, see
   size inline; copy a whole Set List onto the opposite pane's.
 - **Programs**: browse/filter every Program bank; drag one Program onto an empty slot to
   copy it -- same dataset *or* a different one, since a Program's own reference isn't tied
-  to any other file.
+  to any other file; Shift+drag onto any other (already-used) Program to **swap** the two in
+  place, repointing every Set List slot and Combi Timbre that referenced either one.
 - **Combis**: browse/filter every Combi bank, with each Timbre's own Program reference shown
   as a jump button; drag-and-drop to swap, move within/between banks, or copy onto an empty
   slot -- copying also works *across datasets*, automatically finding (or letting you place)
@@ -230,6 +231,16 @@ Expanding a Program row shows two lists: every **Set List slot** that references
 (see "Jumping to a Program, Combi, or Set List slot" above), so you can go straight from a
 Program to everywhere it's actually used.
 
+#### Swapping Programs by Shift+drag
+
+Dropping a Program directly onto another (already-used) Program normally refuses, since the
+two would otherwise collide -- **hold Shift while dropping** to swap the two instead: both
+keep their content, just at each other's position, and every Set List slot and every Combi
+Timbre that referenced either one follows it to its new spot. Same dataset only (a swap has
+no meaning across two different files). This is the same gesture Combis already support
+below, and it's the only way to reorder two Programs that are otherwise byte-identical (e.g.
+two untouched "Init Program" slots), since a plain copy would be rejected as a duplicate.
+
 ### Combi
 
 Expanding a Combi row shows all 16 Timbre slots, each with its own referenced Program (when
@@ -321,8 +332,14 @@ disk until you explicitly save.**
 
 Click **Save As...** next to a pane's dataset selector to write that pane's dataset to a
 file via a native Save dialog, pre-filled with its original filename. There's no
-autosave and no "unsaved changes" indicator yet, so if you close the app (or load a
-different file into that pane) without saving, whatever you did in that session is gone.
+autosave yet, so if you close the app without saving, whatever you did in that session
+is gone.
+
+**Unload** (next to Save As...) frees a dataset from memory entirely -- if it has any
+unsaved changes, a confirmation dialog warns you first, so an accidental click can't
+silently lose them. This is the one place unsaved changes are tracked and warned about
+right now: closing the whole app, or loading a different file into a pane that's already
+showing a dataset with unsaved changes, still discards them without asking.
 
 This is also the way to test a real reorder on actual hardware: click A→Z (or Z→A, or
 build a custom order by hand with drag-and-drop), Save As to a new file, then load that

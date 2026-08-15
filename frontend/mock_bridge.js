@@ -49,16 +49,19 @@
   const ok = (extra) => Promise.resolve(Object.assign({ ok: true }, extra));
   const fail = (error) => Promise.resolve({ ok: false, error });
 
-  // Mirrors PcgFile.cpp's looksLikeEmptyProgramName() -- a real untouched
-  // Program slot is named Korg's own factory "Init Program"/"Init EXi
-  // Program", not a blank string (docs/content/format/index.md §5.5). This
+  // looksLikeEmptyProgramName()/looksLikeEmptyCombiName() are shared
+  // globals now (pane.js, 2026-08-15, loaded before this file) -- this
   // mock's own fake datasets (makeFakePrograms() etc.) only ever use blank
-  // names for "free", so this mostly just keeps the fake in sync with the
-  // real backend's rule rather than fixing an actual observable mock bug.
-  function looksLikeEmptyProgramName(name) {
-    if (!name) return true;
-    const lower = name.toLowerCase();
-    return lower === "init exi program" || lower.includes("init program");
+  // names for "free" anyway, so reusing the real check mostly just keeps
+  // the fake in sync with the real backend's rule rather than fixing an
+  // actual observable mock bug.
+
+  // This mock's own fixed 2-bank world (bank 0 = HD-1, bank 1 = EXi,
+  // mirroring makeFakePrograms()'s own layout) -- one place for the "which
+  // type is this bank" rule instead of the same ternary written out
+  // independently at each call site (previously 3 of them).
+  function mockBankType(bank) {
+    return bank === 0 ? 0 : 1;
   }
 
   function makeFakeSong(k, label) {
@@ -72,18 +75,11 @@
       color: (k % 16) + 1,  // cycle through all 16 real colors (pane.js's SETLIST_COLOR_NAMES/_HEX) for visual testing
       holdTime: 5,
       volume: 127,
-      fontSize: "S",  // baseline/default, matches SlotParams' own default (PcgFile.h)
+      fontSize: 0,  // kronos::FontSize::S -- baseline/default, matches SlotParams' own default (PcgFile.h)
       comment: "",
       instrumentName: "",
     };
   }
-
-  // Same encoding setlist-comment.js's encodeSetlistComment() uses (bits
-  // 6-7 of byte+12, bit 4 of byte+17) -- duplicated by hand here rather
-  // than importing that module, matching this file's existing pattern for
-  // Color (below) and Volume: a plain script, not built to load ES modules.
-  const FONT_SIZE_VALUE = { S: 0, XS: 1, M: 2, L: 3, XL: 4 };
-  const FONT_SIZE_BY_VALUE = ["S", "XS", "M", "L", "XL"];
 
   // Mock mode has no real SBK1 bytes to hand back -- getSongRecordBytes()/
   // putSongRecordBytes() below need SOME 542-byte buffer that the real
@@ -114,7 +110,9 @@
   function makeFakeSlotBytes(entry) {
     const bytes = new Uint8Array(SBK_RECORD_SIZE);
     const colorField = ((Math.max(1, Math.min(16, entry.color)) - 1) << 2) & 0x3c;
-    const fontValue = FONT_SIZE_VALUE[entry.fontSize] ?? FONT_SIZE_VALUE.S;
+    // entry.fontSize is already the raw kronos::FontSize value (0-4) --
+    // same bit-packing setlist-comment.js's encodeSetlistComment() uses.
+    const fontValue = entry.fontSize ?? 0;
     const fontLowBits = (fontValue & 2 ? 0x80 : 0) | (fontValue & 1 ? 0x40 : 0);
     bytes[12] = colorField | fontLowBits | (entry.isProgram ? 0x01 : 0x00);
     bytes[13] = entry.bank & 0x1f;
@@ -149,7 +147,7 @@
           bank,
           number,
           name,
-          bankType: bank === 0 ? "HD-1" : "EXi",
+          bankType: mockBankType(bank),
           setlistReferenceCount: 0,
           combiReferenceCountAvailable: true,
           combiReferenceCount: 0,
@@ -164,7 +162,7 @@
         bank,
         number: names.length,
         name: "",
-        bankType: bank === 0 ? "HD-1" : "EXi",
+        bankType: mockBankType(bank),
         setlistReferenceCount: 0,
         combiReferenceCountAvailable: true,
         combiReferenceCount: 0,
@@ -190,19 +188,22 @@
       // number:0/rawBankCode:1 deliberately matches makeFakePrograms()'s own
       // bank1/number0 ("Berlin Grand SW2 U.C.") -- exercises the new name/
       // engine-type lookup in mock mode too, not just the real bridge.
-      { number: 0, rawBankCode: 1, bankName: "", status: "Internal", isDefault: false },
-      { number: 15, rawBankCode: 20, bankName: "", status: "Internal", isDefault: false },
+      // status is the raw kronos::TimbreStatus value now (Off=0/Internal=1/
+      // External=2/Ex2=3), matching EditorBridge's own contract -- see
+      // pane-combi-editor.js's TIMBRE_STATUS_OFF.
+      { number: 0, rawBankCode: 1, bankName: "", status: 1, isDefault: false },
+      { number: 15, rawBankCode: 20, bankName: "", status: 1, isDefault: false },
       // A real reference that's currently switched off -- exercises the
       // "referenced but inactive" display case in mock mode too.
-      { number: 90, rawBankCode: 0, bankName: "", status: "Off", isDefault: false },
+      { number: 90, rawBankCode: 0, bankName: "", status: 0, isDefault: false },
       // GM (raw code 6, confirmed 2026-08-12) -- permanently indexless, so
       // bankName IS populated here (unlike the entries above) -- exercises
       // the "confirmed by name, no jump-to-Program button, no Program
       // name" display case in mock mode too.
-      { number: 91, rawBankCode: 6, bankName: "GM", status: "Internal", isDefault: false },
+      { number: 91, rawBankCode: 6, bankName: "GM", status: 1, isDefault: false },
     ];
     for (let i = timbres.length; i < 16; i++) {
-      timbres.push({ number: 0, rawBankCode: 0, bankName: "", status: "Off", isDefault: true });
+      timbres.push({ number: 0, rawBankCode: 0, bankName: "", status: 0, isDefault: true });
     }
     return timbres;
   }
@@ -262,7 +263,7 @@
       songs[0][0].comment = MOCK_WRAP_TEST_COMMENT;
     }
 
-    return { displayName: fileName, setlists, songs, programs: makeFakePrograms(), combis: makeFakeCombis() };
+    return { displayName: fileName, setlists, songs, programs: makeFakePrograms(), combis: makeFakeCombis(), dirty: false };
   }
 
   // A plain browser tab can't show a real native file picker (or read an
@@ -293,6 +294,7 @@
     if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
     const path = window.prompt("Mock mode can't write a real file -- type a fake save path:", dataset.displayName);
     if (!path) return Promise.resolve({ ok: true, cancelled: true });
+    dataset.dirty = false;  // mirrors PcgFile::save() clearing isDirty() on success
     return ok({ path });
   };
 
@@ -302,12 +304,22 @@
         datasetId: Number(datasetId),
         displayName: d.displayName,
         setlistCount: d.setlists.length,
+        dirty: d.dirty,
       }))
     );
 
   window.closeDataset = (datasetId) => {
     delete datasets[datasetId];
     return ok();
+  };
+
+  // Mirrors EditorBridge::isDatasetDirty() -- a direct point query, not
+  // routed through the cached/broadcast listDatasets() list (see
+  // pane.js's unloadDatasetButton click handler for why that matters).
+  window.isDatasetDirty = (datasetId) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+    return ok({ dirty: dataset.dirty });
   };
 
   window.listSetlists = (datasetId) => Promise.resolve(datasets[datasetId] ? datasets[datasetId].setlists : []);
@@ -334,6 +346,7 @@
     const [moved] = list.splice(fromIdx, 1);
     list.splice(toIdx, 0, moved);
     list.forEach((e, i) => { e.index = i; });
+    datasets[datasetId].dirty = true;
     return ok();
   };
 
@@ -363,6 +376,7 @@
     for (let i = 0; i < dstList.length; i++) {
       if (srcList[i]) dstList[i] = Object.assign({}, srcList[i], { index: dstList[i].index });
     }
+    datasets[datasetId].dirty = true;
     return ok();
   };
 
@@ -380,22 +394,15 @@
       return ascending ? a.label.localeCompare(b.label) : b.label.localeCompare(a.label);
     });
     list.forEach((e, i) => { e.index = i; });
-    return ok();
-  };
-
-  window.setComment = (datasetId, setlistIndex, songIndex, newComment) => {
-    const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
-    if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);
-    const entry = list.find((e) => e.index === songIndex);
-    if (!entry) return fail("Entry index out of range");
-    entry.comment = newComment;
+    datasets[datasetId].dirty = true;
     return ok();
   };
 
   // The Setlist Color/Volume/Comment row editors (frontend/pane.js) read/
-  // write through these two instead of setComment() above -- see
-  // makeFakeSlotBytes()'s own comment for how a mock 542-byte record is
-  // synthesized.
+  // write through these two -- see makeFakeSlotBytes()'s own comment for
+  // how a mock 542-byte record is synthesized. (The older in-memory-only
+  // setComment()/EditorBridge::setComment() -- unused by any real UI,
+  // fully superseded by these two -- was removed 2026-08-15.)
   window.getSongRecordBytes = (datasetId, setlistIndex, songIndex) => {
     const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
     if (!list) return fail(`Dataset ${datasetId} has no file loaded`);
@@ -417,11 +424,14 @@
     // mock mode.
     entry.color = ((bytes[12] & 0x3c) >> 2) + 1;
     entry.volume = bytes[16];
-    const fontValue = (bytes[17] & 0x10 ? 4 : 0) | (bytes[12] & 0x80 ? 2 : 0) | (bytes[12] & 0x40 ? 1 : 0);
-    entry.fontSize = FONT_SIZE_BY_VALUE[fontValue] || "S";
+    // entry.fontSize is the raw kronos::FontSize value now (0-4), matching
+    // EditorBridge's own contract (songToValue()) -- this decoded bit-
+    // pattern IS that value directly, no name lookup needed.
+    entry.fontSize = (bytes[17] & 0x10 ? 4 : 0) | (bytes[12] & 0x80 ? 2 : 0) | (bytes[12] & 0x40 ? 1 : 0);
     let end = 18;
     while (end < bytes.length && bytes[end] !== 0) end++;
     entry.comment = bytes.slice(18, end).map((b) => String.fromCharCode(b)).join("");
+    datasets[datasetId].dirty = true;
     return ok();
   };
 
@@ -448,6 +458,7 @@
     let end = 4;
     while (end < bytes.length && bytes[end] !== 0) end++;
     entry.label = bytes.slice(4, end).map((b) => String.fromCharCode(b)).join("");
+    datasets[datasetId].dirty = true;
     return ok();
   };
 
@@ -460,7 +471,7 @@
   // real bridge's getProgramBankTypes(), which is a per-bank listing, not
   // derived from any specific Program row.
   window.getProgramBankTypes = (datasetId) =>
-    Promise.resolve(datasets[datasetId] ? [{ bank: 0, bankType: "HD-1" }, { bank: 1, bankType: "EXi" }] : []);
+    Promise.resolve(datasets[datasetId] ? [{ bank: 0, bankType: mockBankType(0) }, { bank: 1, bankType: mockBankType(1) }] : []);
 
   // Mirrors makeFakePrograms()/makeFakeCombis()' own record counts (6 per
   // Program bank -- 5 named + 1 empty filler slot; 3 per Combi bank, no
@@ -476,12 +487,12 @@
     return ok({
       topLevelChunks: ["DIV1", "SLS1", "PRG1", "CMB1"],
       programBanks: [
-        { index: 0, bankType: "HD-1", numRecords: 6, bytesPerRecord: 4960 },
+        { index: 0, bankType: mockBankType(0), numRecords: 6, bytesPerRecord: 4960 },
         // Real data (two independent backup files, checked 2026-08-13):
         // EXi banks are ALSO 4960 bytes, not the 3706 this mock used to
         // show -- see PcgFile.h's programRecordBytes()/copyProgramFrom()
         // doc comments and STATE.md entry 31 for the correction.
-        { index: 1, bankType: "EXi", numRecords: 6, bytesPerRecord: 4960 },
+        { index: 1, bankType: mockBankType(1), numRecords: 6, bytesPerRecord: 4960 },
       ],
       combiBanks: [
         { index: 0, numRecords: 3, bytesPerRecord: 4048 },
@@ -512,7 +523,7 @@
             number: c.number,
             name: c.name,
             active: c.timbres.some(
-              (t) => !t.isDefault && t.rawBankCode === bank && t.number === number && t.status !== "Off"
+              (t) => !t.isDefault && t.rawBankCode === bank && t.number === number && t.status !== 0  // kronos::TimbreStatus::Off
             ),
           }))
       : [];
@@ -533,7 +544,7 @@
     const srcProgram = srcDataset.programs.find((p) => p.bank === srcBank && p.number === srcNumber);
     if (!srcProgram) return fail("Can't copy: source or destination bank/number is out of range.");
 
-    const dstBankType = dstBank === 0 ? "HD-1" : "EXi";  // same convention as getProgramBankTypes() above
+    const dstBankType = mockBankType(dstBank);
     if (srcProgram.bankType !== dstBankType) {
       return fail(
         "Can't copy: source and destination banks are different engine types (HD-1/EXi) -- " +
@@ -567,7 +578,74 @@
         combiReferenceCount: 0,
       });
     }
+    dstDataset.dirty = true;
     return ok();
+  };
+
+  // Mirrors PcgFile::swapPrograms() -- see its own doc comment in
+  // PcgFile.h. Same-dataset only (unlike copyProgram() above). Single pass
+  // over dataset.songs/each Combi's timbres checking both original
+  // positions at once, same reasoning as swapCombis()'s own mock just
+  // below -- two sequential repoint passes would immediately undo each
+  // other. A Combi Timbre's rawBankCode is treated as directly equal to a
+  // Program's own `bank`, same mock simplification
+  // resolveDuplicateProgram() above already uses (no real
+  // kConfirmedTimbreBanks translation table in mock mode).
+  window.swapProgram = (datasetId, bankA, numberA, bankB, numberB) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+
+    const a = dataset.programs.find((p) => p.bank === bankA && p.number === numberA);
+    if (!a) return fail("No such Program at the first position");
+    const b = dataset.programs.find((p) => p.bank === bankB && p.number === numberB);
+    if (!b) return fail("No such Program at the second position");
+    if (bankA === bankB && numberA === numberB) return ok({ setlistRefsRepointed: 0, combiRefsRepointed: 0, combiRefsSkipped: 0 });
+    if (a.bankType !== b.bankType) {
+      return fail(
+        "Can't swap: the two banks are different engine types (HD-1/EXi) -- " +
+          "a Program can only be loaded into a bank of the matching type."
+      );
+    }
+
+    const aContent = { name: a.name, setlistReferenceCount: a.setlistReferenceCount, combiReferenceCount: a.combiReferenceCount };
+    const bContent = { name: b.name, setlistReferenceCount: b.setlistReferenceCount, combiReferenceCount: b.combiReferenceCount };
+    Object.assign(a, bContent);
+    Object.assign(b, aContent);
+
+    let setlistRefsRepointed = 0;
+    for (const setlistIndex of Object.keys(dataset.songs)) {
+      for (const song of dataset.songs[setlistIndex]) {
+        if (!song.isProgram) continue;
+        if (song.bank === bankA && song.number === numberA) {
+          song.bank = bankB;
+          song.number = numberB;
+          setlistRefsRepointed++;
+        } else if (song.bank === bankB && song.number === numberB) {
+          song.bank = bankA;
+          song.number = numberA;
+          setlistRefsRepointed++;
+        }
+      }
+    }
+
+    let combiRefsRepointed = 0;
+    for (const combi of dataset.combis) {
+      for (const t of combi.timbres) {
+        if (t.isDefault) continue;
+        if (t.rawBankCode === bankA && t.number === numberA) {
+          t.rawBankCode = bankB;
+          t.number = numberB;
+          combiRefsRepointed++;
+        } else if (t.rawBankCode === bankB && t.number === numberB) {
+          t.rawBankCode = bankA;
+          t.number = numberA;
+          combiRefsRepointed++;
+        }
+      }
+    }
+
+    dataset.dirty = true;
+    return ok({ setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
   // Mirrors PcgFile::resolveDuplicates() -- see its own doc comment in
@@ -595,7 +673,7 @@
     let combiRefsRepointed = 0;
 
     for (const dup of duplicates) {
-      dup.name = dup.bankType === "HD-1" ? "Init Program" : "Init EXi Program";
+      dup.name = dup.bankType === 0 ? "Init Program" : "Init EXi Program";  // kronos::ProgramBankType::Hd1 = 0
       clearedPrograms++;
 
       for (const setlistIndex of Object.keys(dataset.songs)) {
@@ -617,6 +695,7 @@
       }
     }
 
+    if (clearedPrograms > 0) dataset.dirty = true;
     return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
@@ -655,6 +734,7 @@
         }
       }
     }
+    dataset.dirty = true;
     return ok({ setlistRefsRepointed });
   };
 
@@ -698,6 +778,7 @@
     moving.number = toNumber;
     repoint(fromNumber, toNumber);
 
+    dataset.dirty = true;
     return ok({ setlistRefsRepointed });
   };
 
@@ -748,6 +829,7 @@
       }
     }
 
+    dataset.dirty = true;
     return ok({ setlistRefsRepointed });
   };
 
@@ -765,7 +847,7 @@
     const dst = dataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
     if (!dst) return fail("No such destination Combi");
 
-    if (!(dst.name || "").toLowerCase().includes("init combi")) {
+    if (!looksLikeEmptyCombiName(dst.name)) {
       return fail('Can\'t copy here -- the destination isn\'t an empty ("Init Combi") slot. Drop directly onto a real Combi to swap instead.');
     }
 
@@ -783,6 +865,7 @@
       timbres: src.timbres,
     });
 
+    dataset.dirty = true;
     return ok({ setlistRefsRepointed: 0 });
   };
 
@@ -822,7 +905,7 @@
 
     const dstCombi = dstDataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
     if (!dstCombi) return fail("No such destination Combi");
-    if (!(dstCombi.name || "").toLowerCase().includes("init combi")) {
+    if (!looksLikeEmptyCombiName(dstCombi.name)) {
       return fail('Can\'t copy here -- the destination isn\'t an empty ("Init Combi") slot. Drop directly onto a real Combi to swap instead.');
     }
     const dstReferenced = Object.keys(dstDataset.songs).some((setlistIndex) =>
@@ -837,10 +920,20 @@
 
     const dependencies = [];
     const seenUnresolved = [];
+    // Mirrors PcgFile.cpp's `unmappableTimbres` -- a Timbre whose raw bank
+    // code has no resolvable Program bank AND no confirmed name either (a
+    // populated `bankName`, e.g. "GM", means permanently-indexless
+    // hardware-builtin content, not something to warn about -- see
+    // makeFakeTimbres()'s own raw-code-20 vs. raw-code-6 comment for the
+    // mock's own stand-in for this exact distinction).
+    const unmappableTimbres = [];
     srcCombi.timbres.forEach((t, i) => {
       if (t.isDefault) return;
       const programBank = mockProgramBankForTimbreCode(t.rawBankCode);
-      if (programBank == null) return;
+      if (programBank == null) {
+        if (!t.bankName) unmappableTimbres.push({ timbreIndex: i, rawBankCode: t.rawBankCode, rawNumber: t.number });
+        return;
+      }
       const srcProgram = srcDataset.programs.find((p) => p.bank === programBank && p.number === t.number);
       if (!srcProgram || !srcProgram.name) return;
 
@@ -870,7 +963,7 @@
       return Object.assign({ candidateBanks }, u);
     });
 
-    return ok({ dependencies, unresolved });
+    return ok({ dependencies, unresolved, unmappableTimbres });
   };
 
   // Mirrors PcgFile::applyCombiCrossDatasetCopy() -- see its own doc
@@ -886,7 +979,7 @@
 
     const dstCombi = dstDataset.combis.find((c) => c.bank === dstBank && c.number === dstNumber);
     if (!dstCombi) return fail("No such destination Combi");
-    if (!(dstCombi.name || "").toLowerCase().includes("init combi")) {
+    if (!looksLikeEmptyCombiName(dstCombi.name)) {
       return fail('Can\'t copy here -- the destination isn\'t an empty ("Init Combi") slot. Drop directly onto a real Combi to swap instead.');
     }
     const dstReferenced = Object.keys(dstDataset.songs).some((setlistIndex) =>
@@ -977,6 +1070,7 @@
       timbres: newTimbres,
     });
 
+    dstDataset.dirty = true;  // destination only -- src is never touched by a copy
     return ok({ setlistRefsRepointed: 0 });
   };
 

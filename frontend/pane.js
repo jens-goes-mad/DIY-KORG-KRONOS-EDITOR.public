@@ -82,12 +82,48 @@ function kronosNumber(n) {
   return String(n).padStart(3, "0");
 }
 
-// `bankType` ("HD-1"/"EXi", see EditorBridge::getProgramBankTypes()) is
-// optional and only ever shown for Programs -- Combis have no engine type of
-// their own, so it's ignored whenever entry.isProgram is false, regardless
-// of what's passed. Per-file data, not a hardcoded table -- see
-// PcgFile.h's ProgramBankType doc comment: Kronos OS 3.0+ lets a user
-// reassign INT Program Banks between HD-1 and EXi.
+// Mirrors kronos::ProgramBankType (PcgFile.h: `enum class ProgramBankType {
+// Hd1, Exi }`) -- indexed by the RAW enum value the bridge now sends
+// (EditorBridge stopped formatting this to a string 2026-08-15; naming a
+// value for display is a JS/encoder-layer job, not native C++'s -- see
+// STATE.md). Kept as a plain array, not a switch, matching
+// PROGRAM_BANK_NAMES/COMBI_BANK_NAMES's own convention just above.
+const PROGRAM_BANK_TYPE_NAMES = ["HD-1", "EXi"];
+
+function programBankTypeName(bankType) {
+  return PROGRAM_BANK_TYPE_NAMES[bankType] ?? String(bankType);
+}
+
+// Mirrors PcgFile.cpp's looksLikeEmptyCombiName() -- case-insensitive
+// substring match, catching both Korg's own literal "Init Combi" and this
+// app's own vacated-slot rename ("- Init Combi -", see
+// window.moveCombiToBank()'s own backend doc comment). The single shared
+// definition (2026-08-15) -- previously inlined independently at 5 call
+// sites across pane-combi-editor.js/mock_bridge.js (a plain regex in one
+// file, a `.toLowerCase().includes(...)` in the other), all doing the same
+// check slightly differently.
+function looksLikeEmptyCombiName(name) {
+  return /init combi/i.test(name || "");
+}
+
+// Mirrors PcgFile.cpp's looksLikeEmptyProgramName() -- a genuinely
+// untouched Program slot on real Kronos hardware is named Korg's own
+// factory "Init Program"/"Init EXi Program", not a blank string (docs/
+// content/format/index.md §5.5). The single shared definition (2026-08-15)
+// -- previously defined independently, with an identical body, in both
+// combi-cross-dataset-panel.js and mock_bridge.js.
+function looksLikeEmptyProgramName(name) {
+  if (!name) return true;
+  const lower = name.toLowerCase();
+  return lower === "init exi program" || lower.includes("init program");
+}
+
+// `bankType` (a raw kronos::ProgramBankType value, see
+// PROGRAM_BANK_TYPE_NAMES above) is optional and only ever shown for
+// Programs -- Combis have no engine type of their own, so it's ignored
+// whenever entry.isProgram is false, regardless of what's passed. Checked
+// with `!= null`, not truthiness -- bankType can legitimately be 0 (Hd1),
+// which is falsy in JS.
 function formatBankNumber(entry, bankType) {
   const num = kronosNumber(entry.number);
   const names = entry.isProgram ? PROGRAM_BANK_NAMES : COMBI_BANK_NAMES;
@@ -98,7 +134,7 @@ function formatBankNumber(entry, bankType) {
         // (fixed content, not stored per-file) or corrupt data. Show the raw
         // index rather than guess at a label.
         `${entry.bank} ${num}`;
-  return entry.isProgram && bankType ? `${label} (${bankType})` : label;
+  return entry.isProgram && bankType != null ? `${label} (${programBankTypeName(bankType)})` : label;
 }
 
 // Builds a <colgroup> from 12-based column-grid fractions -- Bulma's own
@@ -186,7 +222,7 @@ function renderBankFilterRow(container, bankNames, present, filterSet, onToggle,
     btn.type = "button";
     btn.className = "button is-small bank-filter-button";
     const bankType = getBankType && getBankType(bank);
-    btn.textContent = bankType ? `${name} (${bankType})` : name;
+    btn.textContent = bankType != null ? `${name} (${programBankTypeName(bankType)})` : name;
     btn.disabled = !isPresent;
     if (isPresent && filterSet.has(bank)) btn.classList.add("is-link");
     btn.addEventListener("click", () => {
@@ -293,6 +329,7 @@ function createLibraryPanels(
     getDatasetId,
     getProgramBankType,
     onDropProgram,
+    onSwapProgram,
     onJumpToInstrument,
     onJumpToSetlist,
     onRefreshOppositeLibrary,
@@ -356,7 +393,7 @@ function createLibraryPanels(
 
   const programsPanel = createProgramsPanel(
     { panelTable: panelTables.programs, bankFilterRow: bankFilterRows.programs, selectControlRow: selectControlRows.programs },
-    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onJumpToSetlist, onJumpToInstrument, log }
+    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log }
   );
 
   const duplicatesPanel = createDuplicatesPanel(
@@ -434,9 +471,20 @@ function createLibraryPanels(
   // pane was showing having been closed elsewhere (getDatasetId() will
   // already reflect that by the time this is called). Always a genuinely
   // new dataset -- see load()'s own doc comment for why this is the one
-  // caller that resets filters.
+  // caller that resets filters. Returns load()'s own promise -- CORRECTED
+  // 2026-08-15: this used to fire load() without awaiting or returning it,
+  // so `await libraryPanels.onDatasetChanged()` (createPane()'s
+  // loadDataset()/resetToEmpty()) resolved immediately rather than once
+  // Programs/Combis/Duplicates had actually finished fetching. Harmless
+  // as long as nothing after that await depended on the fetch being done
+  // (the UI just caught up a moment later once load() itself finished and
+  // called renderCurrentTab()) -- until updateCategoryTabAvailability()
+  // (same session) became the first caller that actually needs the counts
+  // to be current the instant it runs, and read stale (usually empty)
+  // data as a result, reported directly: a real file with a genuine
+  // Combi showed the Combis tab disabled.
   function onDatasetChanged() {
-    load({ resetFilters: true });
+    return load({ resetFilters: true });
   }
 
   // Called by the shell after it's already switched to this Program's/
@@ -455,16 +503,30 @@ function createLibraryPanels(
   // caller -- exposed so app.js's onDropProgram can re-fetch this pane's
   // Programs table after a copy lands in it, without resetting bank
   // filters/expanded state any harder than onDatasetChanged already does.
-  return { onDatasetChanged, showPanel, jumpToEntry, refresh: load };
+  // `getCounts` exposed so createPane()'s own updateCategoryTabAvailability()
+  // can disable the Programs/Combis/Duplicates tabs for a dataset with none
+  // of a given kind at all.
+  return {
+    onDatasetChanged,
+    showPanel,
+    jumpToEntry,
+    refresh: load,
+    getCounts: () => ({
+      programs: programsPanel.getProgramCount(),
+      combis: combisPanel.getCombiCount(),
+      duplicates: duplicatesPanel.getGroupCount(),
+    }),
+  };
 }
 
-function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, getOpposite, log, showToast }) {
+function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, onCopySetlist, getOpposite, log, showToast }) {
   root.innerHTML = `
     <div class="pane-header">
       <div class="pane-header-row dataset-select-row">
         <div class="select is-small is-fullwidth dataset-select-wrap">
           <select class="dataset-select"></select>
         </div>
+        <button class="button is-small unload-dataset-button" type="button" disabled title="Free this dataset from memory -- warns first if it has unsaved changes">Unload</button>
         <button class="button is-small save-file-button" type="button" disabled title="Save this pane's dataset -- its current in-memory bytes, including any unsaved edits -- to a .PCG/.SNG file via a native Save dialog">Save As...</button>
       </div>
       <div class="pane-header-row tabs-row">
@@ -489,6 +551,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   `;
 
   const datasetSelect = root.querySelector(".dataset-select");
+  const unloadDatasetButton = root.querySelector(".unload-dataset-button");
   const saveFileButton = root.querySelector(".save-file-button");
   const navBackButton = root.querySelector(".nav-back-button");
   const navForwardButton = root.querySelector(".nav-forward-button");
@@ -523,6 +586,38 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     for (const entry of entries) programBankTypes.set(entry.bank, entry.bankType);
   }
 
+  // Disables (greys out, blocks clicks on) any of the Setlist/Programs/
+  // Combis/Duplicates tabs whose category has zero rows for the CURRENT
+  // dataset -- checked after every dataset selection change (loadDataset()/
+  // resetToEmpty() below), per direct request. Internals is deliberately
+  // exempt (always relevant, even to show "0 of everything") and always
+  // wins the fallback below, since it's the one category guaranteed
+  // available even for a completely empty/no dataset. A dataset with
+  // genuinely zero Set Lists is a real, confirmed case now (a sound-bank-
+  // only PCG -- see STATE.md entry 38's SDB1-is-optional fix), and zero
+  // Duplicate groups is the ORDINARY case for most real files, not an edge
+  // case -- Programs/Combis being empty is rarer but not impossible (e.g. a
+  // backup that only included Set Lists).
+  function updateCategoryTabAvailability() {
+    const counts =
+      currentDatasetId == null
+        ? { setlist: 0, programs: 0, combis: 0, duplicates: 0 }
+        : { setlist: setlistPanel.getSetlistCount(), ...libraryPanels.getCounts() };
+    categoryTabs.forEach((t) => {
+      const category = t.dataset.category;
+      if (category === "internals") return;
+      t.classList.toggle("is-tab-disabled", counts[category] === 0);
+    });
+    // If the currently active tab just became disabled (its category lost
+    // its last row, or this is a brand new/empty dataset), switch to the
+    // first tab that's actually available -- Internals if nothing else is.
+    const activeTab = [...categoryTabs].find((t) => t.dataset.category === currentCategory);
+    if (activeTab && activeTab.classList.contains("is-tab-disabled")) {
+      const firstAvailable = [...categoryTabs].find((t) => !t.classList.contains("is-tab-disabled"));
+      switchCategory(firstAvailable ? firstAvailable.dataset.category : "internals");
+    }
+  }
+
   // Category switching just toggles which container is visible -- no data
   // reload needed on its own, since both renderers already hold current
   // data from the last dataset change (see onDatasetChanged() below).
@@ -546,7 +641,10 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   }
 
   categoryTabs.forEach((tab) => {
-    tab.addEventListener("click", () => switchCategory(tab.dataset.category));
+    tab.addEventListener("click", () => {
+      if (tab.classList.contains("is-tab-disabled")) return;
+      switchCategory(tab.dataset.category);
+    });
   });
 
   // Applies one jump target without touching the nav-history stack below --
@@ -774,6 +872,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     getDatasetId: getCurrentDatasetId,
     getProgramBankType,
     onDropProgram,
+    onSwapProgram,
     onJumpToInstrument: jumpToInstrument,
     onJumpToSetlist: jumpToSetlistEntry,
     onRefreshOppositeLibrary: refreshOppositeLibrary,
@@ -794,11 +893,13 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
     currentDatasetId = datasetId;
     datasetSelect.value = String(datasetId);
     saveFileButton.disabled = false;
+    unloadDatasetButton.disabled = false;
     resetNavHistory();
     await refreshProgramBankTypes();
     await setlistPanel.onDatasetChanged(displayName);
     await libraryPanels.onDatasetChanged();
     await internalsPanel.onDatasetChanged();
+    updateCategoryTabAvailability();
   }
 
   // Back to the "nothing selected" state -- used both for the dataset-select's
@@ -807,12 +908,55 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onCopySetlist, g
   async function resetToEmpty() {
     currentDatasetId = null;
     saveFileButton.disabled = true;
+    unloadDatasetButton.disabled = true;
     resetNavHistory();
     await refreshProgramBankTypes();
     await setlistPanel.onDatasetChanged();
     await libraryPanels.onDatasetChanged();
     await internalsPanel.onDatasetChanged();
+    updateCategoryTabAvailability();
   }
+
+  // "Unload" (pane header, beside the dataset selector) -- frees this
+  // dataset from memory entirely (EditorBridge::closeDataset(), a GLOBAL
+  // free, not just "deselect it from this pane" -- the same dataset could
+  // be showing in the opposite pane too). Warns first via a plain native
+  // confirm() if the dataset has unsaved changes -- "dirty" here means a
+  // real raw-byte write (see PcgFile::isDirty()'s own doc comment), not the
+  // in-memory-only legacy copyEntry() operation, which can't be lost this
+  // way since it was never save-durable in the first place. Reads the dirty flag via window.isDatasetDirty() -- a direct
+  // point query straight from PcgFile itself (see its own doc comment in
+  // EditorBridge.h), NOT `knownDatasets` (the cache populated by the last
+  // onDatasetsChanged() broadcast): reported directly, 2026-08-15, that a
+  // Combi swap/move/copy (and every other write across the app) only
+  // refreshes its OWN pane's view, never the global refreshDatasets()
+  // broadcast, so a list-based cache goes stale the instant any edit
+  // happens anywhere. The dirty flag lives on the raw data itself and is
+  // always current the instant it's asked for -- asking directly avoids
+  // relying on any cache staying fresh at all.
+  // `closeDataset()` itself doesn't know or care which pane(s) are showing
+  // this dataset -- the refreshDatasets() call below (after the close)
+  // re-broadcasts the now-shorter open list, and every pane's own
+  // onDatasetsChanged() listener (this one and the opposite one) already
+  // resets itself if its currentDatasetId just disappeared.
+  unloadDatasetButton.addEventListener("click", async () => {
+    if (currentDatasetId == null) return;
+    const dirtyCheck = await window.isDatasetDirty(currentDatasetId);
+    if (dirtyCheck.ok && dirtyCheck.dirty) {
+      const displayName = knownDatasets.find((d) => d.datasetId === currentDatasetId);
+      // window.showConfirmDialog() (confirm-dialog.js), NOT window.confirm() --
+      // see that file's own doc comment: WKWebView silently drops native JS
+      // confirm() dialogs under CHOC's WebView here, so the warning never
+      // appeared at all and Unload looked like it did nothing.
+      const confirmed = await window.showConfirmDialog(
+        `"${displayName ? displayName.displayName : "This dataset"}" has unsaved changes. Unload it anyway?`,
+        { confirmLabel: "Unload", isDanger: true }
+      );
+      if (!confirmed) return;
+    }
+    await window.closeDataset(currentDatasetId);
+    await refreshDatasets();
+  });
 
   // "Save As..." (pane header, beside the dataset selector) -- writes this
   // pane's dataset's CURRENT in-memory bytes (including any edits made this

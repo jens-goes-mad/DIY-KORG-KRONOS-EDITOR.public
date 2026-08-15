@@ -301,6 +301,7 @@ body {
   min-width: 0;
 }
 
+.dataset-select-row .unload-dataset-button,
 .dataset-select-row .save-file-button {
   flex: none;
   white-space: nowrap;
@@ -354,6 +355,20 @@ body {
 }
 .tabs.pane-category-tabs li.is-active a {
   color: var(--editor-accent);
+}
+
+/* pane.js's updateCategoryTabAvailability() -- a category with zero rows
+   for the current dataset (e.g. a sound-bank-only PCG with no Set Lists,
+   or simply no duplicate Programs, the ordinary case for most real files)
+   is greyed out and inert, same "not clickable, not misleading" treatment
+   as a disabled Bulma button elsewhere in this app. `pointer-events: none`
+   is the actual click-blocker; the click handler itself also checks this
+   class directly (pane.js), since a tab can be disabled programmatically
+   after being clicked open a moment earlier. */
+.tabs.pane-category-tabs li.is-tab-disabled a {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: default;
 }
 
 /* Visual styling (background/border/color/padding/disabled opacity) for
@@ -1090,6 +1105,16 @@ td.has-comment {
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
+/* app.js's showToast(message, {isError: true}) -- Bulma's own semantic
+   "danger" color (--bulma-danger/-invert, the same pair
+   .notification.is-danger uses internally), same reasoning as the default
+   warning color above: reuse Bulma's real color system, not a one-off
+   hand-picked red. */
+.toast-error {
+  background: var(--bulma-danger);
+  color: var(--bulma-danger-invert);
+}
+
 .toast-visible {
   opacity: 1;
   transform: translateY(0);
@@ -1298,6 +1323,20 @@ td.has-comment {
   white-space: nowrap;
 }
 
+/* Non-blocking warning for a Timbre reference this project hasn't
+   identified at all (see combi-cross-dataset-panel.js's own comment) --
+   Bulma's warning color, same "reuse Bulma's real color system" convention
+   app.js's toast-error styling already follows, just amber instead of red
+   since this never blocks Apply. */
+.cross-dataset-unmappable-row {
+  font-size: 12px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: var(--bulma-warning);
+  color: var(--bulma-warning-invert);
+  border-radius: 4px;
+}
+
 .cross-dataset-unresolved-row {
   padding: 8px 0;
   border-top: 1px solid var(--border);
@@ -1345,6 +1384,34 @@ td.has-comment {
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
+}
+
+/* confirm-dialog.js's generic Yes/No modal -- Bulma's own `.modal-card-*`
+   background variables (--bulma-modal-card-*-background-color) resolve from
+   --bulma-scheme-main/-main-bis, which only turn dark under a real OS-level
+   `prefers-color-scheme: dark`; this app forces a dark look regardless of OS
+   setting (see :root's own `color-scheme: dark` above), so the card needs
+   the same explicit override + fallback the cross-dataset panel already
+   uses above, not Bulma's own scheme variables. z-index above the cross-
+   dataset panel (901) since a confirm can interrupt anything, but still
+   below the toast container (1000) -- same "transient always wins" rule
+   toastContainer's own comment states. */
+.confirm-dialog-modal {
+  z-index: 950;
+}
+.confirm-dialog-modal .modal-card-head,
+.confirm-dialog-modal .modal-card-body,
+.confirm-dialog-modal .modal-card-foot {
+  background: var(--bulma-scheme-main, #1b1d22);
+  color: var(--text);
+}
+.confirm-dialog-modal .modal-card-head {
+  border-bottom: 1px solid var(--border);
+}
+.confirm-dialog-modal .modal-card-foot {
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .internals-bank-groups {

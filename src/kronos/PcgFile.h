@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -211,8 +212,18 @@ public:
     // data_ already IS the fully up-to-date file -- there is no separate
     // in-memory model to serialize. Returns false and fills `error` if the
     // path can't be opened for writing, or if no file is loaded (data_
-    // empty). Does not throw.
-    bool save(const std::string& path, std::string& error) const;
+    // empty). Does not throw. Not const: clears the dirty flag (see
+    // isDirty()) on a successful write -- every real call site already only
+    // ever calls this on a non-const PcgFile.
+    bool save(const std::string& path, std::string& error);
+
+    // True if any raw byte of data_ has been written since load (or since
+    // the last successful save()) -- see writeIntoData()'s own doc comment
+    // for exactly what does/doesn't count. Backs the app's "Unload a
+    // dataset" confirmation (EditorBridge::listDatasets()) -- there is no
+    // broader dirty-tracking/undo system yet, this is purpose-built for
+    // that one question ("would Unload lose anything?").
+    bool isDirty() const { return dirty_; }
 
     const std::vector<Setlist>& setlists() const { return setlists_; }
     std::vector<Setlist>& setlists() { return setlists_; }
@@ -335,6 +346,45 @@ public:
     //    already exists anywhere in this file.
     std::optional<ProgramCopyError> copyProgramFrom(const PcgFile& src, int srcBank, int srcNumber,
                                                       int dstBank, int dstNumber);
+
+    struct ProgramSwapResult {
+        bool ok = false;
+        std::string error;             // only set when !ok
+        int setlistRefsRepointed = 0;  // Set List Program slots repointed to follow their content
+        int combiRefsRepointed = 0;    // Combi Timbre references repointed
+        int combiRefsSkipped = 0;      // Combi Timbre references left alone -- see own doc comment below
+    };
+
+    // Swaps two Programs' entire raw content (same dataset only -- see
+    // swapCombis()'s own doc comment for why cross-dataset stays out of
+    // scope for a swap specifically) and repoints every Set List slot AND
+    // Combi Timbre reference pointing at EITHER one so it follows its
+    // content to the new position -- unlike copyProgramFrom(), never
+    // rejected for an "already exists" byte-identical match anywhere else
+    // in the file (a swap never creates a new copy of anything, it just
+    // exchanges two positions' existing content, so that check doesn't
+    // apply). Built specifically because copyProgramFrom()'s
+    // DuplicateExists check makes a plain drag-and-drop copy meaningless
+    // between two slots that both happen to be genuinely empty ("Init
+    // Program") -- every Init Program is byte-identical to every other one
+    // in the same bank type, so copying one onto another always trips
+    // DuplicateExists, even though nothing is actually wrong. A swap
+    // sidesteps that scenario entirely by construction.
+    //
+    // Rejects (ok=false, nothing written) if either position doesn't
+    // exist, or the two banks are different engine types (HD-1/EXi) or
+    // record sizes -- same two guards copyProgramFrom() already has for
+    // the same reason. A no-op (ok=true, nothing written) if both
+    // positions are identical.
+    //
+    // combiRefsSkipped mirrors resolveDuplicates()'s own field: a Timbre
+    // referencing one of the two positions is left alone (not repointed,
+    // not silently guessed at) only if THAT position's own bank has no
+    // confirmed raw Timbre code translation (confirmedTimbreCodeForProgramBank(),
+    // PcgFile.cpp) -- structurally can't happen today (all 20 Program banks
+    // are confirmed as of STATE.md's most recent Combi-Timbre entries), kept
+    // for the same defensive reason resolveDuplicates() keeps it.
+    ProgramSwapResult swapPrograms(int bankA, int numberA, int bankB, int numberB);
 
     // Every Program-type Set List slot that directly references this
     // bank/number. Does NOT include usage from inside a Combi's Timbres --
@@ -578,9 +628,11 @@ public:
     // One active (non-default), resolvable Timbre of a Combi being analyzed for a
     // cross-dataset copy -- "resolvable" means its rawBankCode translates to a
     // confirmed PBK1 file-order bank index (see programBankForConfirmedTimbreCode()
-    // in PcgFile.cpp); a GM reference or a genuinely unidentified raw code isn't
-    // file-specific data to resolve at all, so neither produces an entry here (the
-    // apply step below copies those Timbres' raw bytes through unchanged instead).
+    // in PcgFile.cpp); a GM/G(n)/g(n) reference or a genuinely unidentified raw
+    // code isn't file-specific data to resolve at all, so neither produces an
+    // entry here (the apply step below copies those Timbres' raw bytes through
+    // unchanged instead) -- a genuinely unidentified one lands in
+    // `unmappableTimbres` below instead, so the caller can at least warn about it.
     struct TimbreProgramDependency {
         int timbreIndex = 0;  // 0-15
         int srcBank = 0;
@@ -607,11 +659,31 @@ public:
         std::vector<int> candidateBanks;
     };
 
+    // One active (non-default) Timbre whose raw bank code is neither a
+    // confirmed PBK1 Program bank (programBankForConfirmedTimbreCode()) NOR
+    // one of the confirmed permanently-indexless hardware codes (GM/G(1..4)/
+    // g(5..7)/g(9) -- kronos::timbreBankName() has a name for those, and
+    // they're universal/hardware-builtin so copying them through unchanged
+    // is always correct, no warning needed). Everything landing here is a
+    // raw code this project hasn't identified at all yet -- apply() still
+    // copies its raw bytes through unchanged (same as GM), but the caller
+    // should tell the user this Timbre's reference couldn't be verified
+    // rather than silently saying nothing about it at all. Reported
+    // directly, 2026-08-15: a cross-dataset Combi copy involving one of
+    // these just silently carried the reference over with no indication
+    // anything was uncertain.
+    struct UnmappableTimbre {
+        int timbreIndex = 0;  // 0-15
+        int rawBankCode = 0;
+        int rawNumber = 0;
+    };
+
     struct CombiCrossDatasetAnalysis {
         bool ok = false;
         std::string error;  // set only when !ok, e.g. the destination Combi slot isn't empty
         std::vector<TimbreProgramDependency> dependencies;
         std::vector<UnresolvedProgram> unresolved;
+        std::vector<UnmappableTimbre> unmappableTimbres;
     };
 
     // Read-only first step of a cross-dataset Combi copy: given `src`'s Combi at
@@ -837,6 +909,28 @@ private:
     std::vector<ProgramInfo> programs_;
     std::vector<CombiInfo> combis_;
     std::vector<uint8_t> data_;                          // the whole file's raw bytes, retained after load
+    bool dirty_ = false;                                 // see isDirty()/writeIntoData()
+
+    // The ONLY place any byte of data_ is ever overwritten (grepped the
+    // whole class to confirm, 2026-08-15) -- every write method
+    // (copyProgramFrom(), putCombiRecordBytes(), putProgramRecordBytes(),
+    // putSongRecordBytes(), putNameRecordBytes()) routes its actual
+    // std::copy(...) through this instead of writing data_ directly, so
+    // dirty-tracking (isDirty()) is automatic for all of them without
+    // needing a mark-dirty call at every one of those call sites, or at
+    // every future one. Deliberately NOT a public/generic "put raw bytes
+    // at an offset" API -- offsets stay private to PcgFile, computed the
+    // same way they always were (sbkSongsStart_/sdbSongsStart_ + a known
+    // stride, or a bank's own ProgramBankLocation/CombiBankLocation);
+    // callers still go through the named, validated public put*() methods.
+    // A caller-facing generic put is a separate, bigger idea (offset
+    // round-tripped from a prior get*() call) -- discussed and deliberately
+    // deferred, see STATE.md.
+    void writeIntoData(size_t offset, const uint8_t* src, size_t length) {
+        std::copy(src, src + length, data_.begin() + static_cast<long>(offset));
+        dirty_ = true;
+    }
+
     std::vector<ProgramBankLocation> programBankLocations_;  // index into data_, one entry per PRG1 sub-bank
     std::vector<CombiBankLocation> combiBankLocations_;      // index into data_, one entry per CBK1 sub-bank
 

@@ -1009,6 +1009,110 @@ void testSaveRoundTrip() {
     CHECK(!empty.save(path, emptyError));
 }
 
+// PcgFile::isDirty() (2026-08-15) -- every raw-byte write funnels through
+// ONE private helper (writeIntoData(), PcgFile.h) that flips this flag, so
+// this test covers each of the 5 call sites that reach it, plus the two
+// edges that matter for the app's own "Unload" confirmation: a REJECTED
+// write must never dirty the file, and a successful save() must clear the
+// flag. One fresh PcgFile per block, same isolation reasoning as
+// testResolveDuplicates() below.
+void testDirtyTracking() {
+    // --- A freshly loaded file is never dirty -----------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        CHECK(!pcg.isDirty());
+    }
+
+    // --- putSongRecordBytes(): a rejected write (wrong byte length) leaves
+    // isDirty() false; a real one sets it -----------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+
+        CHECK(!pcg.putSongRecordBytes(0, 0, std::vector<uint8_t>(10, 0)));  // wrong size -- rejected
+        CHECK(!pcg.isDirty());
+
+        auto bytes = pcg.songRecordBytes(0, 0);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            CHECK(pcg.putSongRecordBytes(0, 0, *bytes));
+            CHECK(pcg.isDirty());
+        }
+    }
+
+    // --- putNameRecordBytes() -----------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        CHECK(!pcg.isDirty());
+        auto bytes = pcg.nameRecordBytes(0, 0);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            CHECK(pcg.putNameRecordBytes(0, 0, *bytes));
+            CHECK(pcg.isDirty());
+        }
+    }
+
+    // --- putCombiRecordBytes() -----------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        CHECK(!pcg.isDirty());
+        auto bytes = pcg.combiRecordBytes(0, 0);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            CHECK(pcg.putCombiRecordBytes(0, 0, *bytes));
+            CHECK(pcg.isDirty());
+        }
+    }
+
+    // --- putProgramRecordBytes() -----------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        CHECK(!pcg.isDirty());
+        auto bytes = pcg.programRecordBytes(0, 2);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            CHECK(pcg.putProgramRecordBytes(0, 2, *bytes));
+            CHECK(pcg.isDirty());
+        }
+    }
+
+    // --- copyProgramFrom() dirties the destination -------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        CHECK(!pcg.isDirty());
+        auto copyError = pcg.copyProgramFrom(pcg, 0, 2, 0, 3);  // bank0/number3 is empty in the base fixture
+        CHECK(!copyError.has_value());
+        CHECK(pcg.isDirty());
+    }
+
+    // --- save() clears the dirty flag on success ----------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        auto bytes = pcg.songRecordBytes(0, 0);
+        CHECK(bytes.has_value());
+        if (bytes) CHECK(pcg.putSongRecordBytes(0, 0, *bytes));
+        CHECK(pcg.isDirty());
+
+        const char* path = "pcg_file_test_dirty_output.tmp";
+        CHECK(pcg.save(path, error));
+        CHECK(!pcg.isDirty());
+        std::remove(path);
+    }
+}
+
 // Each block below builds its own fresh PcgFile from buildSyntheticPcgFile()
 // -- same "one function, one independent instance" pattern as
 // testSaveRoundTrip() above, so a write in one block (this is a real write
@@ -1151,6 +1255,112 @@ void testResolveDuplicates() {
             CHECK_EQ(stillDuplicate->name, std::string("Test Program A"),
                      "size-mismatch rejection writes nothing -- duplicate untouched");
         }
+    }
+}
+
+// swapPrograms() (2026-08-15) -- built so a plain drag-and-drop copy
+// between two slots that are BOTH genuinely empty ("Init Program") doesn't
+// have to fight copyProgramFrom()'s own DuplicateExists guard (every Init
+// Program is byte-identical to every other one, so copying one onto
+// another always trips it). One fresh PcgFile per block, same isolation
+// reasoning as testResolveDuplicates() above.
+void testProgramSwap() {
+    // --- Happy path: bank0/number0 ("Test Program A") <-> bank0/number2
+    // ("Unique Program"), each referenced by a DIFFERENT kind of pointer
+    // (a Set List slot vs. a Combi Timbre) so both repoint directions get
+    // exercised in one pass ------------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        // Setlist 0's song 2 (empty in the base fixture) -> bank0/number0.
+        {
+            auto bytes = pcg.songRecordBytes(0, 2);
+            CHECK(bytes.has_value());
+            if (bytes) {
+                (*bytes)[12] |= 0x01;  // Type bits0-1 = 1 (Program)
+                (*bytes)[13] = 0;      // bank 0
+                (*bytes)[14] = 0;      // number 0
+                CHECK(pcg.putSongRecordBytes(0, 2, *bytes));
+            }
+        }
+        // Combi 0's Timbre 2 (default in the base fixture) -> bank0/number2
+        // (rawBankCode 0 = INT-A, confirmed).
+        {
+            auto bytes = pcg.combiRecordBytes(0, 0);
+            CHECK(bytes.has_value());
+            if (bytes) {
+                kronos::writeTimbreProgramRef(bytes->data(), bytes->size(), /*timbreIndex=*/2, /*number=*/2,
+                                               /*rawBankCode=*/0);
+                size_t statusOff = kronos::timbreByteOffset(2) + 2;
+                (*bytes)[statusOff] = static_cast<uint8_t>(1 << 5);  // Internal, not the all-zero Off default
+                CHECK(pcg.putCombiRecordBytes(0, 0, *bytes));
+            }
+        }
+
+        auto result = pcg.swapPrograms(0, 0, 0, 2);
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  swapPrograms() error: %s\n", result.error.c_str());
+        CHECK_EQ(result.setlistRefsRepointed, 1, "exactly one Set List slot referenced either position");
+        CHECK_EQ(result.combiRefsRepointed, 1, "exactly one Combi Timbre referenced either position");
+        CHECK_EQ(result.combiRefsSkipped, 0, "bank 0's raw Timbre code (INT-A=0) is confirmed");
+
+        auto atZero = pcg.decodeProgram(0, 0);
+        CHECK(atZero.has_value());
+        if (atZero) CHECK_EQ(atZero->name, std::string("Unique Program"), "bank0/number0 now holds what number2 held");
+
+        auto atTwo = pcg.decodeProgram(0, 2);
+        CHECK(atTwo.has_value());
+        if (atTwo) CHECK_EQ(atTwo->name, std::string("Test Program A"), "bank0/number2 now holds what number0 held");
+
+        // The Set List slot followed "Test Program A" to its new position.
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.bank, 0, "Set List slot repointed: bank");
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.number, 2, "Set List slot repointed: number now 2");
+        CHECK_EQ(pcg.setlists()[0].songs[2].instrumentName, std::string("Test Program A"),
+                 "Set List slot's instrumentName resolves to the content it actually followed");
+
+        // The Combi Timbre followed "Unique Program" to its new position.
+        auto combiAfter = pcg.decodeCombi(0, 0);
+        CHECK(combiAfter.has_value());
+        if (combiAfter) {
+            CHECK_EQ(combiAfter->timbres[2].number, 0, "Combi Timbre repointed: number now 0");
+            CHECK_EQ(combiAfter->timbres[2].rawBankCode, 0, "Combi Timbre repointed: raw code (already 0)");
+            CHECK(combiAfter->timbres[2].status == kronos::TimbreStatus::Internal);  // status byte untouched
+        }
+    }
+
+    // --- No-op: same slot twice -------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        auto result = pcg.swapPrograms(0, 0, 0, 0);
+        CHECK(result.ok);
+        CHECK_EQ(result.setlistRefsRepointed, 0, "no-op -- nothing to repoint");
+    }
+
+    // --- Rejected: different engine types (bank0=Hd1, bank1=Exi) ----------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        auto result = pcg.swapPrograms(0, 0, 1, 0);
+        CHECK(!result.ok);
+        auto stillAtBank0 = pcg.decodeProgram(0, 0);
+        CHECK(stillAtBank0.has_value());
+        if (stillAtBank0) CHECK_EQ(stillAtBank0->name, std::string("Test Program A"), "rejected swap writes nothing");
+    }
+
+    // --- Rejected: out-of-range position ------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
+        auto result = pcg.swapPrograms(0, 0, 99, 0);
+        CHECK(!result.ok);
     }
 }
 
@@ -1449,9 +1659,13 @@ std::vector<uint8_t> makeCrossDsSourceCombiRecord(const std::string& name) {
         rec[h + 1] = static_cast<uint8_t>(rawBankCode);
         rec[h + 2] = static_cast<uint8_t>(1 << 5);  // status Internal
     };
-    setTimbre(0, 2, 0);   // -> INT-A/2 "Shared Lead"
-    setTimbre(1, 3, 1);   // -> INT-B/3 "Unique Brass"
-    setTimbre(2, 91, 6);  // -> GM (number is arbitrary -- GM has no real Program lookup)
+    setTimbre(0, 2, 0);    // -> INT-A/2 "Shared Lead"
+    setTimbre(1, 3, 1);    // -> INT-B/3 "Unique Brass"
+    setTimbre(2, 91, 6);   // -> GM (number is arbitrary -- GM has no real Program lookup)
+    setTimbre(3, 12, 16);  // -> raw code 16, a real gap this project hasn't identified at
+                            // all (neither kConfirmedTimbreBanks nor
+                            // kConfirmedTimbreBankNamesOnly has an entry for it) --
+                            // exercises analyzeCombiCrossDatasetCopy()'s unmappableTimbres
     return rec;
 }
 
@@ -1585,8 +1799,10 @@ void testCombiCrossDatasetCopy() {
         if (!analysis.ok) std::fprintf(stderr, "  analyze() error: %s\n", analysis.error.c_str());
 
         // Exactly 2 dependencies -- Timbre 0 (found) and Timbre 1 (unresolved).
-        // GM (Timbre 2) and every default Timbre are never listed.
-        CHECK_EQ(static_cast<int>(analysis.dependencies.size()), 2, "GM and default Timbres aren't dependencies");
+        // GM (Timbre 2), the unmappable raw code (Timbre 3), and every
+        // default Timbre are never listed as dependencies.
+        CHECK_EQ(static_cast<int>(analysis.dependencies.size()), 2,
+                 "GM, the unmappable Timbre, and default Timbres aren't dependencies");
         bool sawFound = false, sawUnresolved = false;
         for (const auto& dep : analysis.dependencies) {
             if (dep.timbreIndex == 0) {
@@ -1603,6 +1819,19 @@ void testCombiCrossDatasetCopy() {
         }
         CHECK(sawFound);
         CHECK(sawUnresolved);
+
+        // Timbre 3's raw code (16) is neither a confirmed Program bank nor a
+        // confirmed permanently-indexless code (GM/G(n)/g(n)) -- it lands in
+        // unmappableTimbres so the caller can warn about it, distinctly from
+        // both `dependencies` (nothing there resolves it) and `unresolved`
+        // (there's no Program to place -- there's nothing to place at all).
+        CHECK_EQ(static_cast<int>(analysis.unmappableTimbres.size()), 1, "exactly one unmappable Timbre");
+        if (!analysis.unmappableTimbres.empty()) {
+            const auto& u = analysis.unmappableTimbres[0];
+            CHECK_EQ(u.timbreIndex, 3, "Timbre 3 is the unmappable one");
+            CHECK_EQ(u.rawBankCode, 16, "its raw bank code is preserved for the UI to report");
+            CHECK_EQ(u.rawNumber, 12, "its raw number is preserved too");
+        }
 
         CHECK_EQ(static_cast<int>(analysis.unresolved.size()), 1, "exactly one UNIQUE unresolved Program");
         if (!analysis.unresolved.empty()) {
@@ -1661,7 +1890,10 @@ void testCombiCrossDatasetCopy() {
             CHECK(!copiedCombi->timbres[2].isDefault);
             CHECK_EQ(copiedCombi->timbres[2].number, 91, "GM Timbre's bytes pass through UNCHANGED");
             CHECK_EQ(copiedCombi->timbres[2].rawBankCode, 6, "GM Timbre's raw bank code is untouched");
-            CHECK(copiedCombi->timbres[3].isDefault);  // a default Timbre stays default
+            CHECK(!copiedCombi->timbres[3].isDefault);
+            CHECK_EQ(copiedCombi->timbres[3].number, 12, "unmappable Timbre's bytes pass through UNCHANGED too");
+            CHECK_EQ(copiedCombi->timbres[3].rawBankCode, 16, "unmappable Timbre's raw bank code is untouched");
+            CHECK(copiedCombi->timbres[4].isDefault);  // a default Timbre stays default
         }
 
         auto newProgram = dst.decodeProgram(1, 0);
@@ -1926,7 +2158,9 @@ int main() {
     testPcgFileEndToEnd();
     testPcgFileNoSetlists();
     testSaveRoundTrip();
+    testDirtyTracking();
     testResolveDuplicates();
+    testProgramSwap();
     testCombiRearrange();
     testCombiCrossDatasetCopy();
     testCombiCrossDatasetCopyExactSlot();
