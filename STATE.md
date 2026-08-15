@@ -3863,4 +3863,30 @@ App/UI:
         `pcg_file_test`/`kronos_editor` rebuild clean, `node --check` on
         all touched JS files.
 
+CLEAN UP -- noted 2026-08-15:
+
+  1. RESOLVED (2026-08-15): `docs/content/building/index.md` had two sections
+     covering the same macOS ground -- this session's own "Real DevTools
+     attached to the running app" (prose, all 3 platforms) and a separately-
+     added "Debugging (setup) > MacOSX / Safari" (screenshots). Merged into
+     one "## Debugging, especially the JavaScript side" section (Headless
+     tests -> Plain-browser mode -> Real DevTools, the last with a per-
+     platform macOS/Windows/Linux breakdown, macOS's including the
+     screenshots) -- fixed two references left dangling by the reorder
+     ("the first option"/"each of these" no longer pointed at the right
+     thing) while merging.
+  2. NOT YET ACTED ON: `docs/README.md`'s file-format pointer was repointed
+     from
+     `content/format/index.md` to `content/overview/index.md` (display text
+     included) -- flagged directly as an inconsistency against this
+     project's own documented convention (`content/format/index.md` = the
+     canonical file-format reference, `content/overview/index.md` = a
+     separate Hugo Overview summary, per this file's CLAUDE.md pointer and
+     STATE.md's own "Keep the docs in sync by hand" section). Project owner
+     chose to keep it as edited rather than revert. Worth reconciling
+     later: either this is the start of retiring/merging the standalone
+     format page into Overview (in which case CLAUDE.md's own description
+     of the docs layout needs updating to match), or it should eventually
+     move back -- not resolved either way yet.
+
 === END STATE BLOCK ===

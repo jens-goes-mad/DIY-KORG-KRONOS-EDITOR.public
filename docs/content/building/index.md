@@ -76,28 +76,14 @@ all).
 The editor's UI is plain HTML/JS/CSS running inside CHOC's native webview, and there are
 three different ways to debug it depending on what you're actually chasing.
 
-### Real DevTools attached to the running app
+### Headless, per-component tests
 
-`main.cpp` already sets `options.enableDebugMode = true` on the `choc::ui::WebView`, which
-CHOC wires up per platform:
+For the pure `decode`/`encode` codec modules under `frontend/components/kronos/*.js` (no
+DOM at all), run the headless test directly in Node:
 
-- **macOS**: enables `developerExtrasEnabled` on the WKWebView -- right-click anywhere in
-  the app and choose **Inspect Element**, or use Safari's **Develop menu** (turn it on via
-  Safari -> Settings -> Advanced -> "Show Develop menu") to attach the full Web Inspector
-  to the running app remotely.
-- **Windows (WebView2)**: the same flag sets `AreDevToolsEnabled` -- **F12**, or right-click
-  -> Inspect, opens Chrome DevTools attached to the embedded WebView2.
-- **Linux (WebKitGTK)**: right-click -> Inspect Element works the same way.
-
-This gives you breakpoints, a live console, and the DOM inspector against the *real*
-native bridge (`window.copyProgram`, `window.listDatasets`, actual file bytes) -- not
-fabricated data. One gotcha: `console.log` inside the webview only goes to that DevTools
-console, never to the terminal `kronos_editor` was launched from.
-
-Combined with a Debug build reading `frontend/` live off disk (see "Build" above), this
-means the normal edit loop for JS/CSS changes is: edit the file, reload the window
-(Cmd+R/Ctrl+R works inside the webview), no C++ rebuild at all -- only changes under
-`src/` need `cmake --build build` again.
+```bash
+node frontend/components/kronos/setlist-comment.test.js
+```
 
 ### Plain-browser mode -- no native app at all
 
@@ -110,46 +96,50 @@ work that doesn't need real file data. The one thing it genuinely can't do is op
 `.PCG`/`.SNG` file -- a plain browser page has no filesystem access, so "Open..." falls
 back to a `window.prompt()` stub instead of a real file picker.
 
-### Headless, per-component tests
+### Real DevTools attached to the running app
 
-For the pure `decode`/`encode` codec modules under `frontend/components/kronos/*.js` (no
-DOM at all), run the headless test directly in Node:
+`main.cpp` already sets `options.enableDebugMode = true` on the `choc::ui::WebView`, which
+CHOC wires up per platform and allows remote debugging.<br>
 
-```bash
-node frontend/components/kronos/setlist-comment.test.js
-```
+This gives you breakpoints, a live console, and the DOM inspector against the *real*
+native bridge (`window.copyProgram`, `window.listDatasets`, actual file bytes) -- not
+fabricated data. One gotcha: `console.log` inside the webview only goes to that DevTools
+console, never to the terminal `kronos_editor` was launched from.
 
-Each of these also has a browser-based `.test.html` harness (open it via a static file
-server) if you want to see the component actually rendered. See
-[App architecture & components](/components)'s "Committed, headless test suites" section
-for how the two fit together.
+Combined with a Debug build reading `frontend/` live off disk (see "Build" above), this
+means the normal edit loop for JS/CSS changes is: edit the file, reload the window
+(Cmd+R/Ctrl+R works inside the webview), no C++ rebuild at all -- only changes under
+`src/` need `cmake --build build` again.
 
-For most day-to-day JS bug hunting, the first option -- DevTools attached to the real
-running app -- is the one to reach for: real data, real bridge, and a reload is all a JS
-edit needs.
-
-## Debugging (setup)
-
-### MacOSX / Safari
-
-Allow Safari remotely connect to CHOC. 
+#### **macOS**
 
 Select: `Safari -> Preferences -> Show features for Web Developers`
 
 ![Safari Preferences](Debug-Safari-Setup.png)
 
 Now start Safari and select: `Develop -> <YOUR MAC> -> Kronos Editor, choc.choc`<br>
-And here you go: Full browser dev tools support from inspections to break points. Just press CTRL+R to refresh the UI (CSS/JS/HTML), no build required. 
+And here you go: Full browser dev tools support. Just press CTRL+R to refresh the UI (CSS/JS/HTML), no build required. 
 
 ![Safari Preferences](Debug-Safari-KE.png)
 
-### Linux
+#### **Windows (WebView2)**
 
-TODO
+Same flag sets `AreDevToolsEnabled` -- **F12**, or `right-click
+-> Inspect`, opens Chrome DevTools attached to the embedded WebView2.
 
-### Windows
+#### **Linux (WebKitGTK)**
 
-TODO
+Do: `right-click -> Inspect Element` works the same way.
+
+### Conclusion
+
+Each of the per-component codec modules above also has a browser-based `.test.html`
+harness (open it via a static file server) if you want to see the component actually
+rendered. See [App architecture & components](/components)'s "Committed, headless test
+suites" section for how the two fit together.
+
+For most day-to-day JS bug hunting, DevTools attached to the real running app (above) is
+the one to reach for: real data, real bridge, and a reload is all a JS edit needs.
 
 ## A note for contributors touching `main.cpp` on Linux
 
