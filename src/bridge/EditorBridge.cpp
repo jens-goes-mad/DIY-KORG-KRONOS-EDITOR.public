@@ -95,8 +95,8 @@ int countAt(const std::vector<std::vector<int>>& counts, int bank, int number) {
 // data and bulk/native-speed operations; naming/formatting for display is
 // an encoder/decoder-layer (JS) responsibility. This also removed a real,
 // confirmed duplicate -- fontSizeName()'s exact mapping already existed
-// independently in frontend/components/kronos/setlist-comment.js
-// (FONT_SIZE_BY_VALUE), used for the real byte-level editable path; this
+// independently in frontend/components/kronos/setlist-editor-comment-and-
+// font.js (FONT_SIZE_BY_VALUE), used for the real byte-level editable path; this
 // bridge's copy was only ever feeding a REAL-ONLY summary label.
 // PROGRAM_BANK_TYPE_NAMES (frontend/pane.js) and a local FONT_SIZE_NAMES
 // (frontend/pane-setlist-editor.js) are the new JS-side homes for the
@@ -183,6 +183,11 @@ choc::value::Value EditorBridge::programToValue(const kronos::ProgramInfo& progr
     // yet cross-checked against a real backup's actual bytes, see
     // docs/external/README.md's caveat before trusting this in the UI.
     v.setMember("bankType", static_cast<int>(program.bankType));
+    // Raw 0-9 value only -- see ProgramInfo::exiAlgorithmType's doc comment.
+    // Only meaningful when bankType is Exi; the JS layer decides the actual
+    // engine name and whether to show it at all, same "C++ decodes, JS
+    // presents" split as every other formatted field in this bridge.
+    v.setMember("exiAlgorithmType", program.exiAlgorithmType);
     return v;
 }
 

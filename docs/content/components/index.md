@@ -75,8 +75,9 @@ tiers:
   across the JS/native bridge for something already sitting in native memory.
 - **Detail/edit views** (a Set List slot's Comment/Font size/Color/Volume today)
   request the *specific raw byte chunk* they're working on from the bridge, and
-  decode/encode it entirely in JavaScript -- exactly what `setlist-comment.js` and
-  `setlist-slot-params.js` already do, see the case study below for the full loop.
+  decode/encode it entirely in JavaScript -- exactly what `setlist-editor-comment-and-
+  font.js`, `setlist-editor-color.js`, and `setlist-editor-volume.js` already do, see
+  the case study below for the full loop.
   This is where "test without building the native app" actually matters, since
   that's the UI a human iterates on directly.
 
@@ -110,8 +111,9 @@ as this evolves.
 ## Why this helps testing
 
 - **Codec functions are trivially unit-testable** -- pure input/output, no DOM, no async,
-  no app state. `setlist-comment.test.html`'s self-checks run a dozen-plus assertions the
-  instant the page loads, with pass/fail rendered directly on the page.
+  no app state. `setlist-editor-comment-and-font.test.html`'s self-checks run a
+  dozen-plus assertions the instant the page loads, with pass/fail rendered directly on
+  the page.
 - **Real byte fixtures keep tests honest.** Test data is copied straight out of a real
   backup file (see the case study below) rather than invented, so a passing test means
   something about the actual format, not just about the code's own assumptions.
@@ -125,8 +127,9 @@ as this evolves.
 
 The `.test.html` harnesses above are for interactive/manual development, but they need a
 human to open a browser tab and eyeball pass/fail. Every component's codec also gets a
-plain, headless, `node`-runnable twin (`setlist-comment.test.js` alongside
-`setlist-comment.test.html`), importing the exact same real-byte fixture from a shared
+plain, headless, `node`-runnable twin (`setlist-editor-comment-and-font.test.js`
+alongside `setlist-editor-comment-and-font.test.html`), importing the exact same
+real-byte fixture from a shared
 `test-fixtures.js` module (so the two never drift into testing subtly different data),
 and exiting non-zero on any failed assertion -- the shape CI/`ctest`-style automation
 needs, that a browser page alone can't give you.
@@ -204,15 +207,17 @@ things Bulma *doesn't* solve for free, like column-width locking within a
 table, which Bulma has no concept of at all) is in `STATE.md`, since it's a
 still-evolving area rather than a settled architectural decision.
 
-## Case study: SetlistComment
+## Case study: SetlistEditorCommentAndFont
 
 The first component built this way is
-[`frontend/components/kronos/setlist-comment.js`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/frontend/components/kronos/setlist-comment.js)
--- a Comment textarea plus a Font size button bar (XS/S/M/L/XL). It's a good example of
-the whole loop working end to end:
+[`frontend/components/kronos/setlist-editor-comment-and-font.js`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/frontend/components/kronos/setlist-editor-comment-and-font.js)
+(originally `setlist-comment.js`, renamed 2026-08-16 alongside splitting the old
+combined Color+Volume file into `setlist-editor-color.js`/`setlist-editor-volume.js` --
+see `STATE.md`) -- a Comment textarea plus a Font size button bar (XS/S/M/L/XL). It's a
+good example of the whole loop working end to end:
 
 1. Built and manually tested in its
-   [standalone harness](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/frontend/components/kronos/setlist-comment.test.html),
+   [standalone harness](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/frontend/components/kronos/setlist-editor-comment-and-font.test.html),
    seeded with a real Comment record, before anything was wired into the native app.
 2. Font size's actual byte encoding was unknown at first -- an early guess (a single
    reserved byte) turned out to be wrong once tested against real hardware data, and was
@@ -251,9 +256,10 @@ the exact same function). The first time any section opens for a given slot, `op
 1. Checks a cross-pane lock (more below) and bails out with a toast if another pane
    already has this exact slot open.
 2. Fetches the slot's raw 542-byte SBK1 record via `window.getSongRecordBytes(datasetId,
-   setlistIndex, songIndex)` and lazily loads the two codecs (`setlist-comment.js`,
-   `setlist-slot-params.js`) via a cached dynamic `import()` -- a plain expression, not a
-   static `import` statement, which is what lets it work from inside `pane.js` even
+   setlistIndex, songIndex)` and lazily loads the four codecs (`setlist-editor-comment-
+   and-font.js`, `setlist-editor-color.js`, `setlist-editor-volume.js`, `setlist-editor-
+   name.js`) via a cached dynamic `import()` -- a plain expression, not a static `import`
+   statement, which is what lets it work from inside `pane-setlist-editor.js` even
    though `index.html`'s scripts are all classic (non-`module`) `<script>` tags.
 3. Only once both are ready does it mark the slot as having an open panel and re-render.
 

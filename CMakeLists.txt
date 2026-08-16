@@ -100,6 +100,15 @@ add_executable(pcg_file_test
 
 target_include_directories(pcg_file_test PRIVATE src)
 
+# Same define kronos_editor itself gets (see EDITOR_RESOURCES_DIR above) --
+# lets tests read the real, byte-extracted resources/Init-Program-*.raw
+# templates directly (testExiAlgorithmTypeRealTemplates()) instead of only
+# ever testing against synthetic fixtures, same "real Kronos data makes
+# tests worth trusting" convention as everywhere else in this project.
+target_compile_definitions(pcg_file_test PRIVATE
+    EDITOR_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
+)
+
 add_test(NAME pcg_file_test COMMAND pcg_file_test)
 
 # Standalone hardware-validation CLI tool, same minimal dependency set as

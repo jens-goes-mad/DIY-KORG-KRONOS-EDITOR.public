@@ -683,6 +683,53 @@ template into a *different* bank's slot would carry over whichever value
 that source bank's Init Program happened to have -- not yet checked whether
 that reads as harmless on real hardware.
 
+### 5.6 EXi Algorithm Type — which specific engine an EXi Program uses, CONFIRMED 2026-08-16
+
+§5.2 already confirms HD-1-vs-EXi (`ProgramBankType`) is a coarse, *per-bank*
+setting -- every Program in one bank shares the same engine family. What
+that doesn't cover: **within** an EXi bank, each individual Program
+independently picks *which* EXi synthesis engine it actually uses (AL-1,
+CX-3, STR-1, ...) -- a finer-grained, per-record field, not per-bank.
+
+Korg's own SysEx reference (`docs/external/KORG/Prog_EXi.txt`) opens with
+an explicit legend for this:
+
+```
+0:Off       4:STR-1      8:SGX-2
+1:HD-1      5:MS-20EX    9:EP-1
+2:AL-1      6:PolysixEX
+3:CX-3      7:MOD-7
+```
+
+`Prog_EXi_Common.txt` lists the byte as `EXi1 Common > Algorithm Type` at
+SysEx offset **2857**, range `00~09` (`Off~EP-1`, matching both legend
+endpoints exactly), within a table whose own header states
+`EXi Program Size: 4960 byte` -- exactly this project's own independently-
+confirmed real Program record size (§5.5). That match, plus this format's
+established "4-byte marker before every field block" shape (`kNameOffset`
+in `ProgramDecoder.cpp`), predicted a `sysexOffset + 4` shift -- **verified
+directly**, not just inferred, against the two real, byte-extracted
+templates already in `resources/`:
+
+| File | file offset 2861 (EXi1 Algorithm) | file offset 3913 (EXi2 Algorithm) |
+|---|---|---|
+| `Init-Program-HD1.raw` | `0` (Off) | `0` (Off) |
+| `Init-Program-EXi.raw` | `2` (**AL-1**) | `0` (Off) |
+
+Consistent with a coherent story on all counts: an HD-1 Program has no EXi
+engine active (both slots read Off), the factory "Init EXi Program"
+defaults to AL-1, and the very next byte (`EXi1 Common > Transpose`, a
+plain signed range `-60~+60` centered at raw `0`) reads a plausible `0` in
+the same template -- three independent checks landing exactly where
+predicted, not one coincidental match.
+
+A second, identical field exists at SysEx offset 3909 (file offset 3913,
+`EXi2 Common > Algorithm Type`) -- a Program can apparently layer two
+independent EXi engines. Only EXi1 is currently decoded
+(`ProgramFields::exiAlgorithmType`, `src/kronos/ProgramDecoder.h`); EXi2 is
+noted here but not wired into the parser yet, same "don't build for
+hypothetical needs" convention as everywhere else in this project.
+
 ## 6. Combi Timbre references — CONFIRMED (Program refs), status byte CONFIRMED
 
 Each Combi record (`CMB1 > CBK1`, §5.1) has 16 Timbre slots, each optionally

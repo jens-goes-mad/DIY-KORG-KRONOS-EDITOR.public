@@ -1,12 +1,14 @@
-// SetlistSlotName: name codec for one SDB1 Set List slot NAME record --
-// distinct from setlist-slot-params.js's SBK1 params record (Color/Volume):
-// a slot's name and its params live in entirely separate chunks, at
-// different byte offsets and strides (see src/kronos/PcgFile.h's own
-// nameRecordBytes() doc comment for why). Same masked-read-modify-write
-// discipline as its siblings, kept as its own file for the same "one
-// concern per file" reason setlist-comment.js/setlist-slot-params.js are
-// split apart. Deliberately standalone -- no dependency on the rest of this
-// app, choc, or a native build.
+// SetlistEditorName: name codec for one SDB1 Set List slot NAME record --
+// renamed 2026-08-16 (was setlist-slot-name.js), part of the wider
+// "setlist-editor-*" family rename (siblings: setlist-editor-comment-and-
+// font.js, setlist-editor-color.js, setlist-editor-volume.js). Distinct
+// from those siblings' SBK1 records: a slot's name lives in an entirely
+// separate chunk, at different byte offsets and strides (see
+// src/kronos/PcgFile.h's own nameRecordBytes() doc comment for why). Same
+// masked-read-modify-write discipline as its siblings, kept as its own
+// file for the same "one concern per file" reason they're all split apart.
+// Deliberately standalone -- no dependency on the rest of this app, choc,
+// or a native build.
 //
 // Record shape CONFIRMED -- see docs/content/format/index.md §3.2 and
 // src/kronos/PcgFile.cpp's readRecordName() for the C++ side of the same
@@ -35,7 +37,7 @@ export function decodeSlotName(bytes) {
 // Returns a NEW 28-byte Uint8Array: the 4-byte marker preserved byte-
 // identical from the input, the 24-byte name field replaced with `name`
 // (truncated to NAME_MAX_LENGTH characters, NUL-padded if shorter) -- same
-// charCodeAt-and-mask encoding setlist-comment.js's encoder uses.
+// charCodeAt-and-mask encoding setlist-editor-comment-and-font.js's encoder uses.
 export function encodeSlotName(bytes, name) {
   checkLength(bytes, "encodeSlotName");
   const out = Uint8Array.from(bytes);

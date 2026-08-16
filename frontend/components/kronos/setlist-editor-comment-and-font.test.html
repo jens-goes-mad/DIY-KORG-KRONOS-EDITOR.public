@@ -1,8 +1,9 @@
 <!doctype html>
 <!--
-  Standalone test/dev harness for setlist-comment.js -- no CHOC, no native
-  build, no mock_bridge.js, nothing from the rest of this app. Just this
-  component and its own CSS, fed one real 542-byte SBK1 record.
+  Standalone test/dev harness for setlist-editor-comment-and-font.js -- no
+  CHOC, no native build, no mock_bridge.js, nothing from the rest of this
+  app. Just this component and its own CSS, fed one real 542-byte SBK1
+  record.
 
   ES modules (`type="module"`) don't load over a bare file:// URL in most
   browsers (CORS), so serve this directory with any static file server,
@@ -10,15 +11,15 @@
 
       python3 -m http.server 8000
 
-  then open http://localhost:8000/frontend/components/kronos/setlist-comment.test.html
+  then open http://localhost:8000/frontend/components/kronos/setlist-editor-comment-and-font.test.html
   -- that's not a "build," just a static file server; nothing gets compiled
   or bundled.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>SetlistComment -- standalone test</title>
-  <link rel="stylesheet" href="setlist-comment.css" />
+  <title>SetlistEditorCommentAndFont -- standalone test</title>
+  <link rel="stylesheet" href="setlist-editor-comment-and-font.css" />
   <style>
     body {
       background: #1e1f22;
@@ -54,9 +55,9 @@
   </style>
 </head>
 <body>
-  <h1>SetlistComment -- standalone test harness</h1>
+  <h1>SetlistEditorCommentAndFont -- standalone test harness</h1>
   <p style="color:#9a9ba0; margin:0;">
-    No native app, no CHOC, no mock_bridge.js -- just <code>setlist-comment.js</code> fed one
+    No native app, no CHOC, no mock_bridge.js -- just <code>setlist-editor-comment-and-font.js</code> fed one
     real 542-byte SBK1 song record ("Rolling in the Deep", Set List "emergency exit").
   </p>
 
@@ -82,7 +83,7 @@
       decodeSetlistComment,
       encodeSetlistComment,
       createSetlistCommentEditor,
-    } from "./setlist-comment.js";
+    } from "./setlist-editor-comment-and-font.js";
     import {
       ROLLING_IN_THE_DEEP_RECORD_HEX,
       hexToBytes,

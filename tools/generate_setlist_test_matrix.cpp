@@ -36,8 +36,9 @@
 //
 // The Comment/Font-size/Volume ENCODING below mirrors -- byte for byte --
 // src/kronos/PcgFile.cpp's private kSbk* constants (used by readSlotParams())
-// and frontend/components/kronos/setlist-comment.js's/setlist-slot-params.js's
-// JS codecs. It's necessarily a third expression of the same confirmed
+// and frontend/components/kronos/setlist-editor-comment-and-font.js's/
+// setlist-editor-color.js's/setlist-editor-volume.js's JS codecs. It's
+// necessarily a third expression of the same confirmed
 // encoding: PcgFile.cpp's masks are private to that translation unit (by
 // design -- nothing outside it needs Kronos byte offsets), and this tool
 // has no WebView to run the JS codecs in. If the confirmed encoding for any
@@ -94,9 +95,9 @@ std::string makeWrapTestText() {
     return text;
 }
 
-// Mirrors setlist-comment.js's encodeSetlistComment() -- masked read-
-// modify-write so this never touches Color/Transpose/the still-unexplained
-// bits sharing these same two bytes.
+// Mirrors setlist-editor-comment-and-font.js's encodeSetlistComment() --
+// masked read-modify-write so this never touches Color/Transpose/the
+// still-unexplained bits sharing these same two bytes.
 void encodeComment(std::vector<uint8_t>& bytes, const std::string& comment, int fontSizeValue) {
     const auto lowBits = static_cast<uint8_t>(((fontSizeValue & 2) ? 0x80 : 0) | ((fontSizeValue & 1) ? 0x40 : 0));
     bytes[kTypeColorOffset] = static_cast<uint8_t>((bytes[kTypeColorOffset] & ~kFontSizeLowMask) | lowBits);
@@ -109,13 +110,13 @@ void encodeComment(std::vector<uint8_t>& bytes, const std::string& comment, int 
     }
 }
 
-// Mirrors setlist-slot-params.js's encodeSlotVolume() -- a plain byte, no
-// masking needed (not shared with any other field).
+// Mirrors setlist-editor-volume.js's encodeSlotVolume() -- a plain byte,
+// no masking needed (not shared with any other field).
 void encodeVolume(std::vector<uint8_t>& bytes, int volume) {
     bytes[kVolumeOffset] = static_cast<uint8_t>(volume < 0 ? 0 : (volume > 127 ? 127 : volume));
 }
 
-// Mirrors setlist-slot-params.js's encodeSlotColor() -- masked read-modify-
+// Mirrors setlist-editor-color.js's encodeSlotColor() -- masked read-modify-
 // write, same discipline as encodeComment()'s Font size handling (this byte
 // is shared with isProgram/Font size too). `color` is 1-based (1..16).
 void encodeColor(std::vector<uint8_t>& bytes, int color) {

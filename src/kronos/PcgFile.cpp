@@ -141,8 +141,8 @@ constexpr size_t kSbkCommentOffset = 18;
 // width as the 12 unexplained bytes at the record's own start (+0..+11),
 // a symmetric shape this project doesn't have an explanation for yet.
 // Getting this wrong isn't just a decode inaccuracy: the encoder
-// (frontend/components/kronos/setlist-comment.js) writes into this same
-// span, so a too-generous bound here risked a long comment overwriting
+// (frontend/components/kronos/setlist-editor-comment-and-font.js) writes
+// into this same span, so a too-generous bound here risked a long comment overwriting
 // whatever those trailing 12 bytes actually are.
 constexpr size_t kSbkCommentMaxLength = 512;
 
@@ -642,7 +642,7 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
             const uint8_t* record = &data[off];
             ProgramFields fields = decodeProgramFields(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i));
             uint64_t hash = hashProgramRecord(record, bytesPerRecord);
-            programs_.push_back({fields.bank, fields.number, fields.name, hash, bankType});
+            programs_.push_back({fields.bank, fields.number, fields.name, hash, bankType, fields.exiAlgorithmType});
 
             if (fields.bank >= static_cast<int>(programBankNames.size())) programBankNames.resize(fields.bank + 1);
             if (fields.number >= static_cast<int>(programBankNames[fields.bank].size())) {
@@ -1579,7 +1579,7 @@ std::optional<ProgramInfo> PcgFile::decodeProgram(int bank, int number) const {
     const uint8_t* record = &data_[off];
     ProgramFields fields = decodeProgramFields(record, loc.bytesPerRecord, bank, number);
     uint64_t hash = hashProgramRecord(record, loc.bytesPerRecord);
-    return ProgramInfo{fields.bank, fields.number, fields.name, hash, loc.bankType};
+    return ProgramInfo{fields.bank, fields.number, fields.name, hash, loc.bankType, fields.exiAlgorithmType};
 }
 
 std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile& src, int srcBank, int srcNumber,
@@ -1753,7 +1753,7 @@ void PcgFile::refreshProgramInfo(int bank, int number) {
     const uint8_t* record = &data_[off];
     ProgramFields fields = decodeProgramFields(record, loc.bytesPerRecord, bank, number);
     uint64_t hash = hashProgramRecord(record, loc.bytesPerRecord);
-    ProgramInfo updated{fields.bank, fields.number, fields.name, hash, loc.bankType};
+    ProgramInfo updated{fields.bank, fields.number, fields.name, hash, loc.bankType, fields.exiAlgorithmType};
 
     auto it = std::find_if(programs_.begin(), programs_.end(),
                             [&](const ProgramInfo& p) { return p.bank == bank && p.number == number; });

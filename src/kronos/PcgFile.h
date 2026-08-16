@@ -98,6 +98,10 @@ struct ProgramInfo {
     std::string name;
     uint64_t contentHash = 0;
     ProgramBankType bankType = ProgramBankType::Hd1;
+    // Raw "EXi1 Common > Algorithm Type" byte (0-9) -- see
+    // ProgramFields::exiAlgorithmType's doc comment (ProgramDecoder.h) for
+    // the confirmed enum/offset. Only meaningful when bankType == Exi.
+    int exiAlgorithmType = 0;
 };
 
 // A Timbre's on/off + source-engine status, read from the byte immediately
@@ -329,10 +333,9 @@ public:
     //    that EXi figure was never actually confirmed against real bytes.
     //    Checked directly against two independent real backup files
     //    (programBankInfo() over both): every one of the 20 PRG1 sub-banks,
-    //    HD-1 or EXi alike, uses 4960-byte records. Kept as a belt-and-
-    //    suspenders check regardless, since ProgramBankTypeResult::
-    //    tagMatchesStride can still be false for real data this project
-    //    hasn't independently verified yet, and a third file could yet
+    //    HD-1 or EXi alike, uses 4960-byte records (ProgramDecoder.cpp's
+    //    kExiProgramRecordSize corrected to match 2026-08-16). Kept as a
+    //    belt-and-suspenders check regardless, since a third file could yet
     //    show a real EXi/HD-1 stride difference this hasn't hit.
     //  - TargetSlotOccupied: the destination's *current* name doesn't look
     //    like an empty/untouched slot (looksLikeEmptyProgramName() in
@@ -739,7 +742,8 @@ public:
     // decodeProgram()/decodeCombi(), applied to Set List slots: a detail
     // editor (Color/Volume/Comment row) requests exactly this chunk,
     // decodes/encodes it entirely in JS via frontend/components/kronos/
-    // setlist-comment.js and setlist-slot-params.js, and writes it back via
+    // setlist-editor-comment-and-font.js, setlist-editor-color.js, and
+    // setlist-editor-volume.js, and writes it back via
     // putSongRecordBytes() -- see STATE.md. Returns nullopt if the indices
     // are out of range or this file's SBK1 data wasn't parseable at load.
     std::optional<std::vector<uint8_t>> songRecordBytes(int setlistIndex, int songIndex) const;

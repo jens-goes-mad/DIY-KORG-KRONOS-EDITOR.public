@@ -8,9 +8,10 @@
 // Deliberately NOT a from-scratch script re-implementing the SBK1 byte
 // math -- it drives the real app's own bridge methods (getSongRecordBytes/
 // putSongRecordBytes/saveFileAs) and the real JS codecs
-// (setlist-comment.js/setlist-slot-params.js). The whole point of this
-// exercise is validating THAT code path against real hardware; a parallel
-// implementation would only prove its own math right, not the app's.
+// (setlist-editor-comment-and-font.js/setlist-editor-color.js/setlist-
+// editor-volume.js). The whole point of this exercise is validating THAT
+// code path against real hardware; a parallel implementation would only
+// prove its own math right, not the app's.
 //
 // Usage:
 //   1. Build and run the real native app (see README.md -- this needs the
@@ -72,9 +73,10 @@ async function generateSetlistTestMatrix() {
   // Relative to the loaded PAGE (frontend/index.html), not to this script's
   // own path on disk -- code pasted into devtools console runs in the
   // page's own context, so a relative import() resolves the same way
-  // pane.js's own dynamic import of these same two files already does.
-  const { decodeSetlistComment, encodeSetlistComment } = await import("./components/kronos/setlist-comment.js");
-  const { encodeSlotColor, encodeSlotVolume } = await import("./components/kronos/setlist-slot-params.js");
+  // pane-setlist-editor.js's own dynamic import of these same files already does.
+  const { decodeSetlistComment, encodeSetlistComment } = await import("./components/kronos/setlist-editor-comment-and-font.js");
+  const { encodeSlotColor } = await import("./components/kronos/setlist-editor-color.js");
+  const { encodeSlotVolume } = await import("./components/kronos/setlist-editor-volume.js");
 
   const sourceResult = await window.getSongRecordBytes(datasetId, TEST_MATRIX_SETLIST_INDEX, TEST_MATRIX_SOURCE_SLOT);
   if (!sourceResult.ok) throw new Error(`Couldn't read the source slot: ${sourceResult.error}`);

@@ -705,9 +705,9 @@ td.has-comment {
 
 /* Column: the Font size bar sits above the textarea+Apply row -- was
    accidentally dropped when Comment editing moved from the old standalone
-   setlist-comment.js component (which had both) into pane.js's own
-   accordion section (which initially only ported the textarea). Brought
-   back 2026-08-06. */
+   setlist-comment.js component (now renamed setlist-editor-comment-and-
+   font.js, which had both) into pane.js's own accordion section (which
+   initially only ported the textarea). Brought back 2026-08-06. */
 .comment-editor-section {
   display: flex;
   flex-direction: column;

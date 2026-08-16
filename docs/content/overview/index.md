@@ -71,7 +71,9 @@ The file format side: container/chunk parsing, all 128 Set Lists, per-slot param
 Program/Combi instrument-name cross-reference, and Combi Timbre-to-Program references with
 all 20 Program banks' raw bank codes now confirmed -- cross-checked against Korg's own SysEx
 documentation and an independent third-party reverse-engineering effort where either exists,
-never trusted blindly. Full detail, including exactly what's still open, is in
+never trusted blindly. Which specific EXi synthesis engine (AL-1, CX-3, STR-1, MS-20EX,
+PolysixEX, MOD-7, SGX-2, EP-1) an individual EXi Program uses is confirmed too, byte-verified
+against real templates. Full detail, including exactly what's still open, is in
 [The file format](/format).
 
 The editor side, briefly (see the [User Guide](/guide) for the real walkthrough):

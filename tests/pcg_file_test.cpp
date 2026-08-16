@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -109,7 +110,7 @@ void appendChunk(std::vector<uint8_t>& out, const char* tag, const std::vector<u
 // Transpose's high 3 bits share byte +13 with Bank. `colorField1based` and
 // `garbageLow4` deliberately poke bits Font size/Transpose/Bank/Color do
 // NOT own, to prove decoding only reads the bits it actually owns (mirrors
-// setlist-comment.test.js's bit-preservation check, but for the C++
+// setlist-editor-comment-and-font.test.js's bit-preservation check, but for the C++
 // decoder instead of the JS encoder). Byte +12 has no spare bit left to
 // poke this way anymore -- Type is confirmed 2 bits wide (bits0-1, not
 // just bit0), so combined with Color (bits2-5) and Font size (bits6-7)
@@ -307,6 +308,17 @@ void testDecodeProgramFields() {
     std::vector<uint8_t> tooShort(10, 0);
     kronos::ProgramFields shortFields = kronos::decodeProgramFields(tooShort.data(), tooShort.size(), 0, 0);
     CHECK_EQ(shortFields.name, std::string(), "decodeProgramFields on a truncated record yields an empty name");
+    CHECK_EQ(shortFields.exiAlgorithmType, 0, "a too-short record leaves exiAlgorithmType at its default (0/Off)");
+
+    // exiAlgorithmType reads a plain byte at file offset 2861 (confirmed --
+    // see ProgramFields::exiAlgorithmType's own doc comment) -- a synthetic
+    // check here that the right BYTE is read, real-file ground truth (the
+    // checked-in Init-Program-*.raw templates) covered separately below in
+    // testExiAlgorithmTypeRealTemplates().
+    std::vector<uint8_t> withAlgo(2862, 0);
+    withAlgo[2861] = 2;  // AL-1
+    kronos::ProgramFields algoFields = kronos::decodeProgramFields(withAlgo.data(), withAlgo.size(), 0, 0);
+    CHECK_EQ(algoFields.exiAlgorithmType, 2, "decodeProgramFields reads Algorithm Type from file offset 2861");
 }
 
 void testClassifyProgramBankType() {
@@ -315,9 +327,13 @@ void testClassifyProgramBankType() {
     CHECK(hd1Match.type == kronos::ProgramBankType::Hd1);
     CHECK_EQ(hd1Match.tagMatchesStride, true, "PBK1 tag with the expected HD-1 stride (4960) matches");
 
-    auto exiMatch = kronos::classifyProgramBankType("MBK1", 3706);
+    // EXi's own expected stride was corrected 2026-08-16 (docs/content/
+    // format/index.md §5.5): both bank types are really 4960 bytes, not
+    // 3706 -- confirmed against two real files AND, independently, Korg's
+    // own Prog_EXi_Common.txt ("EXi Program Size: 4960 byte").
+    auto exiMatch = kronos::classifyProgramBankType("MBK1", 4960);
     CHECK(exiMatch.type == kronos::ProgramBankType::Exi);
-    CHECK_EQ(exiMatch.tagMatchesStride, true, "MBK1 tag with the expected EXi stride (3706) matches");
+    CHECK_EQ(exiMatch.tagMatchesStride, true, "MBK1 tag with the expected EXi stride (4960) matches");
 
     // A stride that doesn't match the tag's expected value is a genuine
     // anomaly worth flagging, not silently ignored -- `type` still follows
@@ -325,17 +341,44 @@ void testClassifyProgramBankType() {
     // flag must go false.
     auto hd1Mismatch = kronos::classifyProgramBankType("PBK1", 3706);
     CHECK(hd1Mismatch.type == kronos::ProgramBankType::Hd1);
-    CHECK_EQ(hd1Mismatch.tagMatchesStride, false, "PBK1 tag with EXi's stride is flagged as a mismatch");
+    CHECK_EQ(hd1Mismatch.tagMatchesStride, false, "PBK1 tag with a wrong stride is flagged as a mismatch");
 
-    auto exiMismatch = kronos::classifyProgramBankType("MBK1", 4960);
+    auto exiMismatch = kronos::classifyProgramBankType("MBK1", 3706);
     CHECK(exiMismatch.type == kronos::ProgramBankType::Exi);
-    CHECK_EQ(exiMismatch.tagMatchesStride, false, "MBK1 tag with HD-1's stride is flagged as a mismatch");
+    CHECK_EQ(exiMismatch.tagMatchesStride, false, "MBK1 tag with the old (now-corrected) wrong stride is flagged as a mismatch");
 
     // Any tag other than MBK1 defaults to Hd1 -- PBK1 is the only real
     // HD-1 tag this format uses, but this keeps classification total rather
     // than needing a third "unknown" state for a tag that shouldn't occur.
     auto unknownTag = kronos::classifyProgramBankType("XBK1", 1234);
     CHECK(unknownTag.type == kronos::ProgramBankType::Hd1);
+}
+
+// Ground truth for ProgramFields::exiAlgorithmType's confirmed offset/enum,
+// against the two REAL byte-extracted Program record templates already
+// checked into resources/ (docs/content/format/index.md §5.5 -- both
+// cross-verified against two independent real backup files when they were
+// first extracted) -- not synthetic data, per this project's "real Kronos
+// data makes tests worth trusting" convention.
+void testExiAlgorithmTypeRealTemplates() {
+    auto readResource = [](const char* relativePath) -> std::vector<uint8_t> {
+        std::ifstream file(std::string(EDITOR_RESOURCES_DIR) + "/" + relativePath, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    };
+
+    auto hd1 = readResource("Init-Program-HD1.raw");
+    CHECK_EQ(static_cast<int>(hd1.size()), 4960, "Init-Program-HD1.raw is a real 4960-byte Program record");
+    if (hd1.size() == 4960) {
+        auto fields = kronos::decodeProgramFields(hd1.data(), hd1.size(), 0, 0);
+        CHECK_EQ(fields.exiAlgorithmType, 0, "an HD-1 Program's EXi1 Algorithm Type reads Off -- no EXi engine active");
+    }
+
+    auto exi = readResource("Init-Program-EXi.raw");
+    CHECK_EQ(static_cast<int>(exi.size()), 4960, "Init-Program-EXi.raw is a real 4960-byte Program record");
+    if (exi.size() == 4960) {
+        auto fields = kronos::decodeProgramFields(exi.data(), exi.size(), 0, 0);
+        CHECK_EQ(fields.exiAlgorithmType, 2, "the factory Init EXi Program defaults to AL-1 (2)");
+    }
 }
 
 void testDecodeCombiFields() {
@@ -747,8 +790,9 @@ void testPcgFileEndToEnd() {
     }
 
     // songRecordBytes()/putSongRecordBytes(): the raw-byte read/write path
-    // the Setlist Color/Volume/Comment row editors use (frontend/pane.js +
-    // frontend/components/kronos/setlist-slot-params.js). Exercises success,
+    // the Setlist Color/Volume/Comment row editors use (frontend/pane-
+    // setlist-editor.js + frontend/components/kronos/setlist-editor-
+    // color.js/setlist-editor-volume.js). Exercises success,
     // the re-derive-cached-fields discipline (mirrors copyProgramFrom()),
     // and every rejection guard.
     {
@@ -2153,6 +2197,7 @@ void testProgramCopyRecognizesRealFactoryEmptyNames() {
 int main() {
     testDecodeProgramFields();
     testClassifyProgramBankType();
+    testExiAlgorithmTypeRealTemplates();
     testDecodeCombiFields();
     testHashProgramRecord();
     testPcgFileEndToEnd();

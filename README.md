@@ -236,7 +236,7 @@ cmake --build build --target pcg_file_test
 ctest --test-dir build -R pcg_file_test
 
 # Frontend: headless, per-component
-node frontend/components/kronos/setlist-comment.test.js
+node frontend/components/kronos/setlist-editor-comment-and-font.test.js
 ```
 
 See **[docs/content/components](docs/content/components/index.md)**'s "Committed,

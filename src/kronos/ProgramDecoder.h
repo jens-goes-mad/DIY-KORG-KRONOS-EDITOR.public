@@ -27,6 +27,33 @@ struct ProgramFields {
     int bank = 0;
     int number = 0;
     std::string name;
+    // Raw "EXi1 Common > Algorithm Type" byte (0-9: 0=Off, 1=HD-1, 2=AL-1,
+    // 3=CX-3, 4=STR-1, 5=MS-20EX, 6=PolysixEX, 7=MOD-7, 8=SGX-2, 9=EP-1 --
+    // Korg's own explicit legend, docs/external/KORG/Prog_EXi.txt's opening
+    // lines). Byte offset CONFIRMED 2026-08-16: Prog_EXi_Common.txt lists it
+    // at SysEx offset 2857 within a documented 4960-byte "EXi Program" --
+    // exactly this project's own independently-confirmed real Program
+    // record size (docs/content/format/index.md §5.5) -- and this format's
+    // established "4-byte marker before every field block" shape
+    // (kNameOffset below) predicts a `sysexOffset + 4` shift. Verified
+    // directly against the two real, byte-extracted templates already
+    // checked into resources/: Init-Program-HD1.raw reads Off (0) at file
+    // offset 2861 (as expected -- no EXi engine active on an HD-1 Program),
+    // Init-Program-EXi.raw reads AL-1 (2) there (Korg's own factory default
+    // engine for a blank EXi Program) with the very next byte (Transpose,
+    // a plain signed range centered at raw 0) reading a plausible 0 --
+    // three consistent data points, not a single coincidental match.
+    // Meaningful only when this Program's own bank is EXi-typed
+    // (ProgramInfo::bankType) -- decoded unconditionally either way since
+    // it's a fixed offset and always well-defined (reads Off/0 on a real
+    // HD-1 record, confirmed above), same "C++ decodes raw data, the
+    // caller decides what to show" split as every other field here. A
+    // second "EXi2 Common > Algorithm Type" byte exists too (SysEx offset
+    // 3909 -> file offset 3913, same +4 shift, confirmed reading Off (0) in
+    // both templates above) -- a real Program can apparently layer two
+    // independent EXi engines, but only EXi1 is decoded here; EXi2 is
+    // noted, not wired in, until something actually needs it.
+    int exiAlgorithmType = 0;
 };
 
 // `record` must point to exactly `recordSize` bytes -- one MBK1/PBK1

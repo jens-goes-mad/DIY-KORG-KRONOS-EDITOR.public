@@ -1,8 +1,9 @@
-// Headless, node-runnable version of setlist-comment.test.html's
-// self-checks -- same assertions, same real fixture, no browser/DOM
-// needed since decodeSetlistComment/encodeSetlistComment are pure
-// functions. Run directly: `node setlist-comment.test.js`
-// (requires ../package.json's `"type": "module"` to load as ESM).
+// Headless, node-runnable version of setlist-editor-comment-and-font.
+// test.html's self-checks -- same assertions, same real fixture, no
+// browser/DOM needed since decodeSetlistComment/encodeSetlistComment are
+// pure functions. Run directly:
+// `node setlist-editor-comment-and-font.test.js` (requires
+// ../package.json's `"type": "module"` to load as ESM).
 //
 // Exits non-zero on any failed assertion, for CI/ctest-style usage.
 
@@ -13,7 +14,7 @@ import {
   FONT_SIZES,
   decodeSetlistComment,
   encodeSetlistComment,
-} from "./setlist-comment.js";
+} from "./setlist-editor-comment-and-font.js";
 import { ROLLING_IN_THE_DEEP_RECORD_HEX, hexToBytes } from "./test-fixtures.js";
 
 let failures = 0;

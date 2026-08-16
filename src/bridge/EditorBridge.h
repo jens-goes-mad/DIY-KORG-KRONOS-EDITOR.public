@@ -88,9 +88,10 @@ public:
     // [datasetId, setlistIndex, songIndex] -> {ok, bytes:[0-255 x 542]} or
     // {ok:false, error}. The raw SBK1 record for one Set List slot -- see
     // PcgFile::songRecordBytes()'s doc comment. Decoded/edited entirely in
-    // JS (frontend/components/kronos/setlist-comment.js and
-    // setlist-slot-params.js), the same two-tier data-flow idea
-    // decodeProgram()/decodeCombi() already use for detail views.
+    // JS (frontend/components/kronos/setlist-editor-comment-and-font.js,
+    // setlist-editor-color.js, and setlist-editor-volume.js), the same
+    // two-tier data-flow idea decodeProgram()/decodeCombi() already use
+    // for detail views.
     choc::value::Value getSongRecordBytes(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, songIndex, bytes[0-255 x 542]] -> {ok} or

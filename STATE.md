@@ -3862,6 +3862,107 @@ App/UI:
         unchanged (same as the existing GM Timbre assertion). Full
         `pcg_file_test`/`kronos_editor` rebuild clean, `node --check` on
         all touched JS files.
+  51. **CONFIRMED + BUILT (2026-08-16)**: which specific EXi synthesis
+      engine (AL-1/CX-3/STR-1/MS-20EX/PolysixEX/MOD-7/SGX-2/EP-1) an
+      individual EXi Program uses -- a genuinely new field, finer-grained
+      than the already-confirmed per-bank HD-1/EXi split (§5.2/
+      ProgramBankType). Full derivation and real-byte verification written
+      up in docs/content/format/index.md's new §5.6 -- short version:
+      Korg's own `docs/external/KORG/Prog_EXi.txt` gives an explicit
+      0-9 legend (Off/HD-1/AL-1/CX-3/STR-1/MS-20EX/PolysixEX/MOD-7/SGX-2/
+      EP-1), `Prog_EXi_Common.txt` places the byte at SysEx offset 2857
+      within a documented 4960-byte record (matching this project's own
+      independently-confirmed real Program record size, §5.5), and the
+      predicted `sysexOffset + 4` shift (this format's established 4-byte-
+      marker convention) was verified directly against the two real
+      templates already in `resources/`: `Init-Program-HD1.raw` reads Off
+      at file offset 2861, `Init-Program-EXi.raw` reads AL-1 there, with
+      the adjacent Transpose byte also reading a plausible value in the
+      same template -- three consistent real-byte checks, not a guess.
+      - `ProgramDecoder.h`/`.cpp`: `ProgramFields`/decode gains
+        `exiAlgorithmType` (raw 0-9 int, decoded unconditionally at a
+        fixed offset -- reads Off/0 harmlessly on an HD-1 record, same
+        "C++ decodes raw data" convention as everything else here). Also
+        fixed a stale `kExiProgramRecordSize = 3706` left over from the
+        §5.5 correction (dead in practice -- nothing reads
+        `tagMatchesStride`, but the constant itself was wrong) to the
+        confirmed 4960.
+      - `PcgFile.h`: `ProgramInfo` gains the same field; all 3 construction
+        sites in `PcgFile.cpp` updated (bulk scan, `decodeProgram()`,
+        `refreshProgramInfo()`).
+      - `EditorBridge.cpp`: `programToValue()` serializes the raw int only
+        -- naming the engine is a JS-layer job, same "C++ = speed/bulk,
+        JS = presentation" principle as everywhere else this session.
+      - `pane.js`: new `EXI_ALGORITHM_NAMES`/`exiEngineName()`, same shape
+        as `PROGRAM_BANK_TYPE_NAMES`/`programBankTypeName()`.
+        `pane-program-editor.js`'s Programs table Type column now shows
+        "EXi (AL-1)" etc. instead of a bare "EXi" when `bankType` is Exi.
+        Only this one display site wired up for now (per-bank-only views
+        like bank-filter buttons/jump labels don't have per-Program
+        granularity to show) -- `mock_bridge.js` mirrors the field
+        end-to-end (initial data, `copyProgram`/`swapProgram`).
+      - Verified: `tests/pcg_file_test.cpp` gained
+        `testExiAlgorithmTypeRealTemplates()` -- loads the real
+        `resources/Init-Program-*.raw` files directly (new
+        `EDITOR_RESOURCES_DIR` compile definition on the `pcg_file_test`
+        CMake target) and asserts the decoded value against real bytes,
+        not synthetic fixtures; `testClassifyProgramBankType()`'s stride
+        expectations updated for the 3706->4960 fix. Full
+        `pcg_file_test`/`kronos_editor` rebuild clean, `node --check` on
+        all touched JS files.
+      - NOT done yet, explicitly deferred: a second "EXi2 Common"
+        Algorithm Type field exists too (a Program can apparently layer
+        two independent EXi engines) -- offset confirmed the same way,
+        but not decoded/wired in until something actually needs it. Also
+        not yet started: an actual parameter EDITOR for any EXi engine
+        (the next real goal discussed -- SGX-2 has by far the fewest
+        parameters of the 8, per Prog_EXi.txt's own per-engine
+        `Number Of Param.` counts, a natural first candidate).
+  52. **RENAMED + SPLIT (2026-08-16)**: the Setlist row editor's codec
+      family, per direct request ("I do not like the names of the JS
+      files... lets name them accurate right now, maybe we have to
+      refactor them"). Old names were inconsistent (`setlist-comment.js`,
+      `setlist-slot-params.js`, `setlist-slot-name.js`) and one file
+      (`setlist-slot-params.js`) bundled two unrelated fields (Color,
+      Volume) under a name too generic to tell which. New
+      `frontend/components/kronos/setlist-editor-*.js` family, one file
+      per field/field-group, each renamed for exactly what it edits:
+      - `setlist-comment.js` -> `setlist-editor-comment-and-font.js`
+        (unchanged content -- Comment + Font size, packed into the same
+        bytes/codec call together already).
+      - `setlist-slot-params.js` -> SPLIT into `setlist-editor-color.js`
+        (Color only) and `setlist-editor-volume.js` (Volume only) --
+        anticipates more per-field codecs being added later (the EXi
+        engine editor discussed as the next goal will need several), where
+        "one file per concern" scales better than one growing file.
+      - `setlist-slot-name.js` -> `setlist-editor-name.js`.
+      - Each `.css`/`.test.html`/`.test.js` sibling renamed/split the same
+        way; internal CSS class names (e.g. `.setlist-comment-editor`) left
+        untouched -- out of scope, the request was about file names
+        specifically, and grepped confirmed-contained (only referenced
+        within their own file pair, no cross-file coupling to fix).
+      - Every consumer updated: `pane-setlist-editor.js`'s
+        `loadSlotCodecs()` (now 4 dynamic imports instead of 3),
+        `tools/generate_setlist_test_matrix.js`'s 2 import lines (now 3),
+        plus every doc-comment mention across `mock_bridge.js`,
+        `style.css`, `tools/generate_setlist_test_matrix.cpp`,
+        `src/bridge/EditorBridge.{h,cpp}`, `src/kronos/PcgFile.{h,cpp}`,
+        `tests/pcg_file_test.cpp`, `CLAUDE.md`, `README.md`,
+        `docs/content/building/index.md`, `docs/content/components/
+        index.md` -- grepped the whole repo afterward to confirm nothing
+        stale remained (a handful of intentional "(originally X, renamed
+        2026-08-16)" historical notes kept on purpose, this file's own
+        history log left untouched as always).
+      - Verified: `node --check` on every touched/new JS file; the 3 (was
+        2) headless `.test.js` files all still pass against the same real
+        `ROLLING_IN_THE_DEEP_RECORD_HEX` fixture, split assertions
+        included; full `pcg_file_test`/`kronos_editor` rebuild clean.
+      - NOTED, not fixed (out of scope for this rename): while grepping
+        `docs/content/components/index.md`, found several OTHER stale
+        `pane.js` references that predate this session's own
+        `pane.js`->`pane-setlist-editor.js` split (only the one line this
+        rename directly touched was corrected). Worth a dedicated doc pass
+        later.
 
 CLEAN UP -- noted 2026-08-15:
 
@@ -3888,5 +3989,14 @@ CLEAN UP -- noted 2026-08-15:
      format page into Overview (in which case CLAUDE.md's own description
      of the docs layout needs updating to match), or it should eventually
      move back -- not resolved either way yet.
+  3. NOT YET ACTED ON (found 2026-08-16, while renaming the Setlist codec
+     family, entry 52): `docs/content/components/index.md` has several
+     stale `pane.js` references (e.g. "A Set List slot's Color/Comment/
+     Volume editors (`pane.js`)...") that predate this project's own
+     `pane.js` -> `pane-setlist-editor.js` split -- that Setlist-specific
+     logic moved out of `pane.js` at some earlier point this doc was never
+     updated for. Only the one line the codec rename directly touched got
+     corrected; a dedicated pass over the rest of that page is still
+     needed.
 
 === END STATE BLOCK ===

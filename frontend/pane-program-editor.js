@@ -213,7 +213,15 @@ function createProgramsPanel(
       const nameTd = document.createElement("td");
       nameTd.textContent = p.name || "(empty)";
       const typeTd = document.createElement("td");
-      typeTd.textContent = p.bankType != null ? programBankTypeName(p.bankType) : "";
+      // Exi = 1 (kronos::ProgramBankType::Exi) -- exiAlgorithmType is only
+      // meaningful for an EXi-bank Program (see ProgramInfo::
+      // exiAlgorithmType's doc comment); an HD-1 row just shows "HD-1".
+      typeTd.textContent =
+        p.bankType === 1 && p.exiAlgorithmType != null
+          ? `${programBankTypeName(p.bankType)} (${exiEngineName(p.exiAlgorithmType)})`
+          : p.bankType != null
+            ? programBankTypeName(p.bankType)
+            : "";
       tr.append(
         bankCell(true, p.bank, p.number),
         nameTd,

@@ -31,9 +31,9 @@ against the raw file) against real bytes -- not just by reasoning about hex dump
   piece, confirm it in tests and real UI, then extend.
 - **Don't build for hypothetical future needs.** An encoder/write-path only gets built
   once there's a concrete feature that needs it (see the decoder/encoder architecture
-  below) -- e.g. `setlist-comment.js` has an encoder because Comment/Font-size editing
-  is a real feature; a hypothetical Program-renaming encoder doesn't exist yet because
-  nothing uses it yet.
+  below) -- e.g. `setlist-editor-comment-and-font.js` has an encoder because Comment/
+  Font-size editing is a real feature; a hypothetical Program-renaming encoder doesn't
+  exist yet because nothing uses it yet.
 - **Verify claims by actually running code**, not just by writing it and reading it back.
   This project's standard pattern: a throwaway smoke-test binary/script, run against real
   sample files, output inspected directly -- for both C++ and the frontend's pure codec
@@ -49,7 +49,7 @@ against the raw file) against real bytes -- not just by reasoning about hex dump
 - **Real Kronos data makes tests worth trusting.** Test fixtures (in JS component test
   harnesses, in C++ smoke tests) should be real bytes extracted from an actual backup
   file where possible, not invented data -- see `frontend/components/kronos/
-  setlist-comment.test.html`'s fixture for the pattern.
+  setlist-editor-comment-and-font.test.html`'s fixture for the pattern.
 - **Flag duplicate code for discussion, don't silently refactor OR silently leave it.**
   Whenever a building block is finished and it turns out to duplicate/closely parallel
   something already in the codebase, raise it explicitly rather than either unilaterally
@@ -74,7 +74,10 @@ reasoning -- this is a compressed pointer, not a replacement). Short version:
 - Frontend: `frontend/components/{kronos,generic}/*.js` -- each a pure codec
   (`decode`/`encode`, no DOM) plus a component (DOM only, operates on decoded state)
   plus a standalone `.test.html` harness (no native build, no CHOC, just a static file
-  server). `setlist-comment.js` is the first one built this way.
+  server). `setlist-editor-comment-and-font.js` (originally `setlist-comment.js`, renamed
+  2026-08-16 alongside splitting Color/Volume into their own files -- see the Setlist
+  editor's `frontend/components/kronos/setlist-editor-*.js` family) is the first one built
+  this way.
 - Backend: `PcgFile` retains raw file bytes (`data_`) instead of discarding them after
   parsing. `src/kronos/ProgramDecoder.{h,cpp}` (built, verified zero-regression) is the
   first per-record decoder; Combi and Set List slot are next, same pattern.
@@ -82,8 +85,8 @@ reasoning -- this is a compressed pointer, not a replacement). Short version:
   dedup) stay served by native decoders walking the whole retained buffer -- real
   efficiency win for scanning/hashing thousands of records. Detail/edit views request
   the *specific raw byte chunk* they need via the bridge and decode/encode it entirely
-  in JS, same as `setlist-comment.js` already does -- preserves "test without building
-  the native app" specifically where it matters (interactive UI).
+  in JS, same as `setlist-editor-comment-and-font.js` already does -- preserves "test
+  without building the native app" specifically where it matters (interactive UI).
 - **Writes are immediate, not a deferred overlay**: `encode()` writes straight into
   `data_` via `putRecordBytes()` rather than tracking pending edits separately keyed by
   position -- a position-keyed overlay breaks the moment something reorders records
@@ -91,8 +94,10 @@ reasoning -- this is a compressed pointer, not a replacement). Short version:
   app is single-threaded with one user editing at a time. `putRecordBytes()` must also
   re-derive any cached structured fields (e.g. `Song.comment`) from the freshly-written
   bytes, not leave them stale.
-- No encoders beyond `setlist-comment.js` yet -- built once a real write feature (e.g.
-  renaming) needs one, not speculatively.
+- Encoders only get built once a real write feature needs one, not speculatively --
+  by now that covers the whole `setlist-editor-*.js` family (Comment/Font size, Color,
+  Volume, Name all have real write features), but e.g. a Program-renaming encoder still
+  doesn't exist because nothing uses it yet.
 - **Current top priority, agreed as a team: testing outranks
   new features right now.** Before Combi or any further component wiring: a real,
   committed C++ test target (scoped to just the format-parsing code, not the full app/

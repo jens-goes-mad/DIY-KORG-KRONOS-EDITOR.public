@@ -82,7 +82,7 @@ For the pure `decode`/`encode` codec modules under `frontend/components/kronos/*
 DOM at all), run the headless test directly in Node:
 
 ```bash
-node frontend/components/kronos/setlist-comment.test.js
+node frontend/components/kronos/setlist-editor-comment-and-font.test.js
 ```
 
 ### Plain-browser mode -- no native app at all

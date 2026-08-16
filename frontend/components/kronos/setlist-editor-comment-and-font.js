@@ -1,9 +1,14 @@
-// SetlistComment: a Comment textarea + font-size button bar (XS/S/M/L/XL)
-// for one SBK1 Set List song record. Deliberately standalone -- reads and
-// writes a raw 542-byte record (see docs/content/format/index.md's "SBK1" section), with
+// SetlistEditorCommentAndFont: a Comment textarea + font-size button bar
+// (XS/S/M/L/XL) for one SBK1 Set List song record. Renamed 2026-08-16 (was
+// setlist-comment.js) -- part of a wider rename to a consistent
+// "setlist-editor-*" family (siblings: setlist-editor-color.js,
+// setlist-editor-volume.js, setlist-editor-name.js), each named for exactly
+// the field(s) it edits. Deliberately standalone -- reads and writes a raw
+// 542-byte record (see docs/content/format/index.md's "SBK1" section), with
 // no dependency on the rest of this app, choc, or a native build at all.
-// Open setlist-comment.test.html directly (via a static file server, see
-// its own comment) to develop/test this file in complete isolation.
+// Open setlist-editor-comment-and-font.test.html directly (via a static
+// file server, see its own comment) to develop/test this file in complete
+// isolation.
 //
 // Comment (offset +18, NUL-terminated ASCII, may contain literal \r\n) and
 // Font size (below) are both CONFIRMED -- see docs/content/format/index.md §4.3-4.4 and

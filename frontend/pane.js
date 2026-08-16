@@ -94,6 +94,22 @@ function programBankTypeName(bankType) {
   return PROGRAM_BANK_TYPE_NAMES[bankType] ?? String(bankType);
 }
 
+// Indexed by ProgramInfo::exiAlgorithmType's raw 0-9 value (EditorBridge's
+// programToValue()) -- Korg's own explicit legend, confirmed directly
+// against docs/external/KORG/Prog_EXi.txt's opening lines and byte-verified
+// against the real Init-Program-HD1.raw/-EXi.raw templates (2026-08-16, see
+// ProgramFields::exiAlgorithmType's doc comment in ProgramDecoder.h for the
+// full derivation). Same "C++ decodes the raw byte, JS names it" split as
+// PROGRAM_BANK_TYPE_NAMES above -- only meaningful when a Program's own
+// bankType is Exi; a caller checks that before using this.
+const EXI_ALGORITHM_NAMES = [
+  "Off", "HD-1", "AL-1", "CX-3", "STR-1", "MS-20EX", "PolysixEX", "MOD-7", "SGX-2", "EP-1",
+];
+
+function exiEngineName(algorithmType) {
+  return EXI_ALGORITHM_NAMES[algorithmType] ?? String(algorithmType);
+}
+
 // Mirrors PcgFile.cpp's looksLikeEmptyCombiName() -- case-insensitive
 // substring match, catching both Korg's own literal "Init Combi" and this
 // app's own vacated-slot rename ("- Init Combi -", see

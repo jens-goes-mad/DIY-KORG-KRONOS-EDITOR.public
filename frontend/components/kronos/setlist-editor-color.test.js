@@ -1,12 +1,12 @@
-// Headless, node-runnable version of setlist-slot-params.test.html's
-// self-checks -- same assertions, same real fixture as setlist-comment.
-// test.js, no browser/DOM needed since every function here is pure. Run
-// directly: `node setlist-slot-params.test.js` (requires ../package.json's
-// `"type": "module"` to load as ESM).
+// Headless, node-runnable version of setlist-editor-color.test.html's
+// self-checks -- same assertions, same real fixture as setlist-editor-
+// comment-and-font.test.js, no browser/DOM needed since every function
+// here is pure. Run directly: `node setlist-editor-color.test.js` (requires
+// ../package.json's `"type": "module"` to load as ESM).
 //
 // Exits non-zero on any failed assertion, for CI/ctest-style usage.
 
-import { RECORD_SIZE, decodeSlotColor, encodeSlotColor, decodeSlotVolume, encodeSlotVolume } from "./setlist-slot-params.js";
+import { RECORD_SIZE, decodeSlotColor, encodeSlotColor } from "./setlist-editor-color.js";
 import { ROLLING_IN_THE_DEEP_RECORD_HEX, hexToBytes } from "./test-fixtures.js";
 
 let failures = 0;
@@ -25,12 +25,11 @@ const realRecord = hexToBytes(ROLLING_IN_THE_DEEP_RECORD_HEX);
 check("record is the documented SBK1 stride", realRecord.length, RECORD_SIZE);
 
 // Ground truth for this real record: byte+12 = 0xc0 (color bits2-5 = 0 ->
-// Color 1/Standard), byte+16 = 0x7f (Volume 127) -- confirmed against the
-// same bytes src/kronos/PcgFile.cpp's readSlotParams() decodes, and against
-// setlist-comment.test.js's own use of this fixture (byte+12's Font size
+// Color 1/Standard) -- confirmed against the same bytes src/kronos/
+// PcgFile.cpp's readSlotParams() decodes, and against setlist-editor-
+// comment-and-font.test.js's own use of this fixture (byte+12's Font size
 // bits from the same byte decode as "L" there).
 check("decodeSlotColor matches the real record's confirmed Color (1/Standard)", decodeSlotColor(realRecord), 1);
-check("decodeSlotVolume matches the real record's confirmed Volume (127)", decodeSlotVolume(realRecord), 127);
 
 for (const color of [1, 5, 16]) {
   const withColor = encodeSlotColor(realRecord, color);
@@ -38,13 +37,6 @@ for (const color of [1, 5, 16]) {
 }
 check("encodeSlotColor clamps below 1 up to 1", decodeSlotColor(encodeSlotColor(realRecord, 0)), 1);
 check("encodeSlotColor clamps above 16 down to 16", decodeSlotColor(encodeSlotColor(realRecord, 99)), 16);
-
-for (const volume of [0, 64, 127]) {
-  const withVolume = encodeSlotVolume(realRecord, volume);
-  check(`setting volume=${volume} round-trips through decode()`, decodeSlotVolume(withVolume), volume);
-}
-check("encodeSlotVolume clamps below 0 up to 0", decodeSlotVolume(encodeSlotVolume(realRecord, -5)), 0);
-check("encodeSlotVolume clamps above 127 down to 127", decodeSlotVolume(encodeSlotVolume(realRecord, 200)), 127);
 
 // CRITICAL: Color shares byte+12 with isProgram (bit0), Font size (bits6-7),
 // and a still-unexplained bit1 (docs/content/format/index.md §4.3) -- a Color edit must
@@ -66,22 +58,13 @@ check(
   Array.from(realRecord.slice(0, 12)).concat(Array.from(realRecord.slice(13)))
 );
 
-const volumeEdited = encodeSlotVolume(realRecord, 42);
-check(
-  "bytes other than +16 are untouched by a Volume edit",
-  Array.from(volumeEdited.slice(0, 16)).concat(Array.from(volumeEdited.slice(17))),
-  Array.from(realRecord.slice(0, 16)).concat(Array.from(realRecord.slice(17)))
-);
-
-for (const fn of [decodeSlotColor, decodeSlotVolume]) {
-  let threw = false;
-  try {
-    fn(new Uint8Array(10));
-  } catch {
-    threw = true;
-  }
-  check(`${fn.name} rejects a byte array of the wrong length`, threw, true);
+let threw = false;
+try {
+  decodeSlotColor(new Uint8Array(10));
+} catch {
+  threw = true;
 }
+check("decodeSlotColor rejects a byte array of the wrong length", threw, true);
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) FAILED`);

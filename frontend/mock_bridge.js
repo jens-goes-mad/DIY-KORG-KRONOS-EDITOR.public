@@ -111,7 +111,7 @@
     const bytes = new Uint8Array(SBK_RECORD_SIZE);
     const colorField = ((Math.max(1, Math.min(16, entry.color)) - 1) << 2) & 0x3c;
     // entry.fontSize is already the raw kronos::FontSize value (0-4) --
-    // same bit-packing setlist-comment.js's encodeSetlistComment() uses.
+    // same bit-packing setlist-editor-comment-and-font.js's encodeSetlistComment() uses.
     const fontValue = entry.fontSize ?? 0;
     const fontLowBits = (fontValue & 2 ? 0x80 : 0) | (fontValue & 1 ? 0x40 : 0);
     bytes[12] = colorField | fontLowBits | (entry.isProgram ? 0x01 : 0x00);
@@ -148,6 +148,11 @@
           number,
           name,
           bankType: mockBankType(bank),
+          // Mirrors the real Init-Program-EXi.raw template's own factory
+          // default (AL-1) for the mock's EXi bank, Off (0) for its HD-1
+          // bank -- see pane.js's EXI_ALGORITHM_NAMES doc comment for the
+          // confirmed enum/offset this stands in for.
+          exiAlgorithmType: mockBankType(bank) === 1 ? 2 : 0,
           setlistReferenceCount: 0,
           combiReferenceCountAvailable: true,
           combiReferenceCount: 0,
@@ -163,6 +168,7 @@
         number: names.length,
         name: "",
         bankType: mockBankType(bank),
+        exiAlgorithmType: mockBankType(bank) === 1 ? 2 : 0,
         setlistReferenceCount: 0,
         combiReferenceCountAvailable: true,
         combiReferenceCount: 0,
@@ -567,12 +573,14 @@
     if (existingAtTarget) {
       existingAtTarget.name = srcProgram.name;
       existingAtTarget.bankType = dstBankType;
+      existingAtTarget.exiAlgorithmType = srcProgram.exiAlgorithmType;
     } else {
       dstDataset.programs.push({
         bank: dstBank,
         number: dstNumber,
         name: srcProgram.name,
         bankType: dstBankType,
+        exiAlgorithmType: srcProgram.exiAlgorithmType,
         setlistReferenceCount: 0,
         combiReferenceCountAvailable: true,
         combiReferenceCount: 0,
@@ -607,8 +615,18 @@
       );
     }
 
-    const aContent = { name: a.name, setlistReferenceCount: a.setlistReferenceCount, combiReferenceCount: a.combiReferenceCount };
-    const bContent = { name: b.name, setlistReferenceCount: b.setlistReferenceCount, combiReferenceCount: b.combiReferenceCount };
+    const aContent = {
+      name: a.name,
+      exiAlgorithmType: a.exiAlgorithmType,
+      setlistReferenceCount: a.setlistReferenceCount,
+      combiReferenceCount: a.combiReferenceCount,
+    };
+    const bContent = {
+      name: b.name,
+      exiAlgorithmType: b.exiAlgorithmType,
+      setlistReferenceCount: b.setlistReferenceCount,
+      combiReferenceCount: b.combiReferenceCount,
+    };
     Object.assign(a, bContent);
     Object.assign(b, aContent);
 

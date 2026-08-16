@@ -60,8 +60,8 @@ const SETLIST_COLOR_HEX = [
 // XL }`) -- indexed by the RAW enum value the bridge now sends
 // (EditorBridge stopped formatting this to a string 2026-08-15; naming is a
 // JS/encoder-layer job, not native C++'s -- see STATE.md). Deliberately a
-// SEPARATE small array from frontend/components/kronos/setlist-comment.js's
-// own FONT_SIZE_BY_VALUE, not a shared import -- that codec is lazily
+// SEPARATE small array from frontend/components/kronos/setlist-editor-
+// comment-and-font.js's own FONT_SIZE_BY_VALUE, not a shared import -- that codec is lazily
 // loaded on first editor-panel open (loadSlotCodecs(), see below), but this
 // file's row-summary label (buildEditorRow()'s "comment" section text)
 // needs a name the instant rows first render, before any panel has ever
@@ -109,28 +109,31 @@ function setlistColorName(color) {
 // copies are rejected at all.
 let draggedFromDatasetId = null;
 
-// Lazily loads the two pure-JS SBK1 record codecs (frontend/components/
-// kronos/setlist-comment.js, setlist-slot-params.js) the Setlist row
-// editors below use to read-modify-write raw bytes -- a dynamic import()
-// expression works from inside this plain (non-module) script without
-// converting index.html's scripts to type="module", see STATE.md. Cached
-// in one shared promise so opening a second editor (same pane or the
-// other one) doesn't re-trigger a second import; the browser's own module
-// cache would dedupe the actual fetch anyway, but this also dedupes the
-// in-flight Promise for callers that race each other. `resolvedSlotCodecs`
-// holds the already-settled value so row-builders (called synchronously
-// from renderRows(), see openSection()'s own comment for why that's safe)
-// can use the codecs without themselves being async.
+// Lazily loads the four pure-JS SBK1/SDB1 record codecs (frontend/
+// components/kronos/setlist-editor-{comment-and-font,color,volume,name}.js
+// -- renamed and split 2026-08-16, was setlist-comment.js/setlist-slot-
+// params.js (one file for both Color+Volume)/setlist-slot-name.js) the
+// Setlist row editors below use to read-modify-write raw bytes -- a
+// dynamic import() expression works from inside this plain (non-module)
+// script without converting index.html's scripts to type="module", see
+// STATE.md. Cached in one shared promise so opening a second editor (same
+// pane or the other one) doesn't re-trigger a second import; the browser's
+// own module cache would dedupe the actual fetch anyway, but this also
+// dedupes the in-flight Promise for callers that race each other.
+// `resolvedSlotCodecs` holds the already-settled value so row-builders
+// (called synchronously from renderRows(), see openSection()'s own comment
+// for why that's safe) can use the codecs without themselves being async.
 let slotCodecsPromise = null;
 let resolvedSlotCodecs = null;
 function loadSlotCodecs() {
   if (!slotCodecsPromise) {
     slotCodecsPromise = Promise.all([
-      import("./components/kronos/setlist-comment.js"),
-      import("./components/kronos/setlist-slot-params.js"),
-      import("./components/kronos/setlist-slot-name.js"),
-    ]).then(([comment, slotParams, slotName]) => {
-      resolvedSlotCodecs = { ...comment, ...slotParams, ...slotName };
+      import("./components/kronos/setlist-editor-comment-and-font.js"),
+      import("./components/kronos/setlist-editor-color.js"),
+      import("./components/kronos/setlist-editor-volume.js"),
+      import("./components/kronos/setlist-editor-name.js"),
+    ]).then(([commentAndFont, color, volume, name]) => {
+      resolvedSlotCodecs = { ...commentAndFont, ...color, ...volume, ...name };
       return resolvedSlotCodecs;
     });
   }
@@ -570,11 +573,12 @@ function createSetlistPanel(
   // DIY-MIDI-METRONOME's EDITOR trigger list), plus a Font size button bar
   // (XS/S/M/L/XL) above it -- brought back 2026-08-06 after being dropped
   // when Comment editing moved from the old standalone setlist-comment.js
-  // component (which had both) into this accordion section (which
-  // initially only ported the textarea). Both share one Apply button --
-  // unlike Color/Volume, Font size does NOT commit on click. It's packed
-  // into the SAME bytes/codec call as the Comment text (setlist-comment.js
-  // encodes both together), and this section's free text needs a deliberate
+  // component (now renamed setlist-editor-comment-and-font.js, which had
+  // both) into this accordion section (which initially only ported the
+  // textarea). Both share one Apply button -- unlike Color/Volume, Font
+  // size does NOT commit on click. It's packed into the SAME bytes/codec
+  // call as the Comment text (setlist-editor-comment-and-font.js encodes
+  // both together), and this section's free text needs a deliberate
   // confirm step (unlike Color/Volume's discrete immediate-apply options);
   // committing Font size immediately would trigger commitSlotBytes()'s
   // renderRows(), which rebuilds this whole section from the just-written
@@ -686,7 +690,7 @@ function createSetlistPanel(
   // a text field mid-edit isn't a "confirmed" value the way a color click
   // or a slider release is. `maxLength` gives immediate, native browser-
   // level validation against the format's real 24-byte cap
-  // (setlist-slot-name.js's NAME_MAX_LENGTH) -- backed up by the encoder's
+  // (setlist-editor-name.js's NAME_MAX_LENGTH) -- backed up by the encoder's
   // own truncation either way, so an oversized paste can't slip through.
   function buildNameField(entry) {
     const labelEl = document.createElement("label");
@@ -728,7 +732,7 @@ function createSetlistPanel(
   // Color editor -- one of 16 real Kronos Set List colors
   // (SETLIST_COLOR_NAMES/_HEX above). Immediate-apply, no Apply button (per
   // explicit request): each click decodes/re-encodes through
-  // setlist-slot-params.js's masked Color codec and commits straight away.
+  // setlist-editor-color.js's masked Color codec and commits straight away.
   function buildColorSwatches(entry) {
     const section = document.createElement("div");
     section.className = "color-editor-section";
