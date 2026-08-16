@@ -151,8 +151,12 @@
           // Mirrors the real Init-Program-EXi.raw template's own factory
           // default (AL-1) for the mock's EXi bank, Off (0) for its HD-1
           // bank -- see pane.js's EXI_ALGORITHM_NAMES doc comment for the
-          // confirmed enum/offset this stands in for.
-          exiAlgorithmType: mockBankType(bank) === 1 ? 2 : 0,
+          // confirmed enum/offset this stands in for. bank1/number0
+          // ("Berlin Grand SW2 U.C.") is deliberately SGX-2 (8) instead --
+          // gives the Programs table's SGX-2 open-editor button (2026-08-16)
+          // a real row to exercise in mock/browser mode too, not just the
+          // real app.
+          exiAlgorithmType: mockBankType(bank) === 1 ? (bank === 1 && number === 0 ? 8 : 2) : 0,
           setlistReferenceCount: 0,
           combiReferenceCountAvailable: true,
           combiReferenceCount: 0,
@@ -1105,5 +1109,22 @@
       .filter((g) => g.length >= 2)
       .map((g) => g.map((p) => Object.assign({ setlistUsageCount: 0, combiUsageCountAvailable: true, combiUsageCount: 0 }, p)));
     return Promise.resolve(groups);
+  };
+
+  // Experimental multi-window scaffolding (see STATE.md) -- the real
+  // window.openSgx2EditorWindow(datasetId, bank, number, label) (bound
+  // per-window in main.cpp) opens a genuinely separate native window for
+  // that exact Program, or brings an already-open one for the same
+  // (datasetId, bank, number) to front instead of duplicating it;
+  // plain-browser/mock mode has no CHOC and no concept of a second native
+  // window at all, so this just tells the user why nothing happened
+  // instead of throwing a ReferenceError. Reachable from the Programs
+  // table's SGX-2 Type-button (pane-program-editor.js's openSgx2Editor()).
+  window.openSgx2EditorWindow = (datasetId, bank, number, label) => {
+    console.warn(
+      `[mock_bridge] openSgx2EditorWindow(${datasetId}, ${bank}, ${number}, "${label}") is native-app-only -- ` +
+        "no second window in plain-browser mode."
+    );
+    return Promise.resolve({ ok: false, error: "Multi-window is only available in the real native app, not plain-browser mode." });
   };
 })();

@@ -24,7 +24,7 @@ real backup files with known ground truth (not guessed), and building a real
 cross-platform editor on top of it as the findings land -- see
 [`docs/content/format/index.md`](docs/content/format/index.md) for the full format
 writeup, also published at
-[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/format)
+[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/format)
 for the readable version.
 
 **If you own a Kronos**, the browsing/rearranging features below already work
@@ -33,7 +33,7 @@ name is real progress on a format nobody else has fully documented.
 **If you're a developer** curious about reverse-engineering a real binary
 format, building a cross-platform native+web UI, or both, the codebase is
 built specifically to lower that bar -- see
-[App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/components/)
+[App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/components/)
 for how small, independently testable pieces let you contribute to one part
 without building the whole native app first. `STATE.md` tracks exactly
 what's built, what's verified, and every known blind spot/open question --
@@ -117,7 +117,7 @@ between.
   point at the same Set List of the same dataset, editing a slot already open
   in the other pane is blocked (with an explanatory popup) rather than
   risking one edit silently overwriting the other's -- see
-  [App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/components/)
+  [App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/components/)
   for exactly how that's implemented.
 - **Programs / Combis / Duplicates**: browse every Program and Combi on the
   unit directly (not just through Set List slots), filter by bank (a
@@ -154,7 +154,7 @@ name and per-slot parameter layout, the Program/Combi instrument-name
 cross-reference, verification evidence, and the full list of remaining
 unknowns -- is documented in
 **[`docs/content/format/index.md`](docs/content/format/index.md)**
-(also at [the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/format)).
+(also at [the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/format)).
 Korg has never published a spec for the container/chunk format itself; that
 document is the complete internals reference this project's parser
 (`src/kronos/PcgFile.cpp`) is based on.
@@ -209,7 +209,7 @@ Builds on macOS (arm64 + Intel), Linux, and Windows -- verified via CI
 one CMake project, no per-platform source trees (CHOC maps to WebKit/
 WebKit2GTK/WebView2 depending on the OS). Full requirements and
 platform-specific notes: **[docs/content/building](docs/content/building/index.md)**
-(also live at [the project site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/building/)).
+(also live at [the project site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/building/)).
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
@@ -220,6 +220,13 @@ cmake --build build
 Debug builds read `frontend/` live off disk (edit-reload friendly). Release
 builds (`-DCMAKE_BUILD_TYPE=Release`, or `-DEDITOR_EMBED_RESOURCES=ON`)
 embed `frontend/` into the binary via `tools/embed_resources.py`.
+
+This repo has one optional, private companion submodule
+(`private/diy-korg-kronos-editor`, see `STATE.md`) for functionality out of scope for
+this public project -- it's never required: a plain `git clone` (no
+`--recurse-submodules`) builds and runs `kronos_editor` exactly the same, just without
+whatever that submodule adds. If you have access to it, `git submodule update --init`
+pulls it in.
 
 **Don't want to build locally?** The native-build workflow can also be triggered
 manually (`workflow_dispatch`) from the Actions tab -- [Actions -> Build Kronos Editor
@@ -248,7 +255,7 @@ headless test suites" section for how these fit alongside each component's
 Both the frontend and backend are moving toward small, focused
 decoder/encoder units instead of one big eager parse -- see
 **[docs/content/components](docs/content/components/index.md)** (also
-live at [the project site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR/components/))
+live at [the project site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/components/))
 for the rationale, and `STATE.md`'s "ARCHITECTURE: DECODER/ENCODER
 REFACTOR" section for the current decision and where it's headed next
 (Program decoder first, then Combi, then Set List slot).

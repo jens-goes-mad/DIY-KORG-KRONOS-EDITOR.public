@@ -1,0 +1,3 @@
+[submodule "private/diy-korg-kronos-editor"]
+	path = private/diy-korg-kronos-editor
+	url = https://github.com/jens-goes-mad/diy-korg-kronos-editor.git

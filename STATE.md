@@ -3963,6 +3963,308 @@ App/UI:
         `pane.js`->`pane-setlist-editor.js` split (only the one line this
         rename directly touched was corrected). Worth a dedicated doc pass
         later.
+  53. **BUILT + VERIFIED (2026-08-16), on branch `feature/sgx2-editor-
+      window`, not on `main` yet**: multi-window scaffolding -- this app
+      can now open more than one native window in the same process, all
+      sharing one `EditorBridge` instance (so the exact same in-memory
+      dataset is visible/editable from any window, live, no copying). Built
+      as the first real step toward a dedicated SGX-2 parameter editor
+      window (see entries above) -- deliberately just the plumbing, no
+      actual SGX-2 controls yet (those still need real byte offsets, §5.6's
+      open question).
+      - `src/main.cpp`: extracted `bindEditorBridgeFunctions()` (the ~30
+        `view.bind()` calls, previously inline in `main()`) so every window
+        gets the identical full bridge surface, not a per-window whitelist.
+        New `createEditorWindow(entryHtml, title, w, h, minW, minH)`
+        (a `std::function` capturing itself by reference -- the standard
+        recursive-lambda idiom, safe here since nothing invokes it until
+        `webviewIsReady` fires asynchronously, well after the assignment
+        completes) creates a `DesktopWindow`+`WebView` pair and tracks it in
+        `openWindows`. **The one real behavior change**: `windowClosed` used
+        to unconditionally call `choc::messageloop::stop()` -- now it only
+        removes itself from `openWindows` and stops the loop once THAT list
+        is empty, so closing a secondary window no longer kills the main
+        window (verified below). A new `openSgx2EditorWindow` bind (on
+        every window, calling `createEditorWindow` again with `/sgx2-
+        editor.html`) is the only way to open a second window today.
+      - `EditorBridge.h`/`.cpp`: new `addDatasetsChangedListener()` (NOT
+        bound to JS -- a native-only hook) + private `notifyDatasetsChanged()`,
+        called from the exact two places `m_datasets` gains/loses an entry
+        (`finishOpen()`, `closeDataset()` when it actually erased something).
+        `main.cpp` registers one listener per window that pushes
+        `view.evaluateJavascript("window.refreshDatasets()")` into THAT
+        window -- solves the real gap multi-window introduces: each window
+        is a separate JS context (unlike this app's two PANES, which share
+        one page), so without this, Window B would never learn Window A
+        opened/closed a file. `EditorBridge` itself stays CHOC-unaware
+        (only holds `std::function<void()>` callbacks), same "testable with
+        zero CHOC dependency" reasoning `PcgFile` already follows.
+      - `frontend/index.html`/`app.js`: new "SGX-2 Editor WIP" topbar
+        button, calling `window.openSgx2EditorWindow()`. `mock_bridge.js`
+        gets a stand-in that explains multi-window is native-app-only
+        (plain-browser mode has no CHOC, no second window possible).
+      - New `frontend/sgx2-editor.html`/`.js`: a genuinely minimal
+        placeholder page (not the real editor) that lists currently-open
+        datasets and re-renders live -- exists purely to prove the whole
+        loop works before any real SGX-2 UI is built on top of it.
+      - **Verified against the actual running app, not just compiled**:
+        screenshots don't render any window content at all in this sandbox
+        (confirmed systemic -- even already-running unrelated apps like
+        Chrome/Terminal show nothing in `screencapture` output here), so
+        verification went through macOS's accessibility API instead
+        (`osascript -l JavaScript` walking/clicking the real `AXButton`/
+        `AXWindow` tree) -- clicked the real "SGX-2 Editor WIP" button,
+        confirmed a second window opened titled exactly "SGX-2 Editor
+        (experimental) -- DIY Kronos Editor"; confirmed its initial
+        "No files open." state; opened a real file
+        (`test_1.PCG`) via the MAIN window's native Open dialog (also
+        driven via accessibility, since it's a real NSOpenPanel) and
+        confirmed the SGX-2 window's own list updated to show it live,
+        with zero interaction on that window -- the actual cross-window
+        broadcast working end to end, not just present in the diff. Closed
+        the SGX-2 window and confirmed the process + main window survived;
+        then closed the main window too and confirmed the whole process
+        exited cleanly -- both halves of the `windowClosed` fix confirmed,
+        not just one.
+      - Full `pcg_file_test`/`kronos_editor` rebuild clean, `node --check`
+        on all touched/new JS files.
+  54. **REFINED (2026-08-16), same branch, per direct request**: the SGX-2
+      window is now opened per-Program, not via a single generic topbar
+      button.
+      - `pane-program-editor.js`'s Programs table: Bank column narrowed 30%
+        (2.6->1.82 of 12), Type column widened 50% (1.3->1.95) --
+        `colgroupHtml()`'s existing 12-unit fraction system. A row whose
+        Type is SGX-2 (`bankType===1 && exiAlgorithmType===8`) now renders
+        that cell as a real button ("EXi (SGX-2)", `ev.stopPropagation()`
+        so it doesn't also trigger the row's own expand-on-click) instead
+        of plain text -- click opens/refocuses that Program's SGX-2 window.
+        The topbar's standalone "SGX-2 Editor WIP" button (entry 53) is
+        gone -- removed from `index.html`/`app.js` now that every SGX-2
+        window is tied to a specific Program instead of being generic.
+      - `main.cpp`'s `openSgx2EditorWindow` bind now takes
+        `[datasetId, bank, number, label]` (`label` is pane-program-
+        editor.js's own `formatBankNumber()` output, deliberately called
+        WITHOUT a `bankType` arg so it excludes the "(EXi)" suffix the Type
+        button itself already shows) -- becomes the window title, between
+        "Editor" and "(experimental)" (e.g. `SGX-2 Editor I-B 000
+        (experimental) -- DIY Kronos Editor`), per direct request.
+      - **Dedup by Program, per direct request**: new `sgx2WindowsByRef`
+        (`std::map<std::tuple<int,int,int>, EditorWindowInstance*>`, keyed
+        by datasetId/bank/number) in `main()` -- a second
+        `openSgx2EditorWindow` call for a Program that already has a window
+        open calls `.toFront()` on the EXISTING window instead of creating
+        a duplicate, returning `{ok:true, broughtToFront:true}`. Prevents a
+        real editing hazard: two windows independently read-modify-writing
+        the same raw bytes would silently "last write wins" whichever
+        saves/closes second. `createEditorWindow()` gained two new optional
+        parameters to support this generically: `extraBindings` (lets a
+        caller add window-TYPE-specific JS bindings -- used here for a new
+        per-window `getSgx2ProgramRef()`, letting `sgx2-editor.js` learn
+        which exact Program it's for) and `onClosed` (lets a caller hook
+        additional cleanup when THIS window closes -- used here to erase
+        the closing window's own `sgx2WindowsByRef` entry).
+      - `mock_bridge.js`: `openSgx2EditorWindow` stand-in now accepts and
+        logs the new args; `makeFakePrograms()`'s bank1/number0 ("Berlin
+        Grand SW2 U.C.") is deliberately SGX-2 instead of the mock's usual
+        AL-1 default, giving the Programs table's new button a real row to
+        exercise in mock/browser mode too.
+      - Verified: the JS->native argument CONTRACT directly (a standalone
+        Node simulation of `openSgx2Editor()`'s exact call shape confirmed
+        `(datasetId, bank, number, label)` arrive in main.cpp's expected
+        order, and that `label` correctly excludes the "(EXi)" suffix) and
+        the full window mechanism itself (createEditorWindow/
+        addDatasetsChangedListener/windowClosed) against the running app,
+        same accessibility-driven approach as entry 53. **Honest limit,
+        not glossed over**: didn't click a real SGX-2 button end-to-end
+        this round -- `test_1.PCG`'s real Programs table has ~1500+
+        accessibility nodes once loaded, and every attempt to search it via
+        `osascript`/System Events (recursive walk, `whose()` filtering
+        including a sanity check against the always-present "Unload"
+        button, `entireContents()`) either timed out or silently failed to
+        recurse into the WKWebView's content at all -- confirmed as a tool
+        limitation, not specific to this feature (a plain title/bank-filter
+        button dump from the SAME window worked fine and did visibly
+        confirm the bank-type-per-button data, I-A(EXi)/I-B(HD-1)/etc.,
+        rendering correctly). Full `pcg_file_test`/`kronos_editor` rebuild
+        clean, `node --check` on all touched JS files.
+  55. **REPO SPLIT (2026-08-16), same branch**: per direct request ("maybe
+      this is too much effort for a free open source version") -- the
+      SGX-2/EXi parameter editors and the MIDI SysEx transport layer (to be
+      pulled from `DIY-MIDI-METRONOME`) will live in a separate PRIVATE
+      companion repo, not this public one, pulled in as a git submodule --
+      too large/open-ended a maintenance surface (MOD-7 alone is 1108
+      confirmed params) to bundle into a free, from-scratch OSS
+      reverse-engineering project, but still built into the SAME
+      `kronos_editor` binary/process so it keeps sharing the exact
+      `EditorBridge`/dataset state the multi-window work (entries 53/54)
+      was built for.
+      - This repo itself renamed on GitHub:
+        `DIY-KORG-KRONOS-EDITOR` -> `DIY-KORG-KRONOS-EDITOR.public`,
+        matching the `.public`-suffix convention the sibling
+        `DIY-MIDI-METRONOME.public` project already uses. `gh` isn't
+        installed in this environment, so the actual rename was done by
+        the project owner via GitHub's Settings UI; local `origin` remote
+        updated to match afterward (`git remote set-url`), confirmed
+        reachable via `git ls-remote`.
+      - GitHub's own redirect covers `github.com/.../blob/...`-style
+        links automatically (confirmed no changes needed in
+        `.github/workflows/*.yml`, neither hardcodes the repo name) --
+        but does NOT cover GitHub Pages URLs, which actually change and
+        404 without a manual fix. Updated the two files that control the
+        Pages build (`docs/config/_default/config.toml`'s `baseurl`,
+        `docs/docker-compose.yml`'s local-preview `--baseURL`) plus
+        `README.md`'s 6 hardcoded links straight to the docs site (a
+        scope correction mid-conversation -- initially miscategorized
+        these as "cosmetic, redirects fine" alongside the `github.com`
+        links, which was wrong: they're on the same no-redirect `.io`
+        Pages domain as the two required files). Left alone on purpose:
+        `STATE.md`'s own historical mentions (not rewritten), and
+        `docs/README.md`'s one mention (already a separate, deliberately-
+        left-as-is inconsistency from entry 52's CLEAN UP item 2 -- now
+        doubly stale, still just tracked there, not fixed here).
+      - New private repo `diy-korg-kronos-editor` (project owner created
+        it; genuinely empty otherwise) seeded with a minimal scaffold
+        (`README.md` explaining the split, a comment-only `CMakeLists.txt`
+        placeholder -- no real editor/SysEx code yet) so `git submodule
+        add` had a real commit to reference. Added to this repo as
+        `private/diy-korg-kronos-editor` (new `.gitmodules`).
+      - Root `CMakeLists.txt`: `add_subdirectory(private/diy-korg-kronos-
+        editor)`, guarded on that submodule's own `CMakeLists.txt`
+        actually existing (not just the directory -- `git submodule add`
+        creates the directory immediately, but a clone without
+        `--recurse-submodules`, which is EVERY public contributor here
+        since the submodule is private, leaves it empty until `git
+        submodule update --init` runs). Verified both real cases, not
+        just reasoned about them: copied the whole repo to `/tmp`, deleted
+        `private/` entirely (simulating a public contributor's clone) --
+        `cmake -B build` configured clean, `kronos_editor`/`pcg_file_test`
+        both built and passed with zero submodule present. Then rebuilt
+        the real working copy (submodule present, empty placeholder) --
+        also clean, `ninja: no work to do` (no actual kronos_editor source
+        changed, only CMakeLists.txt + the new empty submodule dir).
+      - **Follow-up, same session, per direct request**: a build WITHOUT
+        the private submodule now fails visibly and helpfully in the UI
+        instead of just quietly lacking a feature. Root `CMakeLists.txt`
+        sets `EDITOR_HAS_SGX2_MODULE=1` on the `kronos_editor` target only
+        inside the same `if (EXISTS .../CMakeLists.txt)` guard already
+        used for `add_subdirectory()`; `main.cpp` wraps its
+        `openSgx2EditorWindow` bind (and the `sgx2WindowsByRef` map/its
+        lambda capture) in `#ifdef EDITOR_HAS_SGX2_MODULE`, so a build
+        without the private module never exposes
+        `window.openSgx2EditorWindow` to JS at all -- not present-but-
+        broken, genuinely undefined. `pane-program-editor.js`'s
+        `openSgx2Editor()` checks `typeof window.openSgx2EditorWindow !==
+        "function"` before calling it and shows a red toast ("SGX-2
+        editor: feature not available in this build.") instead;
+        `showToast` newly threaded through `createPane()` ->
+        `createLibraryPanels()` -> `createProgramsPanel()` to make this
+        possible (previously only `log()`/`setStatus` reached that deep --
+        the existing `result.ok === false` path was upgraded from `log()`
+        to `showToast` too while threading it through, for consistency).
+        Verified both configurations compile clean from a fresh `/tmp`
+        copy (with and without `private/` present) after this change, not
+        just the one that was already being iterated on.
+  56. **MOVED INTO THE PRIVATE SUBMODULE (2026-08-16), same branch, per
+      direct request**: the SGX-2 window-opening code (previously in this
+      repo's own `main.cpp`, entry 53/54) now lives entirely in
+      `private/diy-korg-kronos-editor/src` -- this repo exposes only a
+      generic extension point, never anything SGX-2-specific.
+      - New `src/bridge/EditorExtension.h`: `EditorWindowHandle` (a
+        `{ok, bringToFront}` value, NOT a pointer to `main.cpp`'s own
+        file-local `EditorWindowInstance` type) and `EditorExtensionContext`
+        (`{bridge, createWindow}`) -- the ENTIRE surface this repo exposes
+        to an optional private module. `registerPrivateEditorExtensions()`
+        is declared here, `#ifdef EDITOR_HAS_PRIVATE_MODULE`-guarded, and
+        implemented ONLY in the private repo.
+      - `EditorBridge` gained four genuinely generic additions (none know
+        anything about SGX-2): JS-bound `getProgramRecordBytes`/
+        `putProgramRecordBytes` (exact mirror of the existing
+        `getSongRecordBytes`/`putSongRecordBytes`, thin wrappers around
+        already-existing `PcgFile::programRecordBytes()`/
+        `putProgramRecordBytes()`); native-only (not JS-bound)
+        `getProgramRecordBytesRaw`/`putProgramRecordBytesRaw` for a C++
+        caller that already holds `EditorBridge&` and shouldn't need to
+        hand-construct a `choc::value::Value` array just to call the
+        JS-shaped versions; native-only `lockProgramRecord`/
+        `unlockProgramRecord`/`isProgramRecordLocked` (a
+        `std::set<std::tuple<int,int,int>>`) -- **per direct request,
+        blocks Move/Copy of a Program while its editor is open**:
+        `copyProgram()`/`swapProgram()` now refuse (existing
+        `frontend/app.js` error-toast handling surfaces this with zero
+        frontend changes) if EITHER side of the operation is locked.
+      - Renamed the compile flag `EDITOR_HAS_SGX2_MODULE` ->
+        `EDITOR_HAS_PRIVATE_MODULE` mid-pass -- it's a generic "is any
+        private module compiled in" gate, not SGX-2-specific, and the old
+        name itself was leaking "SGX-2" into the public repo's own
+        `CMakeLists.txt`/`main.cpp`, contradicting the whole point of this
+        change.
+      - `main.cpp`: `createEditorWindow()` gained a `resourceDir` parameter
+        (a real signature change, not just an addition -- `fetchResource`'s
+        capture of the old fixed `frontendDir` had to become a by-value
+        capture of the new per-call parameter). One `EditorExtensionContext
+        ctx` built once, declared (default-constructed) BEFORE
+        `createEditorWindow` so its lambda can capture `ctx` by reference,
+        then `ctx.createWindow` assigned right after `createEditorWindow`
+        itself exists -- resolves what would otherwise be a circular
+        dependency between the two (a first draft hit this as a real
+        compile-order problem, not just a naming choice).
+      - `private/diy-korg-kronos-editor/src/Sgx2Editor.cpp`: implements
+        `registerPrivateEditorExtensions()` -- the `openSgx2EditorWindow`
+        bind, title formatting, and the per-Program dedup map (now
+        file-local here, storing `EditorWindowHandle` instead of a raw
+        pointer) all moved here verbatim from the deleted `main.cpp` code.
+        Binds two new generic per-window functions, `getRecordBytes()`/
+        `putRecordBytes(bytes)`, replacing the old `getSgx2ProgramRef()` --
+        the window never learns its own `(datasetId,bank,number)` at all
+        now, only ever sees bytes (the window title, native-side, is the
+        only place that triple is still shown). Calls
+        `lockProgramRecord()`/`unlockProgramRecord()` around the window's
+        own open/close lifecycle.
+      - `private/diy-korg-kronos-editor/src/Sgx2EditorStandaloneMain.cpp`
+        (new) + `CMakeLists.txt` gains a second executable target,
+        `sgx2_editor_standalone` -- no `kronos_editor`, no `EditorBridge`,
+        no `PcgFile`, no dataset model at all; loads a single exported
+        `.bin` chunk into memory and binds `getRecordBytes()`/
+        `putRecordBytes()` directly against it, so `frontend/sgx2-
+        editor.html`/`.js` (moved from the public repo into the private
+        repo's own `frontend/`, adapted to the new byte-primitive names,
+        dropped the now-redundant per-window dataset-ref display) runs
+        completely unmodified against either this tool or the real app.
+        Platform-link block duplicated from the parent `CMakeLists.txt`
+        (matching this codebase's own established "small duplication over
+        premature sharing" convention) rather than a shared CMake function.
+      - **Verified for real, not just compiled** -- the real-app UI check
+        planned (click the actual Programs-table SGX-2 button) turned out
+        impractical: `test_1.PCG`'s real Programs table made every
+        accessibility-automation approach either time out or fail to
+        recurse into the WKWebView content at all (same class of tool
+        limitation hit in entry 53, worse here since even a bare
+        `AXTable`-search timed out this time). Pivoted to a **direct C++
+        smoke test** instead (a throwaway `clang++`-compiled binary linking
+        `EditorBridge.cpp` directly, per CLAUDE.md's own sanctioned
+        pattern) run against the real `test_1.PCG` -- confirmed, against
+        real file bytes: `getProgramRecordBytesRaw` returns real 4960-byte
+        Program records; `lockProgramRecord`/`isProgramRecordLocked` work;
+        `copyProgram` refuses a locked DESTINATION; `swapProgram` refuses
+        when EITHER side is locked; both stop refusing (for that reason)
+        once `unlockProgramRecord` is called. That same smoke test then
+        exported one real Program's 4960 bytes to a real `.bin` file, which
+        `sgx2_editor_standalone` was run against directly (accessibility
+        automation against ITS much smaller single-window UI worked fine,
+        unlike the full app) -- confirmed "4960 bytes loaded.", clicked
+        "Write back unchanged bytes", confirmed the UI's own "Wrote back
+        successfully." AND that the written `-edited.bin` file is
+        byte-for-byte identical (`cmp`) to the original export. Full
+        `pcg_file_test`/`kronos_editor`/`sgx2_editor_standalone` rebuild
+        clean, both with and without `private/` present (fresh `/tmp`
+        copies, as in entry 53). `grep -ri sgx2 src/ CMakeLists.txt` in the
+        public repo is NOT literally empty -- the remaining hits are the
+        already-confirmed engine-name enum in `ProgramDecoder.h` (real
+        file-format knowledge, correctly public, predates and is unrelated
+        to this split) and a few explanatory comments describing what the
+        generic extension point is currently used for; no actual
+        SGX-2-specific logic/window-management code remains anywhere in
+        this repo.
 
 CLEAN UP -- noted 2026-08-15:
 

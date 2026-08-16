@@ -32,7 +32,7 @@
 // getter rather than this panel's own state.
 function createProgramsPanel(
   { panelTable, bankFilterRow, selectControlRow },
-  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log }
+  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
 ) {
   // Set during a Programs row's own dragstart, cleared on dragend -- lets a
   // row being dragged OVER (not just dropped on) show immediate reject
@@ -53,6 +53,37 @@ function createProgramsPanel(
   // (refresh()) keeps whatever the user had filtered to instead.
   let programPresentBanks = new Set();
   let programBankFilter = new Set();
+
+  // Experimental (see STATE.md's multi-window entry) -- opens a separate
+  // native window (main.cpp's createEditorWindow(), triggered via
+  // window.openSgx2EditorWindow()) for exactly this Program's SGX-2 data.
+  // `label` (no bankType passed to formatBankNumber -- see its own doc
+  // comment for the ", (EXi)" suffix that would otherwise duplicate what
+  // the Type button itself already says) becomes the window's title,
+  // between "Editor" and "(experimental)", so several open SGX-2 windows
+  // stay distinguishable from each other. The bridge itself (main.cpp) is
+  // what actually prevents two windows opening for the SAME Program --
+  // this just passes the (datasetId, bank, number) key through; if a
+  // window for it is already open, the bridge brings that one to front
+  // instead of creating a duplicate. window.openSgx2EditorWindow only
+  // exists at all when the private companion submodule (private/diy-korg-
+  // kronos-editor) was actually compiled in -- main.cpp binds it inside an
+  // `#ifdef EDITOR_HAS_SGX2_MODULE` guard, itself set only when that
+  // submodule's own CMakeLists.txt was found (see the root CMakeLists.txt
+  // and STATE.md's repo-split entry). Every public build (no access to the
+  // private repo) never binds it, so it's simply undefined here rather
+  // than present-but-broken -- checked directly, per direct request, so a
+  // click shows a clear toast instead of throwing or silently doing
+  // nothing.
+  async function openSgx2Editor(p) {
+    if (typeof window.openSgx2EditorWindow !== "function") {
+      showToast("SGX-2 editor: feature not available in this build.", { isError: true });
+      return;
+    }
+    const label = formatBankNumber({ isProgram: true, bank: p.bank, number: p.number });
+    const result = await window.openSgx2EditorWindow(getDatasetId(), p.bank, p.number, label);
+    if (result && result.ok === false) showToast(result.error, { isError: true });
+  }
 
   function refreshBankButtons() {
     renderBankFilterRow(bankFilterRow, PROGRAM_BANK_NAMES, programPresentBanks, programBankFilter, () => render(), getProgramBankType);
@@ -201,7 +232,11 @@ function createProgramsPanel(
     const table = document.createElement("table");
     table.className = "table is-fullwidth is-hoverable is-narrow programs-table";
     table.innerHTML =
-      colgroupHtml([2.6, null, 1.3, 1.3, 1.3]) +
+      // Bank narrowed 30% (2.6 -> 1.82) and Type widened 50% (1.3 -> 1.95),
+      // per direct request 2026-08-16 -- Type now sometimes holds a button
+      // (the SGX-2 open-editor case below), which needs more room than the
+      // bank column, whose "I-A 042"-style labels never do.
+      colgroupHtml([1.82, null, 1.95, 1.3, 1.3]) +
       "<thead><tr><th>Bank</th><th>Name</th><th " +
       "title=\"HD-1 or EXi -- not yet cross-checked against a real backup, see docs/external/README.md\">Type</th>" +
       "<th title=\"Set List references\">#STL</th>" +
@@ -216,12 +251,34 @@ function createProgramsPanel(
       // Exi = 1 (kronos::ProgramBankType::Exi) -- exiAlgorithmType is only
       // meaningful for an EXi-bank Program (see ProgramInfo::
       // exiAlgorithmType's doc comment); an HD-1 row just shows "HD-1".
-      typeTd.textContent =
-        p.bankType === 1 && p.exiAlgorithmType != null
-          ? `${programBankTypeName(p.bankType)} (${exiEngineName(p.exiAlgorithmType)})`
-          : p.bankType != null
-            ? programBankTypeName(p.bankType)
-            : "";
+      // SGX-2 = 8 (EXI_ALGORITHM_NAMES' own index, pane.js) is a special
+      // case, per direct request 2026-08-16: rather than plain text, the
+      // Type cell becomes a real button opening the (experimental) SGX-2
+      // editor window for THIS exact Program -- the only engine with a
+      // real (if placeholder) window to open at all so far.
+      const isSgx2 = p.bankType === 1 && p.exiAlgorithmType === 8;
+      if (isSgx2) {
+        const typeBtn = document.createElement("button");
+        typeBtn.type = "button";
+        typeBtn.className = "button is-small is-link is-light sgx2-open-button";
+        typeBtn.textContent = `${programBankTypeName(p.bankType)} (${exiEngineName(p.exiAlgorithmType)})`;
+        typeBtn.title = "Open the SGX-2 editor for this Program (experimental)";
+        // Row click (below) toggles the Set List/Combi usage expansion --
+        // this button does something else entirely, so it must not also
+        // trigger that.
+        typeBtn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openSgx2Editor(p);
+        });
+        typeTd.appendChild(typeBtn);
+      } else {
+        typeTd.textContent =
+          p.bankType === 1 && p.exiAlgorithmType != null
+            ? `${programBankTypeName(p.bankType)} (${exiEngineName(p.exiAlgorithmType)})`
+            : p.bankType != null
+              ? programBankTypeName(p.bankType)
+              : "";
+      }
       tr.append(
         bankCell(true, p.bank, p.number),
         nameTd,

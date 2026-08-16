@@ -43,6 +43,30 @@ target_compile_definitions(kronos_editor PRIVATE
     EDITOR_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources"
 )
 
+# Optional private companion submodule (private/diy-korg-kronos-editor) --
+# the SGX-2/EXi Program parameter editors and MIDI SysEx transport layer,
+# kept in a separate PRIVATE repo rather than this public one (too large/
+# open-ended a maintenance surface -- see STATE.md's multi-window entry for
+# the full reasoning). Guarded on the submodule's own CMakeLists.txt
+# existing, not just the directory, since `git submodule add` always
+# creates the directory even before `git submodule update --init` has
+# actually populated it -- so a clone without access to the private repo
+# (every public contributor) still configures and builds kronos_editor
+# fine, just without whatever this adds.
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/private/diy-korg-kronos-editor/CMakeLists.txt")
+    add_subdirectory(private/diy-korg-kronos-editor)
+    # Lets main.cpp's call to registerPrivateEditorExtensions() (see
+    # src/bridge/EditorExtension.h -- the generic extension point; this repo
+    # has no idea what it actually does) compile in or out based on the
+    # exact same condition -- so a build without the private submodule
+    # never links against or calls into it at all. The frontend
+    # (pane-program-editor.js's openSgx2Editor()) checks whether
+    # window.openSgx2EditorWindow exists at all and shows a toast instead
+    # of calling it when it's missing -- that function is bound (or not)
+    # entirely by the private module's own code, never by this repo.
+    target_compile_definitions(kronos_editor PRIVATE EDITOR_HAS_PRIVATE_MODULE=1)
+endif()
+
 if (EDITOR_EMBED_RESOURCES)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 

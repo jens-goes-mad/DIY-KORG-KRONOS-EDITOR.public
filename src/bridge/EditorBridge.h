@@ -1,7 +1,12 @@
 #pragma once
 
+#include <functional>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
+#include <tuple>
+#include <vector>
 
 #include "choc/containers/choc_Value.h"
 #include "kronos/PcgFile.h"
@@ -116,6 +121,25 @@ public:
     // {ok:false, error}. Writes straight into the dataset's retained raw
     // bytes via PcgFile::putNameRecordBytes().
     choc::value::Value putNameRecordBytes(const choc::value::ValueView& args);
+
+    // [datasetId, bank, number] -> {ok, bytes:[0-255 x <record size>]} or
+    // {ok:false, error}. The raw MBK1/PBK1 record for one Program slot --
+    // see PcgFile::programRecordBytes()'s own doc comment. Same two-tier
+    // "detail view requests exactly the bytes it needs, decodes/encodes
+    // entirely in JS (or a private companion module)" shape as
+    // getSongRecordBytes() above -- generic on purpose: this bridge has no
+    // idea what a caller does with the bytes, which is what lets an
+    // optional private module (see EditorExtension.h) build a real editor
+    // for a specific EXi engine without this repo needing to know
+    // anything about it.
+    choc::value::Value getProgramRecordBytes(const choc::value::ValueView& args);
+
+    // [datasetId, bank, number, bytes[0-255 x <record size>]] -> {ok} or
+    // {ok:false, error}. Writes straight into the dataset's retained raw
+    // bytes via PcgFile::putProgramRecordBytes(), which also re-derives
+    // the decoded ProgramInfo fields (name, exiAlgorithmType, ...) from
+    // what was just written -- see that method's own doc comment.
+    choc::value::Value putProgramRecordBytes(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, fromIndex, toIndex] -> {ok} or {ok:false,
     // error}. Relocates one Set List slot (its name AND its params
@@ -289,6 +313,52 @@ public:
     // bank identity.
     choc::value::Value getDatasetInternals(const choc::value::ValueView& args);
 
+    // NOT bound to JS -- this is a native-side-only hook, called by main.cpp
+    // once per open window, so every window's own frontend can learn when
+    // the shared SET of open datasets changes (a dataset opened/closed --
+    // not fired for every edit) even though it happened via a DIFFERENT
+    // window's WebView. This class is otherwise unaware of "windows" at
+    // all (window/webview lifecycle stays entirely in main.cpp, see
+    // STATE.md's multi-window entry); it just knows to call back whenever
+    // m_datasets gains or loses an entry. Each registered listener is
+    // expected to push a refresh into its own WebView (e.g.
+    // `view.evaluateJavascript("window.refreshDatasets()")`) -- this class
+    // has no WebView reference of its own, deliberately: it stays testable
+    // by tests/pcg_file_test.cpp-style code with zero CHOC dependency,
+    // same reasoning PcgFile itself is kept CHOC-free.
+    using DatasetsChangedListener = std::function<void()>;
+    void addDatasetsChangedListener(DatasetsChangedListener listener);
+
+    // NOT bound to JS -- like addDatasetsChangedListener() above, these are
+    // native-side-only, for an optional private companion module's own C++
+    // extension code (see EditorExtension.h) to call directly, since it
+    // already holds a live EditorBridge& and has no need to round-trip
+    // through JS. Marks a specific Program record as "claimed" by an
+    // external editor (e.g. a per-engine parameter editor window) for as
+    // long as that editor keeps it open -- copyProgram()/swapProgram()
+    // below refuse to move/copy/overwrite a locked record, so an open
+    // editor's own in-memory bytes can never be silently invalidated (or
+    // silently overwritten) by a drag-and-drop elsewhere in the app. This
+    // class has no idea WHY a record is locked or by what -- purely a
+    // generic "hands off" marker, same "stay agnostic of what a caller
+    // does with it" reasoning getProgramRecordBytes()/
+    // putProgramRecordBytes() above already follow.
+    void lockProgramRecord(int datasetId, int bank, int number);
+    void unlockProgramRecord(int datasetId, int bank, int number);
+    bool isProgramRecordLocked(int datasetId, int bank, int number) const;
+
+    // NOT bound to JS -- plain native-typed counterparts of
+    // getProgramRecordBytes()/putProgramRecordBytes() above, for the same
+    // kind of direct C++ caller lockProgramRecord() above is for. Avoids
+    // making a native caller hand-construct a choc::value::Value array just
+    // to call the JS-shaped versions of these two -- same underlying
+    // PcgFile calls, nullopt/false on failure (out of range, or wrong byte
+    // count on the put side) rather than a JS-facing error string, since a
+    // native caller doesn't need one forwarded through a bridge boundary
+    // that was never actually crossed.
+    std::optional<std::vector<uint8_t>> getProgramRecordBytesRaw(int datasetId, int bank, int number);
+    bool putProgramRecordBytesRaw(int datasetId, int bank, int number, const std::vector<uint8_t>& bytes);
+
 private:
     struct Dataset {
         kronos::PcgFile file;
@@ -297,6 +367,9 @@ private:
 
     std::map<int, Dataset> m_datasets;
     int m_nextDatasetId = 1;
+    std::vector<DatasetsChangedListener> m_datasetsChangedListeners;
+    void notifyDatasetsChanged();
+    std::set<std::tuple<int, int, int>> m_lockedProgramRecords;  // (datasetId, bank, number) -- see lockProgramRecord()'s own doc comment
 
     kronos::Setlist* setlistOf(int datasetId, int setlistIndex);
     kronos::PcgFile* fileOf(int datasetId);

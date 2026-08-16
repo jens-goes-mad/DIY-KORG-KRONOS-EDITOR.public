@@ -62,6 +62,14 @@ against the raw file) against real bytes -- not just by reasoning about hex dump
   and-drop and `library.js`'s Programs drag-and-drop were found to be independently
   hand-written near-duplicates, discussed, and deliberately left unmerged for now with
   the reasoning written down.
+- **This repo has an optional private companion submodule** (`private/diy-korg-kronos-
+  editor`, added 2026-08-16 -- see STATE.md) for functionality judged too large/open-
+  ended a maintenance surface for this free OSS project (the SGX-2/EXi Program parameter
+  editors, the MIDI SysEx transport layer). It is NEVER assumed present -- root
+  `CMakeLists.txt`'s `add_subdirectory()` call is guarded on the submodule's own
+  `CMakeLists.txt` actually existing, since every public contributor's clone has it
+  empty (no access to the private repo it points at). Never remove that guard, and never
+  add code elsewhere in this repo that assumes `private/` has real content.
 
 ## Current architecture direction (as of 2026-08-01)
 

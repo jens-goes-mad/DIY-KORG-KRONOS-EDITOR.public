@@ -252,6 +252,7 @@ choc::value::Value EditorBridge::finishOpen(Dataset dataset) {
     const int datasetId = m_nextDatasetId++;
     auto result = datasetResultValue(datasetId, dataset);  // read before the move below
     m_datasets[datasetId] = std::move(dataset);
+    notifyDatasetsChanged();
     return result;
 }
 
@@ -308,8 +309,16 @@ choc::value::Value EditorBridge::listDatasets(const choc::value::ValueView&) {
 
 choc::value::Value EditorBridge::closeDataset(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
-    m_datasets.erase(datasetId);
+    if (m_datasets.erase(datasetId) > 0) notifyDatasetsChanged();
     return makeOk();
+}
+
+void EditorBridge::addDatasetsChangedListener(DatasetsChangedListener listener) {
+    m_datasetsChangedListeners.push_back(std::move(listener));
+}
+
+void EditorBridge::notifyDatasetsChanged() {
+    for (const auto& listener : m_datasetsChangedListeners) listener();
 }
 
 choc::value::Value EditorBridge::isDatasetDirty(const choc::value::ValueView& args) {
@@ -436,6 +445,61 @@ choc::value::Value EditorBridge::putNameRecordBytes(const choc::value::ValueView
         return makeError("Couldn't write that Set List slot's name record (wrong size, or index out of range)");
     }
     return makeOk();
+}
+
+choc::value::Value EditorBridge::getProgramRecordBytes(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int number = intArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto bytes = file->programRecordBytes(bank, number);
+    if (!bytes.has_value()) return makeError("No Program record at that bank/number");
+
+    auto result = makeOk();
+    result.setMember("bytes", bytesToValue(*bytes));
+    return result;
+}
+
+choc::value::Value EditorBridge::putProgramRecordBytes(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int number = intArg(args, 2);
+    const std::vector<uint8_t> bytes = bytesArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!file->putProgramRecordBytes(bank, number, bytes)) {
+        return makeError("Couldn't write that Program record (wrong size, or bank/number out of range)");
+    }
+    return makeOk();
+}
+
+void EditorBridge::lockProgramRecord(int datasetId, int bank, int number) {
+    m_lockedProgramRecords.insert({datasetId, bank, number});
+}
+
+void EditorBridge::unlockProgramRecord(int datasetId, int bank, int number) {
+    m_lockedProgramRecords.erase({datasetId, bank, number});
+}
+
+bool EditorBridge::isProgramRecordLocked(int datasetId, int bank, int number) const {
+    return m_lockedProgramRecords.count({datasetId, bank, number}) > 0;
+}
+
+std::optional<std::vector<uint8_t>> EditorBridge::getProgramRecordBytesRaw(int datasetId, int bank, int number) {
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return std::nullopt;
+    return file->programRecordBytes(bank, number);
+}
+
+bool EditorBridge::putProgramRecordBytesRaw(int datasetId, int bank, int number, const std::vector<uint8_t>& bytes) {
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return false;
+    return file->putProgramRecordBytes(bank, number, bytes);
 }
 
 choc::value::Value EditorBridge::reorderSongEntry(const choc::value::ValueView& args) {
@@ -704,6 +768,20 @@ choc::value::Value EditorBridge::copyProgram(const choc::value::ValueView& args)
     auto* dstFile = fileOf(dstDatasetId);
     if (dstFile == nullptr) return makeError("Destination dataset is no longer open.");
 
+    // Refuse if EITHER side is open in an external editor (e.g. a private-
+    // module EXi parameter editor window, see lockProgramRecord()'s own
+    // doc comment) -- copying FROM a locked source risks grabbing a stale
+    // snapshot the editor hasn't written back yet; copying ONTO a locked
+    // destination would silently get overwritten the moment that editor's
+    // own (already-open, already-fetched) bytes get written back. Checked
+    // before either file is touched.
+    if (isProgramRecordLocked(srcDatasetId, srcBank, srcNumber)) {
+        return makeError("Can't copy: the source Program is open in an editor.");
+    }
+    if (isProgramRecordLocked(dstDatasetId, dstBank, dstNumber)) {
+        return makeError("Can't copy: the destination Program is open in an editor.");
+    }
+
     auto error = dstFile->copyProgramFrom(*srcFile, srcBank, srcNumber, dstBank, dstNumber);
     if (error.has_value()) return makeError(programCopyErrorMessage(*error));
     return makeOk();
@@ -718,6 +796,12 @@ choc::value::Value EditorBridge::swapProgram(const choc::value::ValueView& args)
 
     auto* file = fileOf(datasetId);
     if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    // Same reasoning as copyProgram() above -- a swap mutates BOTH slots'
+    // bytes out from under either one's own open editor, if either has one.
+    if (isProgramRecordLocked(datasetId, bankA, numberA) || isProgramRecordLocked(datasetId, bankB, numberB)) {
+        return makeError("Can't swap: one of these Programs is open in an editor.");
+    }
 
     auto result = file->swapPrograms(bankA, numberA, bankB, numberB);
     if (!result.ok) return makeError(result.error);

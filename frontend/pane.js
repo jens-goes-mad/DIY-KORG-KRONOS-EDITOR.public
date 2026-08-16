@@ -342,6 +342,7 @@ function createLibraryPanels(
   root,
   {
     log,
+    showToast,
     getDatasetId,
     getProgramBankType,
     onDropProgram,
@@ -409,7 +410,7 @@ function createLibraryPanels(
 
   const programsPanel = createProgramsPanel(
     { panelTable: panelTables.programs, bankFilterRow: bankFilterRows.programs, selectControlRow: selectControlRows.programs },
-    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log }
+    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
   );
 
   const duplicatesPanel = createDuplicatesPanel(
@@ -885,6 +886,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, o
   });
   const libraryPanels = createLibraryPanels(libraryContainer, {
     log,
+    showToast,
     getDatasetId: getCurrentDatasetId,
     getProgramBankType,
     onDropProgram,
