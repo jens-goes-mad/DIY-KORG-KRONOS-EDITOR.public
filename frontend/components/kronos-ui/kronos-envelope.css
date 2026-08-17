@@ -1,0 +1,56 @@
+.kronos-envelope {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kronos-envelope-svg {
+  width: 100%;
+  height: 160px;
+  background: #16171a;
+  border: 1px solid #3d3e42;
+  border-radius: 4px;
+  touch-action: none;
+}
+
+.kronos-envelope-curve {
+  fill: none;
+  stroke: #5b9dd9;
+  stroke-width: 2;
+}
+
+.kronos-envelope-handle {
+  fill: #5b9dd9;
+  stroke: #ffffff;
+  stroke-width: 2;
+  cursor: grab;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.6));
+}
+
+.kronos-envelope-handle:hover {
+  fill: #7fb8ea;
+  stroke-width: 2.5;
+}
+
+.kronos-envelope-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.kronos-envelope-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 11px;
+  color: #9a9ba0;
+}
+
+.kronos-envelope-label-name {
+  white-space: nowrap;
+}
+
+.kronos-envelope-label-value {
+  font-family: ui-monospace, monospace;
+  color: #e4e4e6;
+}
