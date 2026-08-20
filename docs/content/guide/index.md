@@ -357,8 +357,10 @@ you built.
   whose raw Timbre bank code is independently confirmed (see [The file format](/format) --
   in practice this covers every real bank on a real backup, but if a reference can't be
   safely repointed the toast says so explicitly rather than silently skipping it).
-- No dirty-tracking or autosave, as above -- save deliberately, and often, if you're doing
-  a long editing session.
+- No autosave, and dirty-tracking is limited to the Unload confirmation above -- closing
+  the whole app, or loading a different file into a pane that already has unsaved changes,
+  still discards them without asking. Save deliberately, and often, if you're doing a long
+  editing session.
 - Cross-dataset Combi copying only supports the **copy onto an empty slot** gesture --
   cross-dataset swap and cross-dataset move-to-a-different-bank (overwrite) aren't
   supported yet, only within one dataset.
