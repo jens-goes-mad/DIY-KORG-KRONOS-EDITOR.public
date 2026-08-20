@@ -21,11 +21,9 @@ easy way to compare two backups side by side -- means doing it entirely by
 hand on the unit's own screen, or not at all. This project is
 reverse-engineering that format from scratch, byte by byte, verified against
 real backup files with known ground truth (not guessed), and building a real
-cross-platform editor on top of it as the findings land -- see
-[`docs/content/format/index.md`](docs/content/format/index.md) for the full format
-writeup, also published at
-[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/format)
-for the readable version.
+cross-platform editor on top of it as the findings land -- full writeup and
+reference at **[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/overview)**
+(source: [`docs/content/format/index.md`](docs/content/format/index.md)).
 
 **If you own a Kronos**, the browsing/rearranging features below already work
 on real backups today, and every additional confirmed field or fixed Set List

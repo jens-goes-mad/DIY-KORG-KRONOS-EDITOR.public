@@ -2,9 +2,9 @@
 
 The full file-format internals reference -- container/chunk layout, SDB1/SBK1/CBK1/MBK1/
 PBK1 record structures, Combi Timbre references, and the running list of open questions --
-now lives in one place: **[`overview`](content/overview/index.md)**, also
-published at
-**[jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/format](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/format)**.
+now lives in one place, published at
+**[jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/overview](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/overview)**
+(source: [`content/overview/index.md`](content/overview/index.md)).
 
 This file used to be a second, hand-maintained copy of that same content -- kept in sync by
 hand with every edit, which drifted in practice (small inconsistencies crept in over time)
