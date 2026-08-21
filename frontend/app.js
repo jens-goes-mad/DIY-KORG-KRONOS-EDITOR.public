@@ -85,13 +85,16 @@ const panes = {};
 // section) -- revisit once that's solved, not before.
 // `target.zone` (pane.js's dropZoneForEvent()) is one of "on" (dropped
 // mid-row -- copy over), "before"/"after" (dropped near a row's top/bottom
-// edge -- insert, shifting the intervening range). Same-Set-List only for
-// insert: relocating an entry is a pure rearrangement of the same 128
-// slots, safe by construction (nothing added or removed, see STATE.md's
-// RFC). Cross-Set-List stays on the older copyEntry() path regardless of
-// zone -- inserting into a *different*, already-full 128-slot Set List
-// would have to evict something at its far end to make room, a real
-// data-loss question deliberately not tackled yet.
+// edge -- insert, shifting the intervening range). Copy-over is a direct
+// 1:1 slot overwrite -- safe by construction whether source and target are
+// the same Set List or two different ones in the same dataset, so it's
+// always a real byte-level write. Insert is Same-Set-List only: relocating
+// an entry there is a pure rearrangement of the same 128 slots, safe by
+// construction (nothing added or removed, see STATE.md's RFC). Cross-Set-
+// List insert stays on the older copyEntry() path -- inserting into a
+// *different*, already-full 128-slot Set List would have to evict
+// something at its far end to make room, a real data-loss question
+// deliberately not tackled yet.
 async function onDropEntry(source, target) {
   if (source.datasetId !== target.datasetId) {
     showToast(
@@ -105,29 +108,16 @@ async function onDropEntry(source, target) {
   const sameList = source.setlistIndex === target.setlistIndex;
   let result;
 
-  if (sameList && target.zone !== "on") {
-    // Insert: relocate source to just before/after target, shifting the
-    // intervening range -- one native call (EditorBridge::reorderSongEntry),
-    // not one bridge round-trip per shifted slot.
-    let toIndex = target.zone === "before" ? target.index : target.index + 1;
-    toIndex = Math.min(toIndex, SETLIST_SONG_COUNT - 1);
-    if (toIndex === source.index) return;  // no real move
-    result = await window.reorderSongEntry(target.datasetId, target.setlistIndex, source.index, toIndex);
-    if (!result.ok) {
-      showToast(`Move failed: ${result.error}`, { isError: true });
-      return;
-    }
-    setStatus(`Moved slot ${kronosNumber(source.index)} to position ${kronosNumber(toIndex)}.`);
-  } else if (sameList) {
+  if (target.zone === "on") {
     // Copy over: target becomes an exact copy of source (name + params);
     // source stays unchanged. Real byte-level writes (getSongRecordBytes/
     // getNameRecordBytes/putSongRecordBytes/putNameRecordBytes) -- both
     // halves of a slot's data, since they live in separate SBK1/SDB1
     // records, see PcgFile.h's own doc comment on nameRecordBytes().
-    if (source.index === target.index) return;
+    if (sameList && source.index === target.index) return;
     const [srcParams, srcName] = await Promise.all([
-      window.getSongRecordBytes(target.datasetId, source.setlistIndex, source.index),
-      window.getNameRecordBytes(target.datasetId, source.setlistIndex, source.index),
+      window.getSongRecordBytes(source.datasetId, source.setlistIndex, source.index),
+      window.getNameRecordBytes(source.datasetId, source.setlistIndex, source.index),
     ]);
     if (!srcParams.ok || !srcName.ok) {
       showToast(`Copy failed: ${srcParams.ok ? srcName.error : srcParams.error}`, { isError: true });
@@ -142,6 +132,19 @@ async function onDropEntry(source, target) {
       return;
     }
     setStatus(`Copied slot ${kronosNumber(source.index)} -> slot ${kronosNumber(target.index)}.`);
+  } else if (sameList) {
+    // Insert: relocate source to just before/after target, shifting the
+    // intervening range -- one native call (EditorBridge::reorderSongEntry),
+    // not one bridge round-trip per shifted slot.
+    let toIndex = target.zone === "before" ? target.index : target.index + 1;
+    toIndex = Math.min(toIndex, SETLIST_SONG_COUNT - 1);
+    if (toIndex === source.index) return;  // no real move
+    result = await window.reorderSongEntry(target.datasetId, target.setlistIndex, source.index, toIndex);
+    if (!result.ok) {
+      showToast(`Move failed: ${result.error}`, { isError: true });
+      return;
+    }
+    setStatus(`Moved slot ${kronosNumber(source.index)} to position ${kronosNumber(toIndex)}.`);
   } else {
     result = await window.copyEntry(
       source.datasetId, source.setlistIndex, source.index,

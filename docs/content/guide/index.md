@@ -348,10 +348,13 @@ you built.
 
 ## Current limitations
 
-- Copying a Setlist slot **between two different Set Lists** (rather than within one, or
-  the whole-list "Copy all to opposite") still uses an older, in-memory-only path -- it
-  isn't yet part of what Save As writes out. Same-Set-List reorders/copies and Program
-  copies are fully save-durable.
+- **Inserting** a Setlist slot between two different Set Lists (dragging near a row's
+  top/bottom edge to shift it into position, rather than dropping directly onto one) still
+  uses an older, in-memory-only path -- it isn't yet part of what Save As writes out,
+  since a full destination Set List would have to evict something to make room, a
+  data-loss question not tackled yet. Copying a slot **directly onto** another slot
+  (same Set List or a different one), same-Set-List reorders, the whole-list "Copy all to
+  opposite", and Program copies are all fully save-durable.
 - Multi-select (Ctrl/Cmd-click) doesn't have a bulk action wired up to it yet.
 - Resolving a duplicate can only repoint a Combi Timbre reference to/from a Program bank
   whose raw Timbre bank code is independently confirmed (see [The file format](/format) --
