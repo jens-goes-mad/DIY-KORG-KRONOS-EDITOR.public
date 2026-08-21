@@ -550,6 +550,16 @@ struct choc::ui::WebView::Pimpl
         if (! options->customUserAgent.empty())
             call<void> (webview, "setValue:forKey:", getNSString (options->customUserAgent), getNSString ("customUserAgent"));
 
+        // As of macOS 13.3/iOS 16.4, a WKWebView must opt in via this real
+        // `inspectable` property (not the legacy `developerExtrasEnabled`
+        // preferences key set above, which alone is no longer enough) to be
+        // reachable at all from Safari's Develop menu. Guarded with
+        // respondsToSelector: since the selector doesn't exist on older
+        // macOS/WebKit that this header still otherwise supports.
+        if (options->enableDebugMode)
+            if (call<BOOL> (webview, "respondsToSelector:", sel_registerName ("setInspectable:")))
+                call<void> (webview, "setInspectable:", (BOOL) 1);
+
         call<void> (webview, "setUIDelegate:", delegate);
         call<void> (webview, "setNavigationDelegate:", delegate);
 
