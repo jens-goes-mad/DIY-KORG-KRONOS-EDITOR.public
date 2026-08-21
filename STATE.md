@@ -4265,6 +4265,183 @@ App/UI:
         generic extension point is currently used for; no actual
         SGX-2-specific logic/window-management code remains anywhere in
         this repo.
+  57. **BUILT (2026-08-20)**: Setlist slot copy-over ("on" drop zone) is now
+      save-durable across two DIFFERENT Set Lists in the same dataset, not
+      just within one -- closes part of the User Guide's "Current
+      Limitations" gap (the cross-Set-List `copyEntry()` bullet). `app.js`'s
+      `onDropEntry()` used to branch on `sameList` first, so a copy-over onto
+      a different Set List fell all the way through to the older in-memory-
+      only `copyEntry()` even though the "on" gesture is a direct 1:1 slot
+      overwrite with no eviction question -- only "insert" (before/after,
+      shifting the intervening range into an already-full destination list)
+      has the real data-loss problem. Re-branched on `target.zone === "on"`
+      first instead: that path now always does the same real byte-level
+      `getSongRecordBytes`/`getNameRecordBytes`/`putSongRecordBytes`/
+      `putNameRecordBytes` round trip regardless of `sameList`, since those
+      bridge calls already take source/target Set List index independently
+      and needed zero backend changes. Cross-Set-List INSERT still falls
+      through to `copyEntry()` unchanged -- that data-loss question is still
+      not tackled.
+      - **Not verified live this pass**: this environment has no `node`
+        installed (couldn't run `node --check` or the headless
+        `.test.js` suites) and the app itself is a macOS-only native build
+        this sandbox can't launch -- checked by inspection only (brace/paren
+        balance, and confirming `mock_bridge.js`'s `getSongRecordBytes`/
+        `putSongRecordBytes`/`getNameRecordBytes`/`putNameRecordBytes`
+        signatures are already generic on `(datasetId, setlistIndex,
+        songIndex[, bytes])`, unchanged by this edit). Needs a real smoke
+        test before being trusted: drag-copy a slot onto a different Set
+        List of the same dataset, Save As, reload, confirm the copy
+        persisted.
+  58. **BUILT (2026-08-20)**: "Reset entry" -- right-click a Programs-table
+      row for a local menu with one action, which writes that slot's
+      bank-matching Init Program template (HD-1 or EXi) straight over it.
+      Per direct discussion: a per-bank-header button was considered and
+      rejected first -- the bank filter buttons already make it unclear
+      which banks are even showing, so a per-ROW menu (sits on the exact
+      slot it affects, filter-state-independent) was chosen instead, and
+      "..." per row was explicitly rejected as visual clutter -- a
+      right-click local menu costs zero extra always-visible UI.
+      - `PcgFile::resetProgram(bank, number, hd1InitBytes, exiInitBytes)`
+        (`PcgFile.h`/`.cpp`) -- the single-slot "clear to Init Program" half
+        of `resolveDuplicates()`, with none of its multi-duplicate/
+        repointing machinery: nothing else in the file is touched, and
+        anything already referencing (bank, number) keeps pointing at it
+        (shows the reset content now) rather than getting repointed away,
+        which is the actual behavioral difference from Duplicates'
+        "resolve" action -- this is "reset this slot", not "delete this
+        Program and preserve its references elsewhere".
+      - **Bug found by the new test actually running, fixed same pass**:
+        a Set List slot referencing the reset (bank, number) kept showing
+        its OLD `instrumentName` -- that field is a cache on the `Song`
+        struct, only re-derived by `putSongRecordBytes()` when the SLOT's
+        own record is rewritten, never when the Program it points to
+        changes elsewhere (`putProgramRecordBytes()`/`refreshProgramInfo()`
+        only refresh `programs_`'s own entry). Fixed by having
+        `resetProgram()` call the existing `repointSetlistReferences(true,
+        bank, number, bank, number)` -- repointing every referencing slot
+        to the SAME (bank, number) it already has, a no-op for what's
+        stored, but it routes through `repointOneSetlistSlot()` ->
+        `putSongRecordBytes()`, which re-derives `instrumentName` fresh.
+        Reused already-tested code instead of a second bespoke refresh
+        path. Combi Timbre display needed no equivalent fix -- `TimbreRef`
+        (`PcgFile.h`) caches no name at all (just rawBankCode/number/
+        status), names are resolved fresh wherever they're shown.
+      - `EditorBridge::resetProgram(datasetId, bank, number)` (`.h`/`.cpp`)
+        and `main.cpp`'s binding mirror `resolveDuplicateProgram()`'s shape
+        exactly (same `readResourceFile()` template loads, same
+        `EDITOR_RESOURCES_DIR`) -- deliberately no `isProgramRecordLocked()`
+        check, matching `resolveDuplicateProgram()`'s own precedent (only
+        `copyProgram()`/`swapProgram()` check that lock today).
+      - `mock_bridge.js`: `window.resetProgram()` mirrors the real bridge's
+        write surface the same way every other mock write function here
+        does (sets `.dirty`, updates the fake `program.name` to "Init
+        Program"/"Init EXi Program" by `bankType`).
+      - `pane-program-editor.js`: new `contextmenu` listener per Programs
+        row opens a plain-DOM (no lit-html -- nothing else in this file
+        uses it) Bulma `.dropdown-content` positioned at the click point,
+        dismissed on outside click/Escape/scroll like a native context menu.
+        Its one item, clicked, shows `showConfirmDialog(...,
+        {isDanger: true})` (same pattern as Unload's dirty-check
+        confirmation) before calling `window.resetProgram()`, then
+        `refresh()`s the panel on success.
+      - **Verified**: this environment turned out to have `clang++` (though
+        still no `cmake`/`node`) -- compiled `pcg_file_test.cpp` +
+        `PcgFile.cpp`/`ProgramDecoder.cpp`/`CombiDecoder.cpp` directly
+        (bypassing CMake) and ran it for real: new `testResetProgram()`
+        (happy path incl. the stale-`instrumentName` regression above,
+        no-such-bank, no-such-slot, template-size-mismatch rejections) plus
+        every pre-existing test, all passing. `EditorBridge.cpp`/`main.cpp`
+        both `clang++ -fsyntax-only` clean against the vendored CHOC headers
+        (no link/run -- that needs the real WebView frameworks). The JS
+        side (`pane-program-editor.js`'s context menu, `mock_bridge.js`) is
+        NOT verified live -- no `node` here either, same gap as entry 57.
+        Needs a real smoke test: right-click a Program row, Reset entry,
+        confirm the row now shows "Init Program"/"Init EXi Program" and any
+        Set List slot referencing it updates too.
+      - **Verified live (2026-08-21), two real bugs found and fixed** --
+        the "Not verified live" gap above got a real smoke test once entries
+        59/60 below unblocked it:
+        - The menu rendered in the DOM (confirmed via the now-working
+          Inspector, entry 59) but was completely invisible -- Bulma's real
+          `.dropdown-menu` rule is `display: none; position: absolute; top:
+          100%; ...` by default, only overridden to `display: block` as a
+          DESCENDANT of `.dropdown.is-active`/`.dropdown.is-hoverable:hover`
+          (`vendor/bulma.min.css`) -- a naive `grep` for `.dropdown-menu`
+          earlier had truncated that compound selector and missed this
+          entirely. This menu is positioned freely at the click point, not
+          wrapped in that structure, so `display`/`position` now also get
+          set inline in `openRowMenu()` (`pane-program-editor.js`),
+          overriding the stylesheet directly.
+        - Per direct request, the menu item also had no background
+          (unreadable) -- `.program-row-menu` (`style.css`) now gives it
+          the same dark floating-panel treatment as `.cross-dataset-panel`/
+          `.modal-card` (`var(--bg)`, `var(--border)`, the same box-shadow),
+          hover in `var(--editor-accent)` (darkorange) -- this app's one
+          existing orange token, reused rather than a new hardcoded color.
+
+  59. **FIXED (2026-08-21)**: `third_party/choc/choc/gui/choc_WebView.h`'s
+      macOS WKWebView setup only ever set the legacy `developerExtrasEnabled`
+      preferences key (KVC on `WKPreferences`) when `enableDebugMode` is on.
+      As of macOS 13.3/iOS 16.4, that's no longer enough on its own -- a
+      WKWebView must also opt in via the real `inspectable` BOOL property for
+      Safari's Develop menu to see it at all. Surfaced directly: after moving
+      this checkout to a new machine (see entry 60's own opening for the
+      broader "moved by ZIP" context) and getting a real build running, the
+      app plain didn't appear as a connectable application in Safari's
+      Develop menu, blocking `docs/content/building/index.md`'s own
+      documented "Real DevTools attached to the running app" workflow
+      entirely -- this had likely never worked reliably on any machine
+      running current macOS. Fixed by also calling `setInspectable:` on the
+      `webview` object itself once it exists (same `enableDebugMode` guard),
+      via a `respondsToSelector:` check first since the selector doesn't
+      exist on older macOS/WebKit this header still otherwise supports.
+      Verified: `cmake --build build` clean, app launches without crashing,
+      and DID appear in Safari's Develop menu afterward -- which is what
+      surfaced entry 60 below in the first place.
+  60. **FIXED (2026-08-21)**: `SyntaxError: Can't create duplicate variable:
+      'litHtmlPromise'` -- only visible once entry 59 above actually made
+      DevTools reachable. Root cause: `confirm-dialog.js` and
+      `combi-cross-dataset-panel.js` each independently declared their own
+      top-level `let lit`/`let litHtmlPromise` for their own lazy lit-html
+      import (see each file's own "PILOT"/lazy-load comment) -- but classic
+      (non-`type="module"`) `<script>` tags on one page share ONE global
+      lexical scope for `let`/`const`, so the SECOND file to declare the
+      same name throws a SyntaxError and never runs AT ALL.
+      `index.html` loads `combi-cross-dataset-panel.js` before
+      `confirm-dialog.js`, so confirm-dialog.js was the one silently broken
+      -- `window.showConfirmDialog` has apparently never actually existed
+      since it was added (entry 43), meaning the Unload "unsaved changes"
+      warning that entry was built specifically to fix has likely never
+      shown a real dialog on any machine running this app with both files
+      present. `node --check` (this project's usual per-file syntax check)
+      can't catch this class of bug at all -- each file is independently
+      valid syntax; the collision only exists once both are loaded together
+      in a real browser/WebView. Checked `kronos-envelope.js` for the same
+      pattern (it also declares `let lit`/`let litHtmlPromise`) -- it's
+      SAFE, since it's a genuine ES module (`export async function
+      createKronosEnvelope`, loaded via `type="module"` in its own
+      `.test.html`), which gets its own isolated module scope regardless of
+      what any classic script on the same page declares.
+      - Fixed by wrapping each affected file's entire body in an IIFE, so
+        their private `let`/`function` declarations become closure-local
+        instead of page-global. Grepped each file first for which of its
+        top-level names are actually called from OTHER files as bare
+        identifiers (not via `window.X`) -- only `startCombiCrossDatasetCopy`
+        (called bare from `pane-combi-editor.js`) qualified, so it's the one
+        name given an explicit `window.startCombiCrossDatasetCopy = ...`
+        assignment inside the IIFE; `confirm-dialog.js`'s public surface was
+        already exposed the same way (`window.showConfirmDialog = ...`), so
+        it needed no further change beyond the wrap itself.
+      - Verified: reloaded the running app (Debug build reads `frontend/`
+        live off disk, no rebuild needed) -- console SyntaxError gone.
+      - **Left as duplication, not consolidated**: both files still each
+        carry their own near-identical lazy-lit-html-loader block --
+        flagged per this project's own "flag duplicate code for discussion"
+        convention (see CLAUDE.md), not unilaterally extracted into a
+        shared helper. Worth a deliberate look if a third file ever needs
+        lit-html the same way (`kronos-envelope.js`'s own copy is a module,
+        so it's a different, non-colliding case).
 
 CLEAN UP -- noted 2026-08-15:
 
