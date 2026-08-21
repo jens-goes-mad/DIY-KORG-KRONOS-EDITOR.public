@@ -887,6 +887,47 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
     return result;
 }
 
+PcgFile::ResetProgramResult PcgFile::resetProgram(int bank, int number,
+                                                    const std::vector<uint8_t>& hd1InitBytes,
+                                                    const std::vector<uint8_t>& exiInitBytes) {
+    ResetProgramResult result;
+
+    if (bank < 0 || static_cast<size_t>(bank) >= programBankLocations_.size()) {
+        result.error = "No such Program bank";
+        return result;
+    }
+
+    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
+    const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
+    if (templateBytes.size() != loc.bytesPerRecord) {
+        result.error = "Init Program template size (" + std::to_string(templateBytes.size()) +
+                        " bytes) doesn't match bank " + std::to_string(bank) + "'s own record size (" +
+                        std::to_string(loc.bytesPerRecord) + " bytes)";
+        return result;
+    }
+
+    if (!putProgramRecordBytes(bank, number, templateBytes)) {
+        result.error = "No such Program slot";
+        return result;
+    }
+
+    // putProgramRecordBytes() only refreshes programs_'s own cached entry --
+    // a Set List slot's `instrumentName` is a SEPARATE cache on the Song
+    // struct that's only re-derived when the slot's OWN record is rewritten
+    // (see putSongRecordBytes()), not when the Program it points to
+    // changes elsewhere. Found by testResetProgram() actually running: a
+    // slot referencing this exact (bank, number) still showed the OLD name
+    // after a reset. Fixed by "repointing" every such slot to the SAME
+    // (bank, number) it already has -- a no-op for what's stored, but it
+    // routes through repointOneSetlistSlot() -> putSongRecordBytes(), which
+    // re-derives instrumentName fresh, reusing already-tested code instead
+    // of a second bespoke refresh path.
+    repointSetlistReferences(/*isProgram=*/true, bank, number, bank, number);
+
+    result.ok = true;
+    return result;
+}
+
 namespace {
 
 // Case-insensitive "does this Combi's name look like an empty/placeholder

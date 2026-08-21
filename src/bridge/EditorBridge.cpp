@@ -838,6 +838,26 @@ choc::value::Value EditorBridge::resolveDuplicateProgram(const choc::value::Valu
     return value;
 }
 
+choc::value::Value EditorBridge::resetProgram(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int number = intArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    const auto hd1Bytes = readResourceFile("Init-Program-HD1.raw");
+    const auto exiBytes = readResourceFile("Init-Program-EXi.raw");
+    if (hd1Bytes.empty() || exiBytes.empty()) {
+        return makeError("Couldn't read the Init Program template files from " + std::string(EDITOR_RESOURCES_DIR));
+    }
+
+    auto result = file->resetProgram(bank, number, hd1Bytes, exiBytes);
+    if (!result.ok) return makeError(result.error);
+
+    return makeOk();
+}
+
 choc::value::Value EditorBridge::swapCombis(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     const int bankA = intArg(args, 1);

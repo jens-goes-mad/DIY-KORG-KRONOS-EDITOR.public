@@ -85,6 +85,93 @@ function createProgramsPanel(
     if (result && result.ok === false) showToast(result.error, { isError: true });
   }
 
+  // A Program row's right-click "local menu" -- currently just "Reset
+  // entry". Chosen over a per-bank-header button (2026-08-20 discussion):
+  // the bank filter buttons already make it unclear which banks are even
+  // showing, and a bank-level action would only make that worse, whereas a
+  // per-row menu sits on the exact slot it affects regardless of filter
+  // state. Plain DOM, not lit-html (nothing else in this file uses it) --
+  // one Bulma dropdown-content positioned at the click point, mounted on
+  // document.body (outlives this row's own re-renders) and torn down on the
+  // next click/Escape/scroll, same dismiss model a native context menu has.
+  let rowMenuEl = null;
+  function closeRowMenu() {
+    if (!rowMenuEl) return;
+    rowMenuEl.remove();
+    rowMenuEl = null;
+    document.removeEventListener("click", closeRowMenu);
+    document.removeEventListener("keydown", onRowMenuKeydown);
+    document.removeEventListener("scroll", closeRowMenu, true);
+  }
+  function onRowMenuKeydown(ev) {
+    if (ev.key === "Escape") closeRowMenu();
+  }
+  function openRowMenu(ev, p) {
+    ev.preventDefault();
+    closeRowMenu();
+    rowMenuEl = document.createElement("div");
+    rowMenuEl.className = "dropdown-menu program-row-menu";
+    // Bulma's real .dropdown-menu rule is `display: none; position: absolute;
+    // top: 100%; ...` by default -- it only becomes visible as a DESCENDANT
+    // of `.dropdown.is-active`/`.dropdown.is-hoverable:hover` (see
+    // vendor/bulma.min.css). This menu isn't wrapped in that structure (it's
+    // positioned freely at the click point, not anchored under a trigger
+    // button), so `display`/`position` must be set inline here to override
+    // the stylesheet -- found by right-clicking with the Web Inspector
+    // attached: the event fired and the element existed in the DOM, just
+    // invisible. `dropdown-menu`/`dropdown-content`/`dropdown-item` are kept
+    // purely for Bulma's box/padding/hover styling, not its active-state
+    // machinery.
+    rowMenuEl.style.display = "block";
+    rowMenuEl.style.position = "fixed";
+    rowMenuEl.style.left = `${ev.clientX}px`;
+    rowMenuEl.style.top = `${ev.clientY}px`;
+    rowMenuEl.style.zIndex = "1000";
+    const content = document.createElement("div");
+    content.className = "dropdown-content";
+    const resetItem = document.createElement("a");
+    resetItem.className = "dropdown-item";
+    resetItem.href = "#";
+    resetItem.textContent = "Reset entry…";
+    resetItem.addEventListener("click", (clickEv) => {
+      clickEv.preventDefault();
+      closeRowMenu();
+      resetEntry(p);
+    });
+    content.appendChild(resetItem);
+    rowMenuEl.appendChild(content);
+    document.body.appendChild(rowMenuEl);
+    // Deferred so this SAME contextmenu event's own bubble-up doesn't
+    // immediately trigger the outside-click listener it just registered.
+    setTimeout(() => {
+      document.addEventListener("click", closeRowMenu);
+      document.addEventListener("keydown", onRowMenuKeydown);
+      document.addEventListener("scroll", closeRowMenu, true);
+    }, 0);
+  }
+
+  // Writes this slot's bank-matching Init Program template over it (see
+  // EditorBridge::resetProgram()'s own doc comment) -- unlike Duplicates'
+  // "resolve" action, nothing else in the file is repointed: anything
+  // already referencing this slot keeps pointing at it, now showing the
+  // reset content. Confirmed first (isDanger: true) since it can't be
+  // undone -- no undo/rollback exists anywhere else in this app either.
+  async function resetEntry(p) {
+    const label = formatBankNumber({ isProgram: true, bank: p.bank, number: p.number });
+    const confirmed = await window.showConfirmDialog(
+      `Reset ${label} ("${p.name || "(empty)"}") to its bank's factory Init Program? This can't be undone.`,
+      { confirmLabel: "Reset", isDanger: true }
+    );
+    if (!confirmed) return;
+    const result = await window.resetProgram(getDatasetId(), p.bank, p.number);
+    if (!result.ok) {
+      showToast(`Reset failed: ${result.error}`, { isError: true });
+      return;
+    }
+    log(`[Library:Programs] Reset ${label} to its bank's Init Program.`);
+    await refresh();
+  }
+
   function refreshBankButtons() {
     renderBankFilterRow(bankFilterRow, PROGRAM_BANK_NAMES, programPresentBanks, programBankFilter, () => render(), getProgramBankType);
   }
@@ -297,6 +384,7 @@ function createProgramsPanel(
         expandedProgramKey = expandedProgramKey === key ? null : key;
         render();
       });
+      tr.addEventListener("contextmenu", (ev) => openRowMenu(ev, p));
 
       // Drag this Program onto another Program row (same pane or a
       // different pane's dataset) to COPY its raw bytes into that slot --

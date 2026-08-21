@@ -536,6 +536,32 @@ td.has-comment {
   outline-offset: -1px;
 }
 
+/* A Programs row's right-click "local menu" (pane-program-editor.js's
+   openRowMenu()) -- reuses Bulma's dropdown-content/dropdown-item classes
+   for box/padding shape only, not its active-state machinery (see
+   openRowMenu()'s own comment on why display/position are set inline), so
+   Bulma's own --bulma-dropdown-* background/text variables never resolve
+   here and the item read as unstyled/illegible without this. Same dark
+   floating-panel background as .cross-dataset-panel/.modal-card above
+   (--bg, this app's actual near-black, not Bulma's), hover in
+   --editor-accent (darkorange) -- the app's one existing orange token,
+   reused rather than a second hardcoded orange.  */
+.program-row-menu {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  overflow: hidden;
+  padding: 0;
+}
+.program-row-menu .dropdown-item {
+  color: var(--text);
+}
+.program-row-menu .dropdown-item:hover {
+  background: var(--editor-accent);
+  color: var(--bg);
+}
+
 /* Setlist-only: the drag-and-drop "insert before/after this row" gesture
    (pane.js's dropZoneForEvent(), top/bottom 30% of a row) is NOT a class on
    the target `<tr>` -- see pane.js's showDropIndicator()/.drop-indicator

@@ -552,6 +552,35 @@ public:
                                                const std::vector<uint8_t>& hd1InitBytes,
                                                const std::vector<uint8_t>& exiInitBytes);
 
+    // Single-slot version of the "clear to Init Program" half of
+    // resolveDuplicates() above, with none of its multi-duplicate/repointing
+    // machinery -- a plain "put this one slot back to its bank's factory
+    // Init Program", nothing else in the file is touched. Anything that
+    // already referenced (bank, number) (a Set List slot, a Combi Timbre)
+    // keeps pointing at it -- it'll just show/use the Init Program content
+    // now, which is the point (this is "reset this slot", not "delete this
+    // Program and preserve its references elsewhere" the way
+    // resolveDuplicates() is). Still re-derives any Set List slot's own
+    // cached `instrumentName` for this (bank, number) -- that field only
+    // updates when the SLOT's own record is rewritten, not when the
+    // Program it points to changes elsewhere, so it would otherwise go
+    // stale (found by this method's own test actually running).
+    struct ResetProgramResult {
+        bool ok = false;
+        std::string error;  // only set when !ok
+    };
+
+    // Picks `hd1InitBytes`/`exiInitBytes` by (bank, number)'s own bank type
+    // (see ProgramBankType) and writes it via putProgramRecordBytes().
+    // Returns ok=false with `error` set if (bank, number) doesn't exist in
+    // this file, or the matching template's size doesn't equal that bank's
+    // own record size (see resources/Init-Program-HD1.raw/
+    // Init-Program-EXi.raw and resolveDuplicates()'s own doc comment for
+    // where these come from and the still-open Tone Adjust caveat).
+    ResetProgramResult resetProgram(int bank, int number,
+                                     const std::vector<uint8_t>& hd1InitBytes,
+                                     const std::vector<uint8_t>& exiInitBytes);
+
     // Same shape as ResolveDuplicatesResult, for the three Combi rearrange
     // methods below -- a Combi is only ever referenced by Set List slots
     // (never by anything else -- Combi Timbres reference Programs, never

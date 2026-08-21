@@ -136,8 +136,10 @@ between.
   identity tied to the bytes themselves -- see the file format doc's open
   questions for the details. The pane reports how many of the expected banks
   were found without claiming to know which specific bank is missing.
-  Initializing an empty bank/patch is a planned follow-up, waiting on real
-  Init-Program byte data pulled from actual Kronos hardware first.
+  Resetting one Program slot to its bank's factory Init Program is built
+  (right-click a row in the Programs table -- "Reset entry"); a whole-bank
+  bulk init isn't, and Combi-side reset needs a real Init-Combi byte capture
+  off hardware first (only Init-Program bytes exist in `resources/` so far).
 
 ![DIY Kronos Editor - Combi](README-Combi.png)
 

@@ -138,6 +138,7 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
     view.bind("resolveDuplicateProgram", [&bridge](const choc::value::ValueView& args) {
         return bridge.resolveDuplicateProgram(args);
     });
+    view.bind("resetProgram", [&bridge](const choc::value::ValueView& args) { return bridge.resetProgram(args); });
     view.bind("swapCombis", [&bridge](const choc::value::ValueView& args) { return bridge.swapCombis(args); });
     view.bind("moveCombiWithinBank",
                [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiWithinBank(args); });

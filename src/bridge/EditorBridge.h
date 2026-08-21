@@ -259,6 +259,16 @@ public:
     // caching needed) via EDITOR_RESOURCES_DIR -- see CMakeLists.txt.
     choc::value::Value resolveDuplicateProgram(const choc::value::ValueView& args);
 
+    // [datasetId, bank, number] -> {ok} or {ok:false, error}. Writes the
+    // matching Init Program template (HD-1 or EXi, by this bank's own type)
+    // straight into this one Program slot -- "reset entry", nothing else in
+    // the file is touched, unlike resolveDuplicateProgram() above (no
+    // repointing: anything that already referenced this slot keeps pointing
+    // at it, now showing the Init Program). See PcgFile::resetProgram()'s
+    // own doc comment. Reads the same template files the same way
+    // resolveDuplicateProgram() does.
+    choc::value::Value resetProgram(const choc::value::ValueView& args);
+
     // [datasetId, bankA, numberA, bankB, numberB] -> {ok, setlistRefsRepointed}
     // or {ok:false, error}. Swaps two Combis' entire content (same or
     // different bank) and repoints every Set List slot referencing either

@@ -1302,6 +1302,133 @@ void testResolveDuplicates() {
     }
 }
 
+// resetProgram() (2026-08-20) -- the single-slot "reset entry" half of
+// resolveDuplicates() above, with none of its repointing: a Set List slot
+// or Combi Timbre already referencing the reset slot must keep pointing at
+// it (it'll just show the reset content now), unlike resolveDuplicates()
+// which repoints everything AWAY from the slot it clears.
+void testResetProgram() {
+    // --- Happy path: bank0/number0 reset to a distinct template, existing
+    // references left pointing at it (not repointed) --------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        // Point Setlist 0's slot 2 and Combi 0's Timbre 2 at bank0/number0
+        // (the slot about to be reset) -- same setup shape as
+        // testResolveDuplicates() above, but targeting the KEPT slot this
+        // time, since resetProgram() has no "kept" slot at all.
+        {
+            auto bytes = pcg.songRecordBytes(0, 2);
+            CHECK(bytes.has_value());
+            if (bytes) {
+                (*bytes)[12] |= 0x01;  // Type bits0-1 = 1 (Program) -- see docs/content/format/index.md §4.3
+                (*bytes)[13] = 0;      // bank 0
+                (*bytes)[14] = 0;      // number 0
+                CHECK(pcg.putSongRecordBytes(0, 2, *bytes));
+            }
+        }
+        {
+            auto bytes = pcg.combiRecordBytes(0, 0);
+            CHECK(bytes.has_value());
+            if (bytes) {
+                kronos::writeTimbreProgramRef(bytes->data(), bytes->size(), /*timbreIndex=*/2, /*number=*/0,
+                                               /*rawBankCode=*/0);  // bank 0 = INT-A, confirmed raw code 0
+                size_t statusOff = kronos::timbreByteOffset(2) + 2;
+                (*bytes)[statusOff] = static_cast<uint8_t>(1 << 5);  // Internal, not the all-zero Off state
+                CHECK(pcg.putCombiRecordBytes(0, 0, *bytes));
+            }
+        }
+
+        // bank0/number2 ("Unique Program") stands in as this test's own
+        // "Init Program" template, same trick as testResolveDuplicates()
+        // above -- distinct name makes a successful reset easy to tell
+        // apart from bank0/number0's original "Test Program A" content.
+        const auto hd1Template = pcg.programRecordBytes(0, 2);
+        CHECK(hd1Template.has_value());
+        if (!hd1Template) return;
+
+        auto result = pcg.resetProgram(/*bank=*/0, /*number=*/0, *hd1Template, /*exiInitBytes=*/{});
+        CHECK(result.ok);
+        if (!result.ok) {
+            std::fprintf(stderr, "  resetProgram() error: %s\n", result.error.c_str());
+            return;
+        }
+
+        auto reset = pcg.decodeProgram(0, 0);
+        CHECK(reset.has_value());
+        if (reset) CHECK_EQ(reset->name, std::string("Unique Program"), "reset slot now holds the template's bytes");
+
+        auto untouched = pcg.decodeProgram(0, 1);
+        CHECK(untouched.has_value());
+        if (untouched) CHECK_EQ(untouched->name, std::string("Test Program A"), "the OTHER duplicate is untouched");
+
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.bank, 0, "Set List slot NOT repointed: still bank 0");
+        CHECK_EQ(pcg.setlists()[0].songs[2].params.number, 0, "Set List slot NOT repointed: still number 0");
+        CHECK_EQ(pcg.setlists()[0].songs[2].instrumentName, std::string("Unique Program"),
+                 "Set List slot's instrumentName now resolves to the reset content");
+
+        auto combiAfter = pcg.decodeCombi(0, 0);
+        CHECK(combiAfter.has_value());
+        if (combiAfter) {
+            CHECK_EQ(combiAfter->timbres[2].number, 0, "Combi Timbre NOT repointed: still number 0");
+            CHECK_EQ(combiAfter->timbres[2].rawBankCode, 0, "Combi Timbre NOT repointed: still raw code 0");
+        }
+    }
+
+    // --- Rejected: no such Program bank ---------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.resetProgram(99, 0, {}, {});
+        CHECK(!result.ok);
+    }
+
+    // --- Rejected: no such Program slot (number out of range) ----------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        const auto hd1Template = pcg.programRecordBytes(0, 0);
+        CHECK(hd1Template.has_value());
+        if (!hd1Template) return;
+
+        auto result = pcg.resetProgram(0, 99, *hd1Template, {});
+        CHECK(!result.ok);
+    }
+
+    // --- Rejected: template size doesn't match this bank's own record
+    // size -- writes nothing ---------------------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        const std::vector<uint8_t> wrongSize(4, 0);  // real bank 0 record size in this fixture is 32
+        auto result = pcg.resetProgram(0, 0, wrongSize, wrongSize);
+        CHECK(!result.ok);
+
+        auto stillOriginal = pcg.decodeProgram(0, 0);
+        CHECK(stillOriginal.has_value());
+        if (stillOriginal) {
+            CHECK_EQ(stillOriginal->name, std::string("Test Program A"),
+                     "size-mismatch rejection writes nothing -- slot untouched");
+        }
+    }
+}
+
 // swapPrograms() (2026-08-15) -- built so a plain drag-and-drop copy
 // between two slots that are BOTH genuinely empty ("Init Program") doesn't
 // have to fight copyProgramFrom()'s own DuplicateExists guard (every Init
@@ -2205,6 +2332,7 @@ int main() {
     testSaveRoundTrip();
     testDirtyTracking();
     testResolveDuplicates();
+    testResetProgram();
     testProgramSwap();
     testCombiRearrange();
     testCombiCrossDatasetCopy();

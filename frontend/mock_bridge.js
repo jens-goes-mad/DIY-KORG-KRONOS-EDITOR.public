@@ -721,6 +721,22 @@
     return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
+  // Mirrors PcgFile::resetProgram() -- the single-slot "reset entry" half of
+  // resolveDuplicateProgram() above, with no repointing: anything already
+  // referencing (bank, number) keeps pointing at it and will just show the
+  // reset Init Program content now, same as the real backend.
+  window.resetProgram = (datasetId, bank, number) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+
+    const program = dataset.programs.find((p) => p.bank === bank && p.number === number);
+    if (!program) return fail("No such Program slot");
+
+    program.name = program.bankType === 0 ? "Init Program" : "Init EXi Program";  // kronos::ProgramBankType::Hd1 = 0
+    dataset.dirty = true;
+    return ok({});
+  };
+
   // Mirrors PcgFile::swapCombis() -- see its own doc comment in PcgFile.h.
   // Single pass over dataset.songs checking both original positions at
   // once (not two sequential repoints), same reasoning as the real
