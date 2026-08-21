@@ -30,6 +30,23 @@
 // frontend/vendor/LIT_HTML_VERSION.txt and STATE.md for how it went before
 // using it anywhere else. `?attr=`/`@event=` below are lit-html's own
 // boolean-attribute/event-listener binding syntax, not real HTML.
+//
+// Wrapped in an IIFE (2026-08-21, bug fix): this and confirm-dialog.js both
+// declared their own top-level `let lit`/`let litHtmlPromise` -- classic
+// (non-module) <script> tags on one page share ONE global lexical scope for
+// let/const, so the second file to load threw `SyntaxError: Can't create
+// duplicate variable: 'litHtmlPromise'` and never ran at all (confirm-dialog.js
+// loads after this file in index.html, so IT was the one silently broken --
+// window.showConfirmDialog has apparently never actually existed since this
+// file was added). Only found once Safari's Develop menu could actually attach
+// to the app (see STATE.md) -- `node --check` on each file individually can't
+// catch a collision that only exists once both are loaded together. Only
+// startCombiCrossDatasetCopy() is genuinely called from another file
+// (pane-combi-editor.js, as a bare identifier) -- exposed via an explicit
+// `window.` assignment at the end, same convention confirm-dialog.js's own
+// `window.showConfirmDialog = ...` already used; everything else here was
+// always file-private in practice, just not actually scoped that way.
+(function () {
 
 const combiCrossDatasetPanelRoot = document.getElementById("combiCrossDatasetPanelRoot");
 
@@ -410,3 +427,7 @@ async function startCombiCrossDatasetCopy({
 }
 
 loadLitHtml().then(renderRoot);
+
+window.startCombiCrossDatasetCopy = startCombiCrossDatasetCopy;
+
+})();

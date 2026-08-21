@@ -19,6 +19,16 @@
 // Mounted once at the app level (`#confirmDialogRoot` in index.html), same
 // reasoning as toastContainer/combiCrossDatasetPanelRoot -- a confirm can be
 // triggered from either pane, so it isn't owned by either pane's own DOM.
+//
+// Wrapped in an IIFE (2026-08-21, bug fix) -- see combi-cross-dataset-panel.js's
+// own note on why: this file's `let lit`/`let litHtmlPromise` collided with
+// that file's identically-named top-level ones (classic <script> tags share
+// one global scope), and since this file loads AFTER it in index.html, THIS
+// file was the one that threw a SyntaxError and never ran at all --
+// window.showConfirmDialog has apparently never actually existed. Only
+// showConfirmDialog() is genuinely public (called via `window.` from other
+// files already); everything else here was always private in practice.
+(function () {
 
 const confirmDialogRoot = document.getElementById("confirmDialogRoot");
 
@@ -92,3 +102,5 @@ async function showConfirmDialog(message, { confirmLabel = "OK", cancelLabel = "
 }
 
 window.showConfirmDialog = showConfirmDialog;
+
+})();
