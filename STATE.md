@@ -4443,6 +4443,57 @@ App/UI:
         lit-html the same way (`kronos-envelope.js`'s own copy is a module,
         so it's a different, non-colliding case).
 
+  61. **RESTRUCTURED (2026-08-21)**: the User Guide (`docs/content/guide/`) split from one
+      flat page into a generic overview (`_index.md`) plus three sub-pages
+      (`setlist/index.md`, `combi/index.md`, `prog/index.md` -- the last also absorbs
+      Duplicates, since it's Program-specific), per direct request. Cross-cutting content
+      (opening a file, the dual-pane layout, the shared Programs/Combis browsing
+      mechanics, jumping/Back-Forward, Internals, saving) stayed on the overview page;
+      each old "Current limitations" bullet moved onto whichever page it's actually about,
+      folded into that feature's own paragraph instead of a separate bolted-on list. The
+      new "Reset entry" feature (entry 58) is now documented, on the Programs page.
+      - **Required `index.md` -> `_index.md`**: Hugo's page-bundle model treats a plain
+        `index.md` as a LEAF bundle -- terminal, can't have child pages; anything nested
+        under one becomes a bundle RESOURCE, not a separate page. A branch bundle
+        (`_index.md`) was required for `setlist/`/`combi/`/`prog/` to render as real
+        sibling pages at all.
+      - **Verified for real, not guessed**: `docs/config/_default/permalinks.toml`'s
+        `page = "/:slug/"` looked like it could flatten every nested page to a bare
+        `/setlist/` instead of `/guide/setlist/` -- rather than reason it out from config
+        alone, ran a real one-shot `hugo --minify` via the project's own
+        `docs/docker-compose.yml` image (`hugomods/hugo:exts-non-root`, no long-running
+        server needed) against a throwaway test sub-page first. Confirmed nested URLs work
+        correctly (`public/guide/setlist/index.html` etc.) -- that permalinks entry
+        apparently doesn't flatten section-nested branch-bundle children the way it looked
+        like it might.
+      - **Bug found by the same real build, fixed same pass**: markdown links written as
+        bare relative slugs (`[Setlist](setlist)`, on `_index.md` and once on
+        `setlist/index.md`) rendered as literal `href=setlist` -- NOT canonified into an
+        absolute URL the way root-relative links (`/format`, `/components`) are, since
+        `canonifyURLs` only rewrites root-relative (leading-`/`) paths. Whether a bare
+        relative link like that actually resolves correctly depends on the browser also
+        being given the current page's own URL with its trailing slash intact, which is
+        fragile compared to the already-proven `/format`-style absolute-path pattern this
+        page already used successfully. Rewritten as `/guide/setlist`, `/guide/combi`,
+        `/guide/prog`, `/guide/prog#duplicates` throughout -- matches the existing pattern,
+        confirmed correct against the real rebuild (canonified, trailing slash present).
+      - Also confirmed via the real build: every `#anchor` link's target heading ID matches
+        goldmark's actual auto-generated ID (`#jumping-to-a-program-combi-or-set-list-slot`,
+        `#browsing-programs-and-combis`, `#saving-your-changes`, `#duplicates`).
+      - **Screenshots NOT moved**, per direct request ("I will move/add screenshots
+        later") -- `DIY-KE-004-FilterSort.png`/`DIY-KE-005-SetlistItem.png` are referenced
+        by `setlist/index.md`, `DIY-KE-006-CombiReferences.png` by `combi/index.md`, but
+        all three physical files still sit in the parent `docs/content/guide/` from the old
+        flat layout. Confirmed via the same real build exactly what this does in the
+        meantime: since Hugo's page-bundle image processing only engages when the file
+        actually exists alongside the page, these three renders as bare, unprocessed
+        `<img>` tags rooted at the SITE ROOT (not `/guide/`, not `/guide/setlist/|combi/`)
+        -- broken until the project owner moves each file into its new page's own
+        directory, at which point normal page-bundle processing (responsive srcset, real
+        width/height) should just start working with no markdown change needed.
+      - `docs/content/guide/index.md` deleted (`git rm`), content fully absorbed into the
+        four new files above.
+
 CLEAN UP -- noted 2026-08-15:
 
   1. RESOLVED (2026-08-15): `docs/content/building/index.md` had two sections
