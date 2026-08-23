@@ -4568,6 +4568,22 @@ App/UI:
       was ever created for it (the job failed before reaching the actual release-creation
       step) -- superseded by whatever tag gets pushed next, entries 62/63's fixes plus
       this one all need a fresh tag to actually ship together.
+      - **`v0.1.3` shipped successfully** (all 4 jobs + release green, verified end-to-end
+        again: downloaded the real macos-arm64 `.zip`, confirmed the bundle structure,
+        exec bit, and a real Mach-O binary) -- but its `Info.plist` still said
+        `CFBundleVersion 0.1.1`, not `0.1.3`. `CMakeLists.txt`'s `project(... VERSION
+        0.1.1 ...)` was a hand-bumped constant (entry 62's own doc comment already said
+        "bump by hand alongside a new git tag") that nobody actually bumped for either
+        `v0.1.2` or `v0.1.3` -- demonstrated drift, not hypothetical, so worth fixing at
+        the source rather than bumping the number a third time. Added
+        `EDITOR_VERSION_OVERRIDE` (CMake cache var, only read by the `APPLE`/
+        `EDITOR_EMBED_RESOURCES` block) -- `native-build.yml`'s two macOS jobs now pass
+        `-DEDITOR_VERSION_OVERRIDE=<tag, v-stripped>` at Configure time on an actual tag
+        build (`$GITHUB_REF` matches `refs/tags/v*`), read from `$GITHUB_REF_NAME`; a
+        plain push to main has no tag, so it's left unset and falls back to
+        `PROJECT_VERSION` same as before. Verified directly: a real local configure+build
+        with `-DEDITOR_VERSION_OVERRIDE=9.9.9` produced a generated `Info.plist` with
+        exactly `<string>9.9.9</string>` for `CFBundleVersion`.
 
 CLEAN UP -- noted 2026-08-15:
 

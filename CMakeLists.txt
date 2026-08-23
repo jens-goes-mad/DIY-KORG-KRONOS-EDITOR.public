@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
-# VERSION is just the macOS .app bundle's CFBundleVersion/
-# CFBundleShortVersionString (see the APPLE block below) -- bump by hand
-# alongside a new git tag (.github/workflows/native-build.yml's release
-# job), not auto-derived from git describe or the tag itself. Nothing else
-# in the build reads this.
-project(kronos_editor VERSION 0.1.1 LANGUAGES CXX)
+# VERSION is just a fallback for the macOS .app bundle's CFBundleVersion/
+# CFBundleShortVersionString (see EDITOR_BUNDLE_VERSION in the APPLE block
+# below) -- used for a plain local build with no tag context. CI's release
+# builds override it with the actual git tag being built
+# (EDITOR_VERSION_OVERRIDE, native-build.yml's macOS Configure steps) so
+# the two can never drift the way this hardcoded number already did twice
+# in a row (v0.1.2/v0.1.3 both shipped still saying 0.1.1) -- bumping it by
+# hand here is no longer required, kept current mostly for cosmetic reasons
+# on a from-source build. Nothing else in the build reads this.
+project(kronos_editor VERSION 0.1.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -144,7 +148,15 @@ if (APPLE)
     # what a real .app bundle (an Info.plist + CFBundlePackageType=APPL)
     # exists to fix.
     if (EDITOR_EMBED_RESOURCES)
+        # CI's release builds pass -DEDITOR_VERSION_OVERRIDE=<tag, v-stripped>
+        # (native-build.yml) so the bundle's own version always matches the
+        # git tag actually being built, with nothing to remember to bump by
+        # hand. Falls back to PROJECT_VERSION above for a plain from-source
+        # build with no tag context.
         set(EDITOR_BUNDLE_VERSION "${PROJECT_VERSION}")
+        if (EDITOR_VERSION_OVERRIDE)
+            set(EDITOR_BUNDLE_VERSION "${EDITOR_VERSION_OVERRIDE}")
+        endif()
         configure_file(
             "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/Info.plist.in"
             "${CMAKE_CURRENT_BINARY_DIR}/generated/Info.plist"

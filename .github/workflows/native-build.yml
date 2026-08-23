@@ -23,8 +23,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # On a tag build, ties the .app bundle's own CFBundleVersion to the
+      # tag actually being built (CMakeLists.txt's EDITOR_VERSION_OVERRIDE)
+      # -- v0.1.2 and v0.1.3 both shipped still saying 0.1.1 before this,
+      # since that number was a hand-bumped constant nobody remembered to
+      # update either time. A plain push to main has no tag, so it's left
+      # unset there and falls back to CMakeLists.txt's own PROJECT_VERSION.
       - name: Configure
-        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+        run: |
+          VERSION_FLAG=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION_FLAG="-DEDITOR_VERSION_OVERRIDE=${GITHUB_REF_NAME#v}"
+          fi
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release $VERSION_FLAG
 
       - name: Build
         run: cmake --build build --config Release
@@ -42,8 +53,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same tag-version override as macos-arm64 above.
       - name: Configure
-        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+        run: |
+          VERSION_FLAG=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION_FLAG="-DEDITOR_VERSION_OVERRIDE=${GITHUB_REF_NAME#v}"
+          fi
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release $VERSION_FLAG
 
       - name: Build
         run: cmake --build build --config Release
