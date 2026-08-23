@@ -9,6 +9,20 @@ backup files, built on [CHOC](https://github.com/Tracktion/choc)
 
 ![DIY Kronos Editor main window: two independent panes, each with its own dataset selector and a Setlist/Programs/Combis/Duplicates category navbar](README-Main-Window.png)
 
+## Download
+
+Prebuilt binaries, one per platform (unsigned -- see [Build](#build) below if your OS
+blocks it and you'd rather not build from source):
+
+- [macOS (Apple Silicon)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-arm64)
+- [macOS (Intel)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-x86_64)
+- [Linux (x86_64)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-linux-x86_64)
+- [Windows (x86_64)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-windows-x86_64.exe)
+
+These always point at the newest [release](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases) --
+built and attached automatically by `.github/workflows/native-build.yml` on every
+version tag push (`git tag vX.Y.Z && git push --tags`).
+
 ## Why this exists
 
 Korg never published a spec for the container/chunk structure the Kronos's
@@ -228,12 +242,15 @@ this public project -- it's never required: a plain `git clone` (no
 whatever that submodule adds. If you have access to it, `git submodule update --init`
 pulls it in.
 
-**Don't want to build locally?** The native-build workflow can also be triggered
-manually (`workflow_dispatch`) from the Actions tab -- [Actions -> Build Kronos Editor
-(native) -> Run workflow](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/actions/workflows/native-build.yml).
+**Don't want to build locally?** See [Download](#download) above for prebuilt binaries.
+For a one-off build of an arbitrary commit (not a tagged release), the native-build
+workflow can also be triggered manually (`workflow_dispatch`) from the Actions tab --
+[Actions -> Build Kronos Editor (native) -> Run
+workflow](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/actions/workflows/native-build.yml).
 Once the run finishes, its summary page lists 4 downloadable artifacts, one per
 platform: `kronos-editor-macos-arm64`, `kronos-editor-macos-x86_64`,
-`kronos-editor-linux-x86_64`, `kronos-editor-windows-x86_64`.
+`kronos-editor-linux-x86_64`, `kronos-editor-windows-x86_64` -- unlike the tagged
+Download links above, these need a GitHub login and expire after 90 days.
 
 ## Testing
 
