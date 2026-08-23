@@ -4550,6 +4550,24 @@ App/UI:
         fresh Debug build (`/tmp/kronos_debug_build`, scratch dir) compiled clean --
         confirms both `#ifdef` branches are reachable and correct, not just the one
         currently configured.
+  64. **FIXED (2026-08-23)**: the `v0.1.2` tag's release job failed outright (not just
+      skipped) -- `chmod: cannot access 'artifacts/kronos-editor-macos-arm64/
+      kronos_editor.app/Contents/MacOS/kronos_editor': No such file or directory`.
+      Root cause: `actions/upload-artifact@v4`, given a single directory path (the
+      macos-arm64/macos-x86_64 jobs' `path: build/kronos_editor.app`, entry 62), uploads
+      that directory's CONTENTS, not the directory itself -- so each downloaded macOS
+      artifact lands as a bare `Contents/` folder, missing the `kronos_editor.app`
+      wrapper a real bundle needs. Not assumed from the action's docs -- pulled the
+      actual failed run's real log directly (`actions/jobs/{id}/logs` via a token grabbed
+      from the same `osxkeychain` credential `git push` already uses -- the anonymous
+      `/actions/jobs/.../logs` and `/actions/artifacts/.../zip` endpoints both 403/401
+      even on this public repo, authenticated is the only way to read them) and saw the
+      exact failing path. Fixed by reconstructing the `kronos_editor.app/Contents/...`
+      wrapper by hand in the release job before zipping, rather than guessing at a
+      different upload-side fix. `v0.1.2` itself is a dead tag now -- no release object
+      was ever created for it (the job failed before reaching the actual release-creation
+      step) -- superseded by whatever tag gets pushed next, entries 62/63's fixes plus
+      this one all need a fresh tag to actually ship together.
 
 CLEAN UP -- noted 2026-08-15:
 

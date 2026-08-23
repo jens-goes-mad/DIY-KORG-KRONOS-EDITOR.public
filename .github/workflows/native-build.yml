@@ -135,6 +135,21 @@ jobs:
       - name: Assemble release assets
         run: |
           mkdir -p release
+
+          # actions/upload-artifact@v4, given a single directory path (the
+          # macos-*/upload step: path: build/kronos_editor.app), uploads
+          # that directory's CONTENTS, not the directory itself -- verified
+          # directly against a real failed run (v0.1.2's release job:
+          # "chmod: cannot access '.../kronos_editor.app/Contents/MacOS/
+          # kronos_editor': No such file or directory"), not assumed from
+          # docs. So each macOS artifact lands here as a bare `Contents/`
+          # folder, missing the `kronos_editor.app` wrapper a real bundle
+          # needs -- reconstructed by hand before zipping.
+          for plat in macos-arm64 macos-x86_64; do
+            mkdir -p "artifacts/kronos-editor-$plat/kronos_editor.app"
+            mv "artifacts/kronos-editor-$plat/Contents" "artifacts/kronos-editor-$plat/kronos_editor.app/Contents"
+          done
+
           chmod +x artifacts/kronos-editor-macos-arm64/kronos_editor.app/Contents/MacOS/kronos_editor
           chmod +x artifacts/kronos-editor-macos-x86_64/kronos_editor.app/Contents/MacOS/kronos_editor
           chmod +x artifacts/kronos-editor-linux-x86_64/kronos_editor
