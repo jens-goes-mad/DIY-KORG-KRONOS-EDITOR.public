@@ -3,16 +3,13 @@
 [![Build Kronos Editor (native)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/actions/workflows/native-build.yml/badge.svg)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/actions/workflows/native-build.yml)
 
 A cross-platform, cross-architecture editor for Korg Kronos `.PCG`/`.SNG`
-backup files, built on [CHOC](https://github.com/Tracktion/choc)
-(HTML/JS/CSS UI over a thin native C++ bridge) -- same stack as the sibling
-`DIY-MIDI-METRONOME/EDITOR` project, reused rather than reinvented.
+files.
 
 ![DIY Kronos Editor main window: two independent panes, each with its own dataset selector and a Setlist/Programs/Combis/Duplicates category navbar](README-Main-Window.png)
 
 ## Download
 
-Prebuilt binaries, one per platform (unsigned -- see [Build](#build) below if your OS
-blocks it and you'd rather not build from source):
+Prebuilt binaries, one per platform (unsigned -- see [Build](#build) below if your OS blocks it and you'd rather not build from source):
 
 - [macOS (Apple Silicon)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-arm64.zip)
 - [macOS (Intel)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-x86_64.zip)
