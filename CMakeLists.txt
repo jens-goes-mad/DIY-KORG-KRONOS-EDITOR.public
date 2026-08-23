@@ -1,4 +1,24 @@
 cmake_minimum_required(VERSION 3.21)
+
+# Must be set before project() to take effect -- ignored on non-Apple
+# platforms. Without this, the binary's minimum-OS load command
+# (LC_BUILD_VERSION) just takes whatever the build machine's own SDK
+# defaults to, not a deliberate compatibility floor. Confirmed directly
+# this actually matters, not just in theory: the real v0.1.3 release
+# binaries (built on GitHub's macos-15/macos-15-intel runners with no
+# explicit deployment target) came out with `minos 15.0` baked in
+# (`otool -l build/kronos_editor.app/Contents/MacOS/kronos_editor`),
+# refusing to even launch on a real user's macOS 14.7.7 -- "You can't use
+# this version of the application... with this version of macOS." 11.0
+# (Big Sur, 2020) chosen as a broadly compatible floor; nothing in this
+# codebase is known to need anything newer (the one genuinely
+# version-gated call, WKWebView's isInspectable in choc_WebView.h, is
+# already reached via a runtime respondsToSelector: check, not a
+# compile-time availability attribute, so it doesn't push this floor up).
+if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
 # VERSION is just a fallback for the macOS .app bundle's CFBundleVersion/
 # CFBundleShortVersionString (see EDITOR_BUNDLE_VERSION in the APPLE block
 # below) -- used for a plain local build with no tag context. CI's release

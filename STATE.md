@@ -4584,6 +4584,26 @@ App/UI:
         `PROJECT_VERSION` same as before. Verified directly: a real local configure+build
         with `-DEDITOR_VERSION_OVERRIDE=9.9.9` produced a generated `Info.plist` with
         exactly `<string>9.9.9</string>` for `CFBundleVersion`.
+  65. **FIXED (2026-08-23)**: reported directly, "You can't use this version of the
+      application 'kronos_editor' with this version of macOS" -- on a real macOS 14.7.7
+      machine. Root cause confirmed by inspecting the actual released binary, not
+      guessed: `otool -l build/kronos_editor.app/Contents/MacOS/kronos_editor | grep -A5
+      LC_BUILD_VERSION` on both `v0.1.3` macOS release assets showed `minos 15.0` --
+      GitHub's `macos-15`/`macos-15-intel` runners default the binary's minimum-OS load
+      command to their own SDK version (15.5) when `CMAKE_OSX_DEPLOYMENT_TARGET` isn't
+      set explicitly, which this project never had. A local build on this same machine
+      (SDK 15.2, but a real Command Line Tools install, not exactly the CI runner's own)
+      had come out `minos 14.0` -- close enough to this machine's own OS to go unnoticed
+      until testing the real CI-built asset specifically. Fixed with
+      `CMAKE_OSX_DEPLOYMENT_TARGET` set to `11.0` (Big Sur) before `project()` (required
+      -- has no effect set later), chosen as a broadly compatible floor with nothing in
+      this codebase known to need newer (the one genuinely version-gated call,
+      `isInspectable` in the vendored `choc_WebView.h`, entry 59, is already reached via
+      `respondsToSelector:` at runtime, not a compile-time availability attribute, so it
+      doesn't push this floor up). Verified directly: a real local rebuild produced
+      `minos 11.0` (confirmed via the same `otool -l` check), and the resulting
+      `.app` still launches cleanly on this machine via `open` (same path a Finder
+      double-click takes).
 
 CLEAN UP -- noted 2026-08-15:
 
