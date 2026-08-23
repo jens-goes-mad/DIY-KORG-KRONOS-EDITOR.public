@@ -29,10 +29,13 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      # A real .app bundle now (CMakeLists.txt's APPLE block, Release-only) --
+      # a bare Unix executable has no way to tell Finder it's a windowed GUI
+      # app, so double-clicking one launches it INSIDE Terminal.app instead.
       - uses: actions/upload-artifact@v4
         with:
           name: kronos-editor-macos-arm64
-          path: build/kronos_editor
+          path: build/kronos_editor.app
 
   macos-x86_64:
     runs-on: macos-15-intel
@@ -48,7 +51,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: kronos-editor-macos-x86_64
-          path: build/kronos_editor
+          path: build/kronos_editor.app
 
   linux-x86_64:
     runs-on: ubuntu-24.04
@@ -110,28 +113,33 @@ jobs:
         with:
           path: artifacts
 
-      # Each platform's binary keeps its build-time filename (kronos_editor/
-      # kronos_editor.exe) inside its own uniquely-named artifact folder.
-      # macOS/Linux ship as .zip, not the raw binary directly: a plain HTTP
-      # download (which is all a GitHub Release asset ever is) carries no
-      # Unix permission bits at all, so a `chmod +x` here only affects this
-      # CI runner's own copy -- the file a browser saves to a user's disk
-      # always lands non-executable regardless. Confirmed directly: v0.1.0's
-      # raw macos-x86_64 binary, once downloaded, couldn't be launched by
-      # Finder at all -- it fell back to opening the binary's raw bytes in a
-      # text editor. The zip format DOES store Unix permissions internally,
-      # and macOS's own Archive Utility restores them correctly on extract,
-      # so the exec bit set here survives all the way to the user's disk.
-      # Windows doesn't have this problem (a .exe runs by extension, no
-      # Unix-permission concept involved), so it stays a raw file.
+      # macOS ships as a real .app bundle now (CMakeLists.txt's APPLE
+      # block) -- a bare Unix executable has no way to tell Finder it's a
+      # windowed GUI app, so double-clicking one used to launch it INSIDE
+      # Terminal.app instead (confirmed directly against the actual v0.1.1
+      # release). Every platform still ships as .zip, not the raw
+      # binary/bundle directly, for the SEPARATE reason entry 1 below
+      # already covers -- a plain HTTP download carries no Unix permission
+      # bits at all, so a `chmod +x` here only affects this CI runner's own
+      # copy; the file/bundle a browser saves to a user's disk always lands
+      # non-executable regardless (confirmed directly: v0.1.0's raw
+      # macos-x86_64 binary, once downloaded, couldn't be launched at
+      # all -- it fell back to opening the binary's raw bytes in a text
+      # editor). The zip format DOES store Unix permissions internally, and
+      # macOS's own Archive Utility restores them correctly on extract
+      # (`zip -r`, not `-j`, for the .app bundles specifically -- their
+      # internal Contents/MacOS/... structure has to survive, not just the
+      # one executable inside it). Windows doesn't have this problem (a
+      # .exe runs by extension, no Unix-permission concept involved), so it
+      # stays a raw file.
       - name: Assemble release assets
         run: |
           mkdir -p release
-          chmod +x artifacts/kronos-editor-macos-arm64/kronos_editor
-          chmod +x artifacts/kronos-editor-macos-x86_64/kronos_editor
+          chmod +x artifacts/kronos-editor-macos-arm64/kronos_editor.app/Contents/MacOS/kronos_editor
+          chmod +x artifacts/kronos-editor-macos-x86_64/kronos_editor.app/Contents/MacOS/kronos_editor
           chmod +x artifacts/kronos-editor-linux-x86_64/kronos_editor
-          (cd artifacts/kronos-editor-macos-arm64 && zip -j "$GITHUB_WORKSPACE/release/kronos_editor-macos-arm64.zip" kronos_editor)
-          (cd artifacts/kronos-editor-macos-x86_64 && zip -j "$GITHUB_WORKSPACE/release/kronos_editor-macos-x86_64.zip" kronos_editor)
+          (cd artifacts/kronos-editor-macos-arm64 && zip -r "$GITHUB_WORKSPACE/release/kronos_editor-macos-arm64.zip" kronos_editor.app)
+          (cd artifacts/kronos-editor-macos-x86_64 && zip -r "$GITHUB_WORKSPACE/release/kronos_editor-macos-x86_64.zip" kronos_editor.app)
           (cd artifacts/kronos-editor-linux-x86_64 && zip -j "$GITHUB_WORKSPACE/release/kronos_editor-linux-x86_64.zip" kronos_editor)
           cp artifacts/kronos-editor-windows-x86_64/kronos_editor.exe release/kronos_editor-windows-x86_64.exe
 

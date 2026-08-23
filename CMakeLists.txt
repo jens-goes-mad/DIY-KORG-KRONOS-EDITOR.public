@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
-project(kronos_editor LANGUAGES CXX)
+# VERSION is just the macOS .app bundle's CFBundleVersion/
+# CFBundleShortVersionString (see the APPLE block below) -- bump by hand
+# alongside a new git tag (.github/workflows/native-build.yml's release
+# job), not auto-derived from git describe or the tag itself. Nothing else
+# in the build reads this.
+project(kronos_editor VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,6 +87,7 @@ if (EDITOR_EMBED_RESOURCES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/frontend"
                 "${EDITOR_EMBED_HEADER}"
                 "${EDITOR_EMBED_SOURCE}"
+                "editor_embedded"
         DEPENDS ${EDITOR_FRONTEND_ASSETS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_resources.py"
         COMMENT "Embedding frontend/ assets into the binary (release build)"
         VERBATIM
@@ -90,10 +96,69 @@ if (EDITOR_EMBED_RESOURCES)
     target_sources(kronos_editor PRIVATE "${EDITOR_EMBED_SOURCE}")
     target_include_directories(kronos_editor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
     target_compile_definitions(kronos_editor PRIVATE EDITOR_EMBED_RESOURCES=1)
+
+    # Same mechanism, second independent table (namespace
+    # editor_embedded_resources, not editor_embedded -- two separate lookups,
+    # see embed_resources.py's own doc comment) for resources/'s Init Program
+    # templates. Closes the gap this file used to flag directly: those
+    # templates (EditorBridge::readResourceFile(), used by "Reset entry" and
+    # Duplicates resolution) were still read from EDITOR_RESOURCES_DIR, a
+    # compile-time absolute path into wherever the source checkout was built
+    # -- harmless for local dev (path still valid), but a real Release
+    # binary handed to someone else would silently fail to find them, since
+    # this project started actually shipping Release binaries via GitHub
+    # Releases (see .github/workflows/native-build.yml's release job).
+    file(GLOB EDITOR_RESOURCES_ASSETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/*")
+
+    set(EDITOR_EMBED_RESOURCES_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedResources.h")
+    set(EDITOR_EMBED_RESOURCES_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/EmbeddedResources.cpp")
+
+    add_custom_command(
+        OUTPUT "${EDITOR_EMBED_RESOURCES_HEADER}" "${EDITOR_EMBED_RESOURCES_SOURCE}"
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_resources.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+                "${EDITOR_EMBED_RESOURCES_HEADER}"
+                "${EDITOR_EMBED_RESOURCES_SOURCE}"
+                "editor_embedded_resources"
+        DEPENDS ${EDITOR_RESOURCES_ASSETS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_resources.py"
+        COMMENT "Embedding resources/ (Init Program templates) into the binary (release build)"
+        VERBATIM
+    )
+
+    target_sources(kronos_editor PRIVATE "${EDITOR_EMBED_RESOURCES_SOURCE}")
 endif()
 
 if (APPLE)
     target_link_libraries(kronos_editor PRIVATE "-framework WebKit" "-framework Cocoa")
+
+    # Real .app bundle, Release builds only (EDITOR_EMBED_RESOURCES is the
+    # existing "this is a real packaged/shippable build" marker, already
+    # auto-on for Release -- see the option() above) -- a Debug build stays
+    # a plain `build/kronos_editor` binary, unaffected, so the documented
+    # local dev loop (`./build/kronos_editor` straight after `cmake --build
+    # build`) keeps working exactly as before. Without this, Finder has no
+    # way to know a bare Unix executable is a windowed GUI app -- double-
+    # clicking one launches it INSIDE Terminal.app instead (confirmed
+    # directly: the released v0.1.1 binaries did exactly this), which is
+    # what a real .app bundle (an Info.plist + CFBundlePackageType=APPL)
+    # exists to fix.
+    if (EDITOR_EMBED_RESOURCES)
+        set(EDITOR_BUNDLE_VERSION "${PROJECT_VERSION}")
+        configure_file(
+            "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/Info.plist.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/Info.plist"
+            @ONLY
+        )
+        set_target_properties(kronos_editor PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/generated/Info.plist"
+        )
+        # No CFBundleIconFile/AppIcon.icns yet -- no icon asset exists in
+        # this repo at all, not just unwired. Ships with the generic system
+        # app icon until one gets designed; a real fix, not a placeholder
+        # left half-done, just a smaller scope than this pass covers.
+    endif()
 elseif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)

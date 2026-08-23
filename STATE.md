@@ -4493,6 +4493,48 @@ App/UI:
         width/height) should just start working with no markdown change needed.
       - `docs/content/guide/index.md` deleted (`git rm`), content fully absorbed into the
         four new files above.
+  62. **BUILT (2026-08-23)**: real distribution, in two parts, both prompted by testing
+      the actual published `v0.1.0`/`v0.1.1` releases (entries about the tag-triggered
+      release job itself aren't in this log -- built directly in conversation, not a
+      separate STATE.md-worthy pass on their own -- but the two real bugs that testing
+      surfaced are).
+      - **`resources/` now embedded into Release builds**, closing a gap this file used
+        to flag directly ("no Release build is packaged/shipped yet"). `EditorBridge::
+        readResourceFile()` (backs "Reset entry" and Duplicates resolution) used to read
+        `EDITOR_RESOURCES_DIR`, a compile-time absolute path into wherever the CI runner's
+        checkout was -- meaningless once the binary is handed to someone else, so both
+        features would have silently found nothing on a real user's machine. Reused
+        `tools/embed_resources.py` (already existed for `frontend/`) rather than writing a
+        second mechanism -- generalized it to take a namespace argument, so `resources/`
+        gets its own independent `editor_embedded_resources` table
+        (`generated/EmbeddedResources.h/.cpp`) instead of merging into `frontend/`'s. Only
+        2 files today (`Init-Program-HD1.raw`/`-EXi.raw`), verified byte-for-byte via a
+        throwaway smoke test (`clang++` against the generated `.cpp` directly, printed
+        each embedded file's size, matched `ls -la resources/*.raw` exactly).
+      - **Real macOS `.app` bundle**, Release builds only (gated on the SAME
+        `EDITOR_EMBED_RESOURCES` flag, so a Debug build stays a plain `build/kronos_editor`
+        binary -- the documented local dev loop is unaffected). Reported directly: the
+        published v0.1.1 macOS Intel binary, once downloaded, opened a Terminal.app window
+        before the editor's own window appeared -- a bare Unix executable has no way to
+        tell Finder it's a windowed GUI app, so double-clicking one launches it INSIDE
+        Terminal instead. `CMakeLists.txt`'s new `APPLE` block sets `MACOSX_BUNDLE TRUE` +
+        a real `MACOSX_BUNDLE_INFO_PLIST` (`platform/macos/Info.plist.in`, `configure_file`'d
+        with `project()`'s own `VERSION` -- bumped by hand alongside a new git tag, not
+        auto-derived). No `CFBundleIconFile` -- no icon asset exists in this repo at all,
+        ships with the generic system icon for now, a real fix just a smaller scope than
+        this pass, not a placeholder left half-done.
+      - `.github/workflows/native-build.yml`: macOS jobs now upload
+        `build/kronos_editor.app` (a directory) instead of the raw binary; the release
+        job's zip step switched from `zip -j` (single file) to `zip -r` (whole bundle,
+        preserving its internal `Contents/MacOS/...` structure) for macOS specifically,
+        `chmod +x` retargeted at the binary's new nested path inside the bundle.
+      - **Verified end-to-end for real, not just compiled**: full `cmake --build build`
+        (Ninja, Release) clean, `pcg_file_test` still all-passing, confirmed
+        `build/kronos_editor.app/Contents/Info.plist` has the right substituted version
+        string, and launched the actual bundle via `open build/kronos_editor.app` (the
+        same path a Finder double-click takes) -- process came up directly, no new
+        Terminal.app process spawned (checked `ps aux` before/after, only the pre-existing
+        session's own Terminal was present).
 
 CLEAN UP -- noted 2026-08-15:
 

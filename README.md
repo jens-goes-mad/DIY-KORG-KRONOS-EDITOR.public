@@ -239,7 +239,10 @@ cmake --build build
 
 Debug builds read `frontend/` live off disk (edit-reload friendly). Release
 builds (`-DCMAKE_BUILD_TYPE=Release`, or `-DEDITOR_EMBED_RESOURCES=ON`)
-embed `frontend/` into the binary via `tools/embed_resources.py`.
+embed `frontend/` and `resources/` into the binary via `tools/embed_resources.py`, and on
+macOS produce a real `build/kronos_editor.app` bundle instead of a bare executable (see
+[docs/content/building](docs/content/building/index.md) for exactly where each platform's
+build output ends up).
 
 This repo has one optional, private companion submodule
 (`private/diy-korg-kronos-editor`, see `STATE.md`) for functionality out of scope for

@@ -4,20 +4,38 @@
 
 #include "platform/NativeFileDialog.h"
 
+#ifdef EDITOR_EMBED_RESOURCES
+#include "generated/EmbeddedResources.h"
+#endif
+
 namespace {
 
-// Reads a small resource file (see EDITOR_RESOURCES_DIR in CMakeLists.txt)
-// straight into memory -- same read-the-whole-file-at-once shape as
-// PcgFile::load(), just for the couple-KB Init Program templates rather
-// than a whole .PCG. Returns an empty vector if the file can't be opened;
-// callers distinguish "empty" from "a real empty file" by checking size
-// against the destination bank's own record size anyway (see
-// PcgFile::resolveDuplicates()'s validation), so no separate ok/error
-// signal is needed here.
+// Reads a small resource file straight into memory -- same read-the-whole-
+// file-at-once shape as PcgFile::load(), just for the couple-KB Init
+// Program templates rather than a whole .PCG. Returns an empty vector if
+// the file can't be found; callers distinguish "empty" from "a real empty
+// file" by checking size against the destination bank's own record size
+// anyway (see PcgFile::resolveDuplicates()'s validation), so no separate
+// ok/error signal is needed here.
+//
+// Release build: served from the binary's own embedded table (see
+// EDITOR_EMBED_RESOURCES in CMakeLists.txt) -- EDITOR_RESOURCES_DIR is a
+// compile-time absolute path into wherever the source checkout was BUILT,
+// meaningless once the binary is handed to someone else. Debug build: read
+// live off disk instead, same reasoning as loadFrontendResource() in
+// main.cpp.
 std::vector<uint8_t> readResourceFile(const std::string& relativePath) {
+#ifdef EDITOR_EMBED_RESOURCES
+    const std::string embeddedPath = "/" + relativePath;
+    for (const auto& file : editor_embedded_resources::getEmbeddedFiles()) {
+        if (embeddedPath == file.path) return std::vector<uint8_t>(file.data, file.data + file.size);
+    }
+    return {};
+#else
     std::ifstream file(std::string(EDITOR_RESOURCES_DIR) + "/" + relativePath, std::ios::binary);
     if (!file) return {};
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+#endif
 }
 
 std::string stringArg(const choc::value::ValueView& args, size_t index) {

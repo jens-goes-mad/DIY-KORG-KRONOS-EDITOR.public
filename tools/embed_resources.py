@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Generates a C++ source/header pair embedding every file under a frontend
-asset directory as a byte array, for release builds that ship a single
-self-contained binary (see EDITOR_EMBED_RESOURCES in CMakeLists.txt)."""
+"""Generates a C++ source/header pair embedding every file under a directory
+as a byte array, for release builds that ship a single self-contained binary
+(see EDITOR_EMBED_RESOURCES in CMakeLists.txt). Generic over which directory
+and C++ namespace -- used for both frontend/ (namespace editor_embedded) and
+resources/ (namespace editor_embedded_resources), two independent embedded
+tables rather than one merged one, since callers already look each up by a
+different mechanism (WebView resource fetch vs. EditorBridge's
+readResourceFile())."""
 
 import os
 import sys
@@ -12,11 +17,11 @@ def sanitize(relative_path: str) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
-        print(f"usage: {sys.argv[0]} <frontend_dir> <output_header> <output_source>", file=sys.stderr)
+    if len(sys.argv) != 5:
+        print(f"usage: {sys.argv[0]} <source_dir> <output_header> <output_source> <namespace>", file=sys.stderr)
         return 1
 
-    frontend_dir, out_header, out_source = sys.argv[1:4]
+    frontend_dir, out_header, out_source, namespace = sys.argv[1:5]
 
     entries = []
     for root, _dirs, files in os.walk(frontend_dir):
@@ -31,19 +36,19 @@ def main() -> int:
     with open(out_header, "w") as h:
         h.write("#pragma once\n\n")
         h.write("#include <cstddef>\n#include <vector>\n\n")
-        h.write("namespace editor_embedded {\n\n")
+        h.write(f"namespace {namespace} {{\n\n")
         h.write("struct EmbeddedFile {\n")
         h.write("    const char* path;\n")
         h.write("    const unsigned char* data;\n")
         h.write("    std::size_t size;\n")
         h.write("};\n\n")
         h.write("const std::vector<EmbeddedFile>& getEmbeddedFiles();\n\n")
-        h.write("}  // namespace editor_embedded\n")
+        h.write(f"}}  // namespace {namespace}\n")
 
     with open(out_source, "w") as s:
         header_include = os.path.basename(out_header)
         s.write(f'#include "{header_include}"\n\n')
-        s.write("namespace editor_embedded {\n\n")
+        s.write(f"namespace {namespace} {{\n\n")
         s.write("namespace {\n\n")
 
         var_names = {}
@@ -68,7 +73,7 @@ def main() -> int:
         s.write("    };\n")
         s.write("    return files;\n")
         s.write("}\n\n")
-        s.write("}  // namespace editor_embedded\n")
+        s.write(f"}}  // namespace {namespace}\n")
 
     print(f"Embedded {len(entries)} file(s) from {frontend_dir} into {out_source}")
     return 0

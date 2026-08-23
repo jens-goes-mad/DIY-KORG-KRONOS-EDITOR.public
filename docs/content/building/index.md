@@ -66,7 +66,11 @@ all).
 
 ### Where the binary ends up
 
-- macOS / Linux: `build/kronos_editor`
+- macOS: `build/kronos_editor.app` -- a real bundle for Release builds specifically
+  (`open build/kronos_editor.app`, or double-click it in Finder), not a bare executable.
+  A Debug build stays a plain `build/kronos_editor`, unaffected -- Finder-launchability
+  only matters for something you'd actually hand to someone else.
+- Linux: `build/kronos_editor`
 - Windows: `build/Release/kronos_editor.exe` (or `build/Debug/kronos_editor.exe` for a
   Debug build -- MSVC's multi-config generator puts each configuration in its own
   subfolder)
