@@ -64,8 +64,6 @@ per platform. One CMake project, verified by CI on all four targets -- see
 
 ## What's built so far
 
-![Main View](DIY-KE-006-CombiReferences.png)
-
 The file format side: container/chunk parsing, all 128 Set Lists, per-slot parameters
 (Program/Combi reference, Color, Volume, Hold Time, Font size, Transpose, Comment), the
 Program/Combi instrument-name cross-reference, and Combi Timbre-to-Program references with
@@ -75,6 +73,8 @@ never trusted blindly. Which specific EXi synthesis engine (AL-1, CX-3, STR-1, M
 PolysixEX, MOD-7, SGX-2, EP-1) an individual EXi Program uses is confirmed too, byte-verified
 against real templates. Full detail, including exactly what's still open, is in
 [The file format](/format).
+
+![Main View](DIY-MainPanels.png)
 
 The editor side, briefly (see the [User Guide](/guide) for the real walkthrough):
 

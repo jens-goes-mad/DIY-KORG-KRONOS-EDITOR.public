@@ -29,20 +29,28 @@ cd docs
 docker compose up
 ```
 
-Then open http://localhost:1313/DIY-KORG-KRONOS-EDITOR/ (note the subpath -- `docker-
+Then open http://localhost:1313/DIY-KORG-KRONOS-EDITOR.public/ (note the subpath -- `docker-
 compose.yml`'s `--baseURL` override matches the real GitHub Pages project-page path so
 locally-served links/assets resolve the same way they will in production, see that file's
 own comment for why this matters). Content lives under `content/`; the theme config is
 under `config/_default/`.
 
+If Docker isn't available (or you just want one production-equivalent build rather than a
+live-reloading dev server), a one-shot `hugo --minify` run works the same way without
+`docker compose up`'s long-running server:
+
+```bash
+cd docs
+docker run --rm -v "$(pwd):/src" -w /src hugomods/hugo:exts-non-root hugo --minify
+```
+
+This writes straight to `docs/public/` (gitignored) -- open the generated `.html` files
+directly, or point any static file server at that directory.
+
 ## Structure
 
 - `content/overview` -- project intro
+- `content/guide` -- the User Guide (an overview page plus one sub-page per main working
+  area: `setlist/`, `combi/`, `prog/`)
 - `content/me` -- author bio + legal notice (Impressum/Datenschutzerklärung), reused
   verbatim (same author) from the sibling DIY project sites
-
-## One-time repo setup
-
-GitHub Pages needs to be switched to "GitHub Actions" as its source under this repo's
-Settings > Pages -- this hasn't been done yet and isn't something this tool can flip on
-its own.

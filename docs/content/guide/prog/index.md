@@ -2,10 +2,17 @@
 title: Programs
 toc: true
 ---
+Browsing Programs, swapping/copying them, finding and resolving byte-identical
+duplicates, and resetting a slot back to its factory Init state.
+
+<!--more-->
+
 Part of the [User Guide](/guide) -- see there first for opening a file, the dual-pane
 layout, [jumping between panes](/guide#jumping-to-a-program-combi-or-set-list-slot), and
 [browsing basics](/guide#browsing-programs-and-combis) (filter by bank, expanding a row).
 This page covers what's specific to the Programs tab, including Duplicates.
+
+![Program references](DIY-ProgUsageOverview.png)
 
 Expanding a Program row shows two lists: every **Set List slot** that references it, and
 (where confirmed -- see [The file format](/format) for which banks that covers) every
@@ -55,6 +62,8 @@ This applies immediately once confirmed -- no undo, same as every other write in
 
 Groups Programs that are byte-for-byte identical (a real hash of the raw record, not just a
 matching name), one row per group. Expand a group to see every copy as its own button.
+
+![Duplicates](DIY-Duplicates.png)
 
 Clicking a copy's button makes it **the only version**: every *other* copy in that group is
 cleared back to a blank slot -- its bank's own factory-default template, HD-1 or EXi

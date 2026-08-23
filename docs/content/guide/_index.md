@@ -16,6 +16,8 @@ together for real editing sessions. It covers what's common to the whole app: op
 file, the dual-pane layout, how browsing and jumping between panes works, and saving.
 Each of the three main working areas has its own page, once you've got the basics here:
 
+<!--more-->
+
 - **[Setlist](/guide/setlist)** -- browsing/filtering/sorting a Set List, drag-and-drop
   reordering and copying, editing a slot's Name/Color/Volume/Comment.
 - **[Combi](/guide/combi)** -- browsing Combis and their Timbre references, drag-and-drop
@@ -55,15 +57,21 @@ built internally, see [App architecture & components](/components).
 ## Opening a file
 
 Click **Open...** in the topbar. This shows a native file picker (not a browser upload --
-the app reads straight off disk) for a `.PCG`/`.SNG` Korg Kronos backup. Once loaded, the
+the app reads straight off disk) for a `.PCG`/`.SNG` Korg Kronos backup. 
+
+![Norton-Commander is back](DIY-Open.png)
+
+Once loaded, the
 file becomes an open **dataset** and lands in whichever of the two panes is empty; if both
 already show something, it's still available from either pane's dataset selector.
 
-![Norton-Commander is back](DIY-KE-001.png)
+![Norton-Commander is back](DIY-SetlistOnePane.png)
 
 Opening the same file path twice reuses the already-open dataset instead of loading a
 second copy -- both panes end up looking at the exact same in-memory data, so an edit made
 in one pane is visible in the other immediately.
+
+![Norton-Commander is back](DIY-SetlistSelection.png)
 
 ## The dual-pane layout
 
@@ -73,7 +81,7 @@ The editor is a Norton-Commander-style dual pane. Each pane, independently:
 - Switches between five categories via its own tab bar: **Setlist**, **Programs**,
   **Combis**, **Duplicates**, **Internals**.
 
-![Functions](DIY-KE-002-Dataset.png)
+![Functions](DIY-Functions.png)
 
 This means two panes can show the same dataset from two different angles (e.g. Setlist on
 the left, Duplicates on the right), two different Set Lists of the *same* dataset side by
@@ -95,6 +103,8 @@ currently on that side," not a fixed pane -- if you've swapped panes with **⇄*
 "Left only" still shows whatever is visually on the left afterward. Nothing about either
 pane's data changes; it's a display toggle only, same as the swap button.
 
+![One pane](DIY-SetlistOnePane.png)
+
 ## Browsing Programs and Combis
 
 The **[Programs](/guide/prog)**, **[Combi](/guide/combi)**, and **Duplicates** tabs share a few
@@ -107,6 +117,8 @@ mechanics, described once here rather than on each page separately:
 - Drag one Program or Combi row onto another to copy/swap/move it -- see the
   [Programs](/guide/prog) and [Combi](/guide/combi) pages for the exact gestures, since they differ
   between the two.
+
+![Filter and Jump Buttons](DIY-ProgramFilter.png)
 
 ## Jumping to a Program, Combi, or Set List slot
 

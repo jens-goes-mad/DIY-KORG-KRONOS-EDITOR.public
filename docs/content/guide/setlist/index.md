@@ -2,13 +2,18 @@
 title: Setlist
 toc: true
 ---
+Browsing, filtering, sorting, drag-and-drop reordering and copying, and editing a
+Setlist slot's Name/Color/Volume/Comment.
+
+<!--more-->
+
 Part of the [User Guide](/guide) -- see there first for opening a file, the dual-pane
 layout, [jumping between panes](/guide#jumping-to-a-program-combi-or-set-list-slot), and
 saving. This page covers the Setlist tab itself.
 
 Browse any one of the file's 128 Set Lists, 128 slots each, via the dropdown at the top.
 
-![Filter and Sort](DIY-KE-004-FilterSort.png)
+![Filter and Sort](DIY-SetlistOnePaneRight.png)
 
 ## Filter
 
@@ -85,7 +90,7 @@ both can be open on the same slot at once.
   as a live approximation of how the text will actually wrap on a real Kronos screen.
   Comments cap at 512 characters, matching the hardware's own limit.
 
-![Setlist edit](DIY-KE-005-SetlistItem.png)
+![Setlist edit](DIY-SetlistEditor.png)
 
 If both panes are showing the same slot of the same Set List, only one of them can have an
 editor open on it at a time -- the second attempt is blocked with a popup explaining why,

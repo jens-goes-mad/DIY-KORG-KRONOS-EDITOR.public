@@ -2,15 +2,22 @@
 title: Combi
 toc: true
 ---
+Browsing Combis and their Timbre references, drag-and-drop rearranging, and copying a
+Combi to a different backup.
+
+<!--more-->
+
 Part of the [User Guide](/guide) -- see there first for opening a file, the dual-pane
 layout, [jumping between panes](/guide#jumping-to-a-program-combi-or-set-list-slot), and
 [browsing basics](/guide#browsing-programs-and-combis) (filter by bank, expanding a row).
 This page covers what's specific to the Combi tab.
 
+![Combi References](DIY-CombiOverview.png)
+
 Expanding a Combi row shows all 16 Timbre slots, each with its own referenced [Program](/guide/prog)
 (when assigned) as a jump button, and its on/off/engine-type status.
 
-![Combi References](DIY-KE-006-CombiReferences.png)
+![Combi References](DIY-CombiTimbres.png)
 
 ## Rearranging Combis by drag-and-drop
 
