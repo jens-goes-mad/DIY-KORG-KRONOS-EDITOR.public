@@ -111,18 +111,29 @@ jobs:
           path: artifacts
 
       # Each platform's binary keeps its build-time filename (kronos_editor/
-      # kronos_editor.exe) inside its own uniquely-named artifact folder --
-      # renamed here since release assets all land in one flat namespace and
-      # need distinct filenames. Executable bit set explicitly: zip-based
-      # artifact upload/download doesn't reliably preserve it.
+      # kronos_editor.exe) inside its own uniquely-named artifact folder.
+      # macOS/Linux ship as .zip, not the raw binary directly: a plain HTTP
+      # download (which is all a GitHub Release asset ever is) carries no
+      # Unix permission bits at all, so a `chmod +x` here only affects this
+      # CI runner's own copy -- the file a browser saves to a user's disk
+      # always lands non-executable regardless. Confirmed directly: v0.1.0's
+      # raw macos-x86_64 binary, once downloaded, couldn't be launched by
+      # Finder at all -- it fell back to opening the binary's raw bytes in a
+      # text editor. The zip format DOES store Unix permissions internally,
+      # and macOS's own Archive Utility restores them correctly on extract,
+      # so the exec bit set here survives all the way to the user's disk.
+      # Windows doesn't have this problem (a .exe runs by extension, no
+      # Unix-permission concept involved), so it stays a raw file.
       - name: Assemble release assets
         run: |
           mkdir -p release
-          cp artifacts/kronos-editor-macos-arm64/kronos_editor release/kronos_editor-macos-arm64
-          cp artifacts/kronos-editor-macos-x86_64/kronos_editor release/kronos_editor-macos-x86_64
-          cp artifacts/kronos-editor-linux-x86_64/kronos_editor release/kronos_editor-linux-x86_64
+          chmod +x artifacts/kronos-editor-macos-arm64/kronos_editor
+          chmod +x artifacts/kronos-editor-macos-x86_64/kronos_editor
+          chmod +x artifacts/kronos-editor-linux-x86_64/kronos_editor
+          (cd artifacts/kronos-editor-macos-arm64 && zip -j "$GITHUB_WORKSPACE/release/kronos_editor-macos-arm64.zip" kronos_editor)
+          (cd artifacts/kronos-editor-macos-x86_64 && zip -j "$GITHUB_WORKSPACE/release/kronos_editor-macos-x86_64.zip" kronos_editor)
+          (cd artifacts/kronos-editor-linux-x86_64 && zip -j "$GITHUB_WORKSPACE/release/kronos_editor-linux-x86_64.zip" kronos_editor)
           cp artifacts/kronos-editor-windows-x86_64/kronos_editor.exe release/kronos_editor-windows-x86_64.exe
-          chmod +x release/kronos_editor-macos-arm64 release/kronos_editor-macos-x86_64 release/kronos_editor-linux-x86_64
 
       - uses: softprops/action-gh-release@v2
         with:

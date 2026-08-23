@@ -14,14 +14,20 @@ backup files, built on [CHOC](https://github.com/Tracktion/choc)
 Prebuilt binaries, one per platform (unsigned -- see [Build](#build) below if your OS
 blocks it and you'd rather not build from source):
 
-- [macOS (Apple Silicon)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-arm64)
-- [macOS (Intel)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-x86_64)
-- [Linux (x86_64)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-linux-x86_64)
+- [macOS (Apple Silicon)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-arm64.zip)
+- [macOS (Intel)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-macos-x86_64.zip)
+- [Linux (x86_64)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-linux-x86_64.zip)
 - [Windows (x86_64)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases/latest/download/kronos_editor-windows-x86_64.exe)
 
 These always point at the newest [release](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/releases) --
 built and attached automatically by `.github/workflows/native-build.yml` on every
-version tag push (`git tag vX.Y.Z && git push --tags`).
+version tag push (`git tag vX.Y.Z && git push --tags`). The macOS/Linux downloads are
+`.zip` (unzip it, then run the `kronos_editor` inside -- a raw executable loses its
+"you're allowed to run this" bit over a plain HTTP download, which a zip preserves).
+
+**macOS specifically**: since the app isn't signed/notarized, the first launch needs
+**right-click -> Open** (not a plain double-click) so Gatekeeper offers an "Open Anyway"
+choice instead of just refusing -- only needed once per download.
 
 ## Why this exists
 
