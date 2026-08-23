@@ -4535,6 +4535,21 @@ App/UI:
         same path a Finder double-click takes) -- process came up directly, no new
         Terminal.app process spawned (checked `ps aux` before/after, only the pre-existing
         session's own Terminal was present).
+  63. **BUILT (2026-08-23)**: `choc::ui::WebView::Options::enableDebugMode` (`main.cpp`)
+      now off for Release builds -- was unconditionally `true`, meaning every shipped
+      binary had Safari's Develop menu, right-click "Inspect Element", and the legacy
+      `developerExtrasEnabled`/`isInspectable` machinery (entry 59) all reachable, not
+      just this project's own dev builds. Reused `EDITOR_EMBED_RESOURCES` (already this
+      project's "is this a real packaged/Release build" marker, see entry 62) as the
+      `#ifdef` guard rather than a new flag; a Debug build keeps debug mode on exactly as
+      before. `private/diy-korg-kronos-editor/src/Sgx2EditorStandaloneMain.cpp` has its
+      own separate `enableDebugMode = true` -- left alone, that binary is a private dev
+      tool this repo's release workflow never builds or ships at all.
+      - Verified: both a Release build (this repo's own `build/`, `EDITOR_EMBED_RESOURCES`
+        already confirmed active there per entry 62's embedded-resources check) and a
+        fresh Debug build (`/tmp/kronos_debug_build`, scratch dir) compiled clean --
+        confirms both `#ifdef` branches are reachable and correct, not just the one
+        currently configured.
 
 CLEAN UP -- noted 2026-08-15:
 

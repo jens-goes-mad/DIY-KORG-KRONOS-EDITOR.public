@@ -231,7 +231,19 @@ int main() {
         instance->window->setMinimumSize(minWidth, minHeight);
 
         choc::ui::WebView::Options options;
+        // Release builds ship without remote debugging -- Safari's Develop
+        // menu, right-click "Inspect Element", and the legacy
+        // developerExtrasEnabled/isInspectable machinery (see CHOC's own
+        // choc_WebView.h) all stay off, matching a real shipped product
+        // rather than a dev build. EDITOR_EMBED_RESOURCES is already this
+        // project's "is this a real packaged/Release build" marker
+        // (CMakeLists.txt), reused here rather than a second flag -- a
+        // Debug build keeps debug mode on exactly as before.
+#ifdef EDITOR_EMBED_RESOURCES
+        options.enableDebugMode = false;
+#else
         options.enableDebugMode = true;
+#endif
 
         options.fetchResource = [resourceDir, entryHtml](const std::string& path)
             -> std::optional<choc::ui::WebView::Options::Resource> {
