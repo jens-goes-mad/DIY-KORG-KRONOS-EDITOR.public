@@ -4604,6 +4604,40 @@ App/UI:
       `minos 11.0` (confirmed via the same `otool -l` check), and the resulting
       `.app` still launches cleanly on this machine via `open` (same path a Finder
       double-click takes).
+  66. **FIXED (2026-08-24)**: reported directly, the real `v0.1.4` arm64 release refused
+      to open at all on macOS Sequoia (15.7.7) -- "Kronos-editor ist beschädigt und kann
+      nicht geöffnet werden" ("...is damaged and can't be opened"), a stricter, non-
+      bypassable message distinct from the ordinary "unidentified developer" warning
+      (which a right-click *can* override, per the README's existing note). Root cause
+      confirmed directly, not assumed: `codesign -dv` on a real local build said "code
+      object is not signed at all" -- this app has never been signed at all, at any
+      point, and Apple Silicon's kernel-level code-integrity enforcement (AMFI) requires
+      SOME signature to run anything -- unlike Intel, which is exactly why this was
+      arm64-specific (an x86_64 build with the same zero signature still launches, just
+      behind the milder, bypassable warning).
+      - Fixed with an ad-hoc `codesign --force --deep --sign -` (no Apple Developer ID
+        involved -- `-s -` is literally "sign with no identity"), applied in the
+        `release` job to the FINAL reconstructed bundle (after entry 64's `Contents/`
+        wrapper fix), not back in the `macos-arm64`/`macos-x86_64` build jobs -- covers
+        exactly the bytes that actually ship, unaffected by whatever the artifact
+        upload/download round-trip does to file layout in between. Required moving the
+        `release` job off `ubuntu-latest` onto `macos-latest` -- `codesign` doesn't exist
+        on Linux at all; everything else that job does (zip, cp,
+        `softprops/action-gh-release`) works identically on macOS.
+      - **Verified end-to-end locally before shipping, not assumed to work**: ad-hoc-
+        signed a real local build, wrote a synthetic `com.apple.quarantine` xattr onto
+        it matching exactly what a real browser download sets, and confirmed `open`
+        actually launches it (via Gatekeeper's normal translocation path for an ad-hoc-
+        signed-but-unnotarized app) instead of refusing -- `spctl -a` alone still says
+        "rejected" for an ad-hoc signature (that's expected, it's checking full
+        Developer-ID+notarization policy, a stricter bar than what actually gates a
+        real `open`/double-click launch) so `spctl` alone would have been a misleading
+        thing to test against.
+      - **Immediate workaround for the already-downloaded `v0.1.4` copy**, verified the
+        same way (unsigned + quarantined -> `xattr -cr Kronos-editor.app` alone, no
+        signing needed for an already-local copy -> launches fine): quarantine is what
+        actually triggers the strict check on a fresh browser download, not the missing
+        signature by itself.
 
 CLEAN UP -- noted 2026-08-15:
 

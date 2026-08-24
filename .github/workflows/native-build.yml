@@ -120,7 +120,11 @@ jobs:
   # default GITHUB_TOKEN is read-only on this repo; scoped to just this
   # job, the 4 build jobs above stay untouched.
   release:
-    runs-on: ubuntu-latest
+    # macOS, not ubuntu-latest -- codesign (needed below) only exists on
+    # macOS. Everything else this job does (zip, cp, softprops/action-gh-
+    # release) works identically on macOS runners too, so there's no
+    # reason to keep this Linux otherwise.
+    runs-on: macos-latest
     needs: [macos-arm64, macos-x86_64, linux-x86_64, windows-x86_64]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -166,6 +170,32 @@ jobs:
             mkdir -p "artifacts/kronos-editor-$plat/kronos_editor.app"
             mv "artifacts/kronos-editor-$plat/Contents" "artifacts/kronos-editor-$plat/kronos_editor.app/Contents"
           done
+
+          # Ad-hoc codesign (no Apple Developer ID -- `-s -` is the "sign
+          # with no identity" form, not a placeholder for a real one),
+          # applied fresh here rather than back in the macos-arm64/
+          # macos-x86_64 build jobs so it covers the FINAL bundle exactly
+          # as shipped, unaffected by whatever the artifact upload/download
+          # round-trip did to file layout. Reported directly: the real
+          # v0.1.4 arm64 release, once downloaded, refused to open at all
+          # -- "Kronos-editor ist beschädigt und kann nicht geöffnet
+          # werden" ("...is damaged and can't be opened"), macOS Sequoia's
+          # stricter message for a bundle with NO code signature at all,
+          # not the older "unidentified developer" warning that a plain
+          # right-click can bypass. Confirmed directly, not assumed:
+          # `codesign -dv` on an un-signed local build said literally "code
+          # object is not signed at all" -- Apple Silicon's kernel-level
+          # code-integrity enforcement (AMFI) requires SOME signature to
+          # run anything at all, unlike Intel, which is exactly why this
+          # was arm64-specific. `--deep` covers the whole bundle, not just
+          # the executable. Verified end-to-end locally before shipping
+          # this: ad-hoc-signed the real local build, added a synthetic
+          # com.apple.quarantine xattr matching what a real browser
+          # download sets, and confirmed `open` actually launches it
+          # (via Gatekeeper's normal translocation path) instead of
+          # refusing.
+          codesign --force --deep --sign - artifacts/kronos-editor-macos-arm64/kronos_editor.app
+          codesign --force --deep --sign - artifacts/kronos-editor-macos-x86_64/kronos_editor.app
 
           chmod +x artifacts/kronos-editor-macos-arm64/kronos_editor.app/Contents/MacOS/kronos_editor
           chmod +x artifacts/kronos-editor-macos-x86_64/kronos_editor.app/Contents/MacOS/kronos_editor
