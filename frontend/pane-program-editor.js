@@ -1254,6 +1254,29 @@ function createDuplicatesPanel(
     );
   }
 
+  // Wraps a synchronous DOM-building call the same way safeFetch() above
+  // wraps a bridge call -- closes a real gap that reproduced the exact
+  // incident safeFetch() was originally built for (2026-08-25, reported
+  // directly: "setlist is again deactivated" after this session's Duplicates
+  // rework): safeFetch() only ever protected the FETCH, never the render()
+  // that immediately follows using that same still-new, still-evolving
+  // data. A synchronous throw inside render() (or closeResolvePicker(),
+  // which itself renders) propagates out of onDatasetChanged()/refresh()
+  // below exactly the way a rejected fetch used to -- straight back into
+  // pane.js's loadDataset() chain, BEFORE its own
+  // updateCategoryTabAvailability() call, which is what actually disables
+  // EVERY category tab (Setlist included), not just this one. Logs the
+  // real error (not just "something failed") so a future occurrence is
+  // actually diagnosable from the app's own log panel instead of only
+  // showing up as "Setlist won't enable" with no further clue.
+  function safeRender(fn, label) {
+    try {
+      fn();
+    } catch (err) {
+      log(`[Library:Duplicates] ${label} failed: ${err && err.stack ? err.stack : err}`);
+    }
+  }
+
   async function onDatasetChanged() {
     expandedDuplicateKeys.clear();
     expandedCollisionKeys.clear();
@@ -1262,14 +1285,14 @@ function createDuplicatesPanel(
     // comment) -- any open resolve picker's `group` is a stale reference
     // into the OLD dataset's now-irrelevant data, so close it rather than
     // leave it showing meaningless entries.
-    closeResolvePicker();
+    safeRender(closeResolvePicker, "closeResolvePicker()");
     await fetchDuplicates();
-    render();
+    safeRender(render, "render()");
   }
 
   async function refresh() {
     await fetchDuplicates();
-    render();
+    safeRender(render, "render()");
   }
 
   // getGroupCount exposed so pane.js's own updateCategoryTabAvailability()
