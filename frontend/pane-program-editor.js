@@ -504,31 +504,360 @@ function createProgramsPanel(
   return { onDatasetChanged, refresh, render, jumpToEntry, findProgram, getProgramCount: () => programs.length };
 }
 
-// Duplicates table: read-only, no bank filter of its own (unlike Programs/
-// Combis) -- every byte-exact duplicate Program group in the current
-// dataset, one row per group, click to expand and see (and resolve) its
-// copies. Scoped to a single selected dataset -- no cross-dataset dedup
-// here, that's a real future idea, not this pass.
+// Duplicates: read-only, no bank filter of its own (unlike Programs/
+// Combis). Two vertical sub-tabs (Programs / Combi, style.css's
+// .duplicates-subtabs -- rotated 90 degrees, per direct request, since the
+// pane is already tight on horizontal width and a normal tab row would
+// compete with the table for it). Each sub-tab covers two DIFFERENT
+// questions about the same underlying idea, "library hygiene":
+// - "Same content, different position" (Programs only -- the original
+//   Duplicates feature) -- byte-exact copies, safely auto-resolvable
+//   (resolveDuplicateProgram() below).
+// - "Same name, different content" (Programs AND Combi, added later per
+//   direct request) -- entries that coincidentally share a name but are
+//   NOT the same thing, e.g. two Programs both called "Bass 1" that
+//   diverged over time. Read-only: unlike a byte-exact duplicate, there's
+//   no safe automatic resolution here (the content really does differ,
+//   only a person can decide what that means), so this is a discovery
+//   tool, not a write action -- see PcgFile::NameCollisionGroup's own doc
+//   comment (PcgFile.h) for the exact grouping rule.
+// Scoped to a single selected dataset -- no cross-dataset comparison here,
+// that's a real future idea, not this pass.
 function createDuplicatesPanel(
   { panel },
-  { getDatasetId, getFilterText, log, onRefreshOppositeLibrary, onNeedsFullReload, onSetlistRefsRepointed }
+  {
+    getDatasetId,
+    getFilterText,
+    onJumpToInstrument,
+    log,
+    onRefreshOppositeLibrary,
+    onNeedsFullReload,
+    onSetlistRefsRepointed,
+  }
 ) {
   let duplicateGroups = [];
+  let combiDuplicateGroups = [];
+  let programNameCollisions = [];
+  let combiNameCollisions = [];
+  let activeSubTab = "programs";  // "programs" | "combi"
+  // Which of the two views (per sub-tab) is showing right now -- a dropdown
+  // (render() below) replaces what used to be two always-stacked sections,
+  // per explicit request once BOTH sub-tabs had two real views to switch
+  // between (Combi's own byte-exact duplicate detection is new, see
+  // PcgFile::findDuplicateCombis()).
+  let activeView = { programs: "content", combi: "content" };  // "content" | "name"
   // Joined `${bank}-${number}` lists identifying which duplicate groups are
   // expanded -- a Set, several can be open at once, same multi-open model as
   // pane-combi-editor.js's expandedCombiKeys (the Internals pane's expandedTopics, a
   // Setlist row's own accordion sections, follow the same idea).
   const expandedDuplicateKeys = new Set();
+  // Same idea, keyed `${p or c}:${name}` (name collisions are grouped by
+  // name, not by a set of bank/number members) -- one shared Set for both
+  // sub-tabs since the prefix already keeps Program/Combi keys from
+  // colliding with each other.
+  const expandedCollisionKeys = new Set();
 
-  // One duplicate group's expanded detail -- every copy in the group as its
-  // own button (same `.bank-filter-row`/`.bank-filter-button` look
-  // Programs/Combis' bank filters and the Internals pane's bank grid already
-  // use, see internals.js's buildBankButtonGrid()), captioned the same "Bank
-  // Number (Engine)" way `formatBankNumber()` already produces elsewhere.
-  // Every button here represents a real, present copy (unlike Internals'
-  // present-vs-missing buttons), so none are disabled -- all are equally
-  // valid candidates for "which copy to keep," hence no color styling either.
-  function buildDuplicateGroupRow(group) {
+  // The resolve-picker sidebar's own state -- null when closed. `group` is
+  // a flat array of full Program/Combi info entries (a live reference into
+  // duplicateGroups/combiDuplicateGroups OR the flattened variants of a
+  // programNameCollisions/combiNameCollisions entry -- see
+  // requireByteExactMatch below); `src` is the chosen "keep" entry's
+  // `${bank}-${number}` key (or null, nothing chosen yet); `dupl` is the
+  // Set of `${bank}-${number}` keys checked to fold INTO src. Single shared
+  // instance (not one per sub-tab) -- only one group's picker is ever open
+  // at a time, per explicit request ("sidebar stays open" refers to
+  // surviving a resolve, not to multiple pickers coexisting).
+  //
+  // `requireByteExactMatch` picks which of the Duplicates panel's two
+  // checks this picker instance is servicing, same meaning as the
+  // PcgFile-level parameter of the same name (2026-08-25, per direct
+  // request/decision -- "Same name, different content" entries can be
+  // consolidated too, same picker UI, but MUST NEVER be required to be
+  // byte-identical, and MUST NEVER have their own bytes cleared, since
+  // they're expected to genuinely differ -- destroying that real,
+  // non-recoverable content wasn't acceptable): true opens from the "Same
+  // content, different location" table (byte-exact groups, clears folded-in
+  // Program bytes to Init Program); false opens from the "Same name,
+  // different content" table (name-collision groups, flattened across ALL
+  // their variants -- never clears anything, only repoints references).
+  // `nameGroupKey` (only set when requireByteExactMatch is false) is
+  // `{name, bankType}`, used to re-find this same NameCollisionGroup after
+  // a resolve -- unlike a byte-exact group, a name-collision group's OWN
+  // members never disappear from it just because their references moved
+  // (nothing about their content -- or hash -- changed), so re-syncing by
+  // name/bankType is what applyResolvePicker() below needs instead of the
+  // byte-exact path's own bank/number lookup.
+  let resolvePicker = null;
+  // Lazily created on first open, appended to document.body once (not into
+  // `panel` itself -- position:fixed doesn't need to live inside the
+  // scrolling pane content, and this way it survives render()'s own
+  // `panel.innerHTML = ""` unaffected). Reuses the cross-dataset Combi copy
+  // panel's own CSS shell (style.css's `.cross-dataset-panel*` -- backdrop,
+  // slide-in, header/body/footer) rather than inventing a second one, but
+  // built with plain DOM here (not lit-html, unlike that file's own PILOT)
+  // to stay consistent with the rest of this already-plain-DOM panel.
+  let resolvePanelEls = null;
+
+  function ensureResolvePanelEls() {
+    if (resolvePanelEls) return resolvePanelEls;
+    const backdrop = document.createElement("div");
+    backdrop.className = "cross-dataset-panel-backdrop";
+    backdrop.hidden = true;
+    backdrop.addEventListener("click", closeResolvePicker);
+
+    const panelEl = document.createElement("div");
+    panelEl.className = "cross-dataset-panel duplicate-resolve-panel";
+    panelEl.hidden = true;
+
+    document.body.append(backdrop, panelEl);
+    resolvePanelEls = { backdrop, panelEl };
+    return resolvePanelEls;
+  }
+
+  function openResolvePicker(group, isProgram, requireByteExactMatch, nameGroupKey) {
+    resolvePicker = { isProgram, group, requireByteExactMatch, nameGroupKey: nameGroupKey || null, src: null, dupl: new Set() };
+    renderResolvePicker();
+  }
+
+  function closeResolvePicker() {
+    resolvePicker = null;
+    renderResolvePicker();
+  }
+
+  // Slides in from whichever screen edge is nearest THIS pane -- same idea
+  // combi-cross-dataset-panel.js's own slideDirectionFor() uses for its
+  // destination pane, just inlined here (this panel only ever cares about
+  // its OWN pane, never a second one).
+  function resolvePanelSlideDirection() {
+    const paneEl = panel.closest(".pane");
+    return paneEl && paneEl.matches(".pane:last-of-type") ? "right" : "left";
+  }
+
+  function renderResolvePicker() {
+    const { backdrop, panelEl } = ensureResolvePanelEls();
+
+    if (!resolvePicker) {
+      backdrop.classList.remove("is-visible");
+      panelEl.classList.remove("is-open");
+      backdrop.hidden = true;
+      panelEl.hidden = true;
+      return;
+    }
+
+    backdrop.hidden = false;
+    panelEl.hidden = false;
+    panelEl.classList.remove("slide-from-left", "slide-from-right");
+    panelEl.classList.add(`slide-from-${resolvePanelSlideDirection()}`);
+    // Two-step reveal (unhide this frame, add the transition classes next
+    // frame) -- same trick combi-cross-dataset-panel.js's own renderPanel()
+    // uses, so the slide-in transition actually animates instead of
+    // snapping straight to its open position.
+    requestAnimationFrame(() => {
+      backdrop.classList.add("is-visible");
+      panelEl.classList.add("is-open");
+    });
+
+    const { group, isProgram, requireByteExactMatch } = resolvePicker;
+
+    panelEl.innerHTML = "";
+    const header = document.createElement("div");
+    header.className = "cross-dataset-panel-header";
+    const title = document.createElement("h2");
+    title.className = "cross-dataset-panel-title";
+    // "Resolve" (byte-exact -- these copies really are identical) vs
+    // "Consolidate" (name-collision -- these entries genuinely differ, the
+    // user is choosing to treat them as close enough on purpose) -- two
+    // different words for two different levels of consequence, per this
+    // picker's own requireByteExactMatch doc comment above.
+    title.textContent = requireByteExactMatch
+      ? `Resolve duplicates -- ${group[0] ? group[0].name || "(empty)" : ""}`
+      : `Consolidate variants -- ${nameCollisionGroupLabel(resolvePicker.nameGroupKey, isProgram)}`;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "cross-dataset-panel-close";
+    closeBtn.title = "Close";
+    closeBtn.textContent = "✕";
+    closeBtn.addEventListener("click", closeResolvePicker);
+    header.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "cross-dataset-panel-body";
+
+    if (group.length < 2) {
+      const done = document.createElement("div");
+      done.className = "usage-empty";
+      done.textContent = requireByteExactMatch
+        ? "Every duplicate in this group has already been resolved."
+        : "Nothing left to consolidate in this group.";
+      body.appendChild(done);
+    } else {
+      const table = document.createElement("table");
+      table.className = "table is-fullwidth is-narrow duplicate-resolve-table";
+      table.innerHTML = "<thead><tr><th>Src</th><th>Dupl</th><th>Slot</th></tr></thead><tbody></tbody>";
+      const tbody = table.querySelector("tbody");
+
+      for (const entry of group) {
+        const entryKey = `${entry.bank}-${entry.number}`;
+        const isSrc = resolvePicker.src === entryKey;
+        const label = isProgram
+          ? formatBankNumber({ isProgram: true, bank: entry.bank, number: entry.number }, entry.bankType)
+          : formatBankNumber({ isProgram: false, bank: entry.bank, number: entry.number });
+
+        const tr = document.createElement("tr");
+
+        const srcTd = document.createElement("td");
+        const srcRadio = document.createElement("input");
+        srcRadio.type = "radio";
+        srcRadio.name = "duplicate-resolve-src";
+        srcRadio.checked = isSrc;
+        srcRadio.title = `Keep ${label} -- the copy every checked "Dupl" below gets folded into.`;
+        srcRadio.addEventListener("change", () => {
+          resolvePicker.src = entryKey;
+          resolvePicker.dupl.delete(entryKey);  // a copy can't be its own duplicate
+          renderResolvePicker();
+        });
+        srcTd.appendChild(srcRadio);
+
+        const duplTd = document.createElement("td");
+        const duplCheckbox = document.createElement("input");
+        duplCheckbox.type = "checkbox";
+        duplCheckbox.checked = resolvePicker.dupl.has(entryKey);
+        duplCheckbox.disabled = isSrc;
+        duplCheckbox.title = !requireByteExactMatch
+          ? `Fold ${label} into Src -- repoints its ${isProgram ? "Combi/Set List" : "Set List"} references to Src. ` +
+            "Its own content is left exactly as-is -- it genuinely differs from Src, so nothing is cleared or overwritten."
+          : isProgram
+            ? `Fold ${label} into Src -- clears its own bytes to its bank's Init Program, repoints its Combi/Set List references to Src.`
+            : `Fold ${label} into Src -- repoints its Set List references to Src (its own content is left untouched -- no Init Combi template exists yet).`;
+        duplCheckbox.addEventListener("change", () => {
+          if (duplCheckbox.checked) resolvePicker.dupl.add(entryKey);
+          else resolvePicker.dupl.delete(entryKey);
+          renderResolvePicker();
+        });
+        duplTd.appendChild(duplCheckbox);
+
+        const slotTd = document.createElement("td");
+        slotTd.textContent = label;
+
+        tr.append(srcTd, duplTd, slotTd);
+        tbody.appendChild(tr);
+      }
+      body.appendChild(table);
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "cross-dataset-panel-footer";
+    // Only appears once BOTH a src and at least one dupl are chosen, per
+    // explicit request -- there's nothing coherent to resolve otherwise.
+    if (resolvePicker.src != null && resolvePicker.dupl.size > 0) {
+      const resolveBtn = document.createElement("button");
+      resolveBtn.type = "button";
+      resolveBtn.className = "button is-small is-link";
+      resolveBtn.textContent = requireByteExactMatch
+        ? `Resolve ${resolvePicker.dupl.size} into Src`
+        : `Consolidate ${resolvePicker.dupl.size} into Src`;
+      resolveBtn.addEventListener("click", () => applyResolvePicker());
+      footer.appendChild(resolveBtn);
+    }
+
+    panelEl.append(header, body, footer);
+  }
+
+  async function applyResolvePicker() {
+    if (!resolvePicker || resolvePicker.src == null || resolvePicker.dupl.size === 0) return;
+    const { isProgram, requireByteExactMatch } = resolvePicker;
+    const srcParts = resolvePicker.src.split("-").map(Number);
+    const [srcBank, srcNumber] = srcParts;
+    const targets = [...resolvePicker.dupl].map((key) => {
+      const [bank, number] = key.split("-").map(Number);
+      return { bank, number };
+    });
+
+    const result = isProgram
+      ? await window.resolveDuplicateProgram(getDatasetId(), srcBank, srcNumber, targets, requireByteExactMatch)
+      : await window.resolveDuplicateCombis(getDatasetId(), srcBank, srcNumber, targets, requireByteExactMatch);
+    if (!result.ok) {
+      showToast(result.error, { isError: true });
+      return;
+    }
+    // requireByteExactMatch=false never clears anything (clearedPrograms is
+    // always 0 there -- see PcgFile::resolveDuplicates()'s own doc
+    // comment), so that toast line is worded around "consolidated"/
+    // repointing only, never "cleared".
+    showToast(
+      requireByteExactMatch
+        ? isProgram
+          ? `Resolved ${targets.length} duplicate(s) -- cleared ${result.clearedPrograms}, repointed ` +
+              `${result.setlistRefsRepointed} Set List slot(s), ${result.combiRefsRepointed} Combi Timbre(s)` +
+              (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
+          : `Resolved ${targets.length} duplicate(s) -- repointed ${result.setlistRefsRepointed} Set List slot(s).`
+        : isProgram
+          ? `Consolidated ${targets.length} variant(s) -- repointed ${result.setlistRefsRepointed} Set List slot(s), ` +
+              `${result.combiRefsRepointed} Combi Timbre(s)` +
+              (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
+          : `Consolidated ${targets.length} variant(s) -- repointed ${result.setlistRefsRepointed} Set List slot(s).`
+    );
+
+    // Same reload chain the old per-copy "Keep only this" button used --
+    // see its own comments (now removed) for why each step is needed.
+    await onNeedsFullReload();
+    await onRefreshOppositeLibrary(getDatasetId());
+    if (result.setlistRefsRepointed > 0) await onSetlistRefsRepointed(getDatasetId());
+
+    // "Sidebar stays open" (explicit request) -- re-sync it to whatever the
+    // FRESH data says post-reload (onNeedsFullReload() re-fetches
+    // everything from scratch, see fetchDuplicates() below), not just a
+    // locally-filtered guess, in case something else changed the group
+    // shape concurrently.
+    if (requireByteExactMatch) {
+      // Byte-exact groups genuinely shrink as members get cleared -- find
+      // the fresh group still containing src, or close the picker if src no
+      // longer shows up as a duplicate of anything at all (every remaining
+      // member just got folded in).
+      const freshGroups = isProgram ? duplicateGroups : combiDuplicateGroups;
+      const freshGroup = freshGroups.find((g) => g.some((e) => `${e.bank}-${e.number}` === resolvePicker.src));
+      if (freshGroup) {
+        resolvePicker.group = freshGroup;
+        resolvePicker.dupl.clear();
+      } else {
+        resolvePicker = null;
+      }
+    } else {
+      // Name-collision groups never shrink from a consolidate -- resolving
+      // only repoints references, it never changes any entry's own content
+      // (or contentHash), so the SAME variants/members are still there
+      // afterward. Re-find by name/bankType (nameGroupKey, set when this
+      // picker was opened) rather than by src's own bank/number, since
+      // that's the actual identity of a name-collision group.
+      const freshNameGroups = isProgram ? programNameCollisions : combiNameCollisions;
+      const freshNameGroup = freshNameGroups.find(
+        (g) => g.name === resolvePicker.nameGroupKey.name && g.bankType === resolvePicker.nameGroupKey.bankType
+      );
+      if (freshNameGroup) {
+        resolvePicker.group = freshNameGroup.variants.flatMap((v) => v.members);
+        resolvePicker.dupl.clear();
+      } else {
+        resolvePicker = null;
+      }
+    }
+    renderResolvePicker();
+  }
+
+  // One duplicate group's expanded detail -- every copy in the group gets a
+  // plain navigation button (jumps there, same click/Shift-click/Shift+Cmd-
+  // click convention as buildUsageRow()'s Combi jump button below -- per
+  // explicit request that Duplicates navigate "as usual"). No write action
+  // lives here at all (2026-08-25, replaces an earlier "click a copy to
+  // resolve the WHOLE group" design, and the "Keep only this"-per-copy
+  // button that briefly replaced it) -- resolving now happens exclusively
+  // through the group title row's own "..." menu button (renderExact-
+  // DuplicatesTable() below), which opens a picker sidebar letting the user
+  // choose SPECIFIC duplicates to fold in rather than an all-or-nothing
+  // whole group. `isProgram` only affects the informational text shown:
+  // Programs show a Combi-usage count (n/a for unconfirmed banks -- see
+  // refCell's own comment in pane.js), Combis don't (a Combi isn't
+  // referenced BY other Combis).
+  function buildDuplicateGroupRow(group, isProgram) {
     const tr = document.createElement("tr");
     tr.className = "editor-row";
     const td = document.createElement("td");
@@ -538,55 +867,32 @@ function createDuplicatesPanel(
     wrap.className = "duplicate-copies";
     const row = document.createElement("div");
     row.className = "bank-filter-row";
-    for (const p of group) {
-      const label = formatBankNumber({ isProgram: true, bank: p.bank, number: p.number }, p.bankType);
-      // Combi usage is only confirmed correct for 8 individually-verified
-      // banks (INT-A..D, USER-A/D/F/AA -- see refCell's own comment in
-      // pane.js) -- "n/a" here matches the old table's fallback rather than
-      // showing a potentially-wrong count.
-      const combiText = p.combiUsageCountAvailable ? `#${p.combiUsageCount}` : "n/a";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "button is-small bank-filter-button";
-      // Visible on the button itself, not just a hover-only title -- a
-      // native app's tooltips are far less discoverable than a browser's.
-      btn.textContent = `${label} (Combi ${combiText} / Set List #${p.setlistUsageCount})`;
-      btn.title = `Keep ${label} as this group's only copy -- clears every OTHER duplicate to its bank's Init Program, and repoints their Combi/Set List references here.`;
-      // Applies immediately, no confirm step -- matches every other write in
-      // this app (drag-and-drop, Program copy, A-Z sort), per explicit
-      // request. See PcgFile::resolveDuplicates()'s own doc comment for the
-      // full behavior; combiRefsSkipped only shows up in the toast when
-      // non-zero, since it's 0 for the vast majority of real cases now that
-      // all 20 Program banks have a confirmed Combi Timbre code.
-      btn.addEventListener("click", async () => {
-        const result = await window.resolveDuplicateProgram(getDatasetId(), p.bank, p.number);
-        if (!result.ok) {
-          showToast(result.error, { isError: true });
-          return;
-        }
-        showToast(
-          `Kept ${label} -- cleared ${result.clearedPrograms} duplicate(s), ` +
-            `repointed ${result.setlistRefsRepointed} Set List slot(s), ${result.combiRefsRepointed} Combi Timbre(s)` +
-            (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
-        );
-        // A resolved duplicate changes Programs (this group shrinks/
-        // disappears) AND can repoint Combi Timbre/Set List references --
-        // every one of the coordinator's three tabs needs to re-fetch, not
-        // just this one, hence the coordinator's own reload rather than a
-        // local one.
-        await onNeedsFullReload();
-        // The opposite pane's own Library tables are a SEPARATE copy of this
-        // same data (each pane's createLibraryPanels() loads and caches
-        // independently) -- if it's showing this same dataset, it has no
-        // other way to learn the file just changed underneath it.
-        await onRefreshOppositeLibrary(getDatasetId());
-        // Repointed Set List slots need the Setlist tab's own cached
-        // entries refreshed too, in both panes -- same staleness class as
-        // pane-combi-editor.js's Combi rearrange gestures, see
-        // refreshSetlistEverywhere()'s own doc comment in pane.js.
-        if (result.setlistRefsRepointed > 0) await onSetlistRefsRepointed(getDatasetId());
+    for (const entry of group) {
+      const label = isProgram
+        ? formatBankNumber({ isProgram: true, bank: entry.bank, number: entry.number }, entry.bankType)
+        : formatBankNumber({ isProgram: false, bank: entry.bank, number: entry.number });
+
+      const navBtn = document.createElement("button");
+      navBtn.type = "button";
+      navBtn.className = "button is-small bank-filter-button";
+      navBtn.textContent = isProgram
+        ? `${label} (Combi ${entry.combiUsageCountAvailable ? `#${entry.combiUsageCount}` : "n/a"} / Set List #${entry.setlistUsageCount})`
+        : `${label} (Set List #${entry.setlistReferenceCount})`;
+      navBtn.title =
+        `Jump to ${label}. Shift+click: opposite pane. Shift+Cmd+click: opposite pane, ` +
+        "same coordinate, keep its own dataset.";
+      navBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        onJumpToInstrument({
+          isProgram,
+          bank: entry.bank,
+          number: entry.number,
+          from: null,
+          toOpposite: ev.shiftKey,
+          keepOppositeDataset: ev.metaKey,
+        });
       });
-      row.appendChild(btn);
+      row.appendChild(navBtn);
     }
     wrap.appendChild(row);
     td.appendChild(wrap);
@@ -594,11 +900,15 @@ function createDuplicatesPanel(
     return tr;
   }
 
-  function render() {
+  // "Same content, different position" -- one table shape shared by both
+  // sub-tabs now that Combi duplicate detection is real too (2026-08-25;
+  // `groups`/`isProgram`/`emptyMessage` let the same function serve either).
+  // Returns a DOM node (a table, or an empty-state message) rather than
+  // appending itself, matching renderNameCollisionTable() below so render()
+  // can place either kind of section the same way.
+  function renderExactDuplicatesTable(groups, isProgram, emptyMessage) {
     const needle = getFilterText().trim().toLowerCase();
-    panel.innerHTML = "";
-
-    const visibleGroups = duplicateGroups.filter((group) => {
+    const visibleGroups = groups.filter((group) => {
       const groupName = group[0].name || "(empty)";
       return !needle || groupName.toLowerCase().includes(needle);
     });
@@ -606,9 +916,8 @@ function createDuplicatesPanel(
     if (visibleGroups.length === 0) {
       const empty = document.createElement("div");
       empty.className = "usage-empty";
-      empty.textContent = "No byte-exact duplicate Programs found.";
-      panel.appendChild(empty);
-      return;
+      empty.textContent = emptyMessage;
+      return empty;
     }
 
     // Same Entry-row + `.editor-row` expand/collapse shape as the Programs/
@@ -619,16 +928,38 @@ function createDuplicatesPanel(
     table.innerHTML = colgroupHtml([8, 4]) + "<thead><tr><th>Name</th><th>Copies</th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
+    // Prefixed by kind so a Program group and a Combi group that happen to
+    // cover the exact same bank/number set (unlikely, but not impossible)
+    // don't collide in the shared expandedDuplicateKeys Set -- same idea
+    // expandedCollisionKeys below already uses for name-collision groups.
+    const keyPrefix = isProgram ? "p:" : "c:";
     for (const group of visibleGroups) {
       const groupName = group[0].name || "(empty)";
-      const key = group.map((p) => `${p.bank}-${p.number}`).join(",");
+      const key = keyPrefix + group.map((e) => `${e.bank}-${e.number}`).join(",");
       const isOpen = expandedDuplicateKeys.has(key);
 
       const tr = document.createElement("tr");
       const nameTd = document.createElement("td");
       nameTd.textContent = groupName;
       const countTd = document.createElement("td");
-      countTd.textContent = `${group.length} identical copies`;
+      countTd.className = "duplicate-group-count-cell";
+      const countLabel = document.createElement("span");
+      countLabel.textContent = `${group.length} identical copies`;
+      // "..." opens the resolve picker (renderResolvePicker() below) for
+      // exactly this group -- visible whether the row is expanded or not,
+      // per explicit request, so opening the picker doesn't need expanding
+      // first. Own click handler, not the row's -- stopPropagation() so it
+      // doesn't ALSO toggle expand/collapse.
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className = "button is-small duplicate-resolve-menu-button";
+      menuBtn.title = "Resolve duplicates in this group";
+      menuBtn.textContent = "⋯";  // horizontal ellipsis -- a compact "more actions" affordance
+      menuBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openResolvePicker(group, isProgram, /*requireByteExactMatch=*/true);
+      });
+      countTd.append(countLabel, menuBtn);
       tr.append(nameTd, countTd);
 
       tr.dataset.entryKey = key;
@@ -640,20 +971,298 @@ function createDuplicatesPanel(
       });
       tbody.appendChild(tr);
 
-      if (isOpen) tbody.appendChild(buildDuplicateGroupRow(group));
+      if (isOpen) tbody.appendChild(buildDuplicateGroupRow(group, isProgram));
     }
 
-    panel.appendChild(table);
+    return table;
+  }
+
+  // Programs now get a bank-type suffix ("Bass 1 (HD-1)") -- an HD-1 and an
+  // EXi Program sharing a name are two INDEPENDENT groups now
+  // (findProgramNameCollisions()'s own doc comment in PcgFile.h), so two
+  // groups can legitimately show the exact same bare name; the suffix is
+  // what tells them apart at a glance. Combis have no such distinction
+  // (group.bankType is always -1 there), so this is a no-op for them.
+  function nameCollisionGroupLabel(group, isProgram) {
+    const name = group.name || "(empty)";
+    if (!isProgram) return name;
+    const bankTypeName = PROGRAM_BANK_TYPE_NAMES[group.bankType];
+    return bankTypeName ? `${name} (${bankTypeName})` : name;
+  }
+
+  // One "Same name, different content" group's expanded detail -- one
+  // visually separated cluster of buttons per variant (style.css's
+  // .name-collision-variant + a rule between them), so entries that ARE
+  // byte-identical to each other read as one cluster and entries that
+  // genuinely differ read as separate ones -- the whole point of this
+  // check. The group's own title row (renderNameCollisionTable() below) has
+  // its own "..." resolve-picker menu now (2026-08-25 -- consolidating
+  // variants across this whole group, not just within one), but each
+  // individual badge here stays a plain navigation button, same click/
+  // Shift-click/Shift+Cmd-click convention as everywhere else -- there's
+  // still no per-badge write action, only the group-level picker.
+  function buildNameCollisionGroupRow(group, isProgram) {
+    const tr = document.createElement("tr");
+    tr.className = "editor-row";
+    const td = document.createElement("td");
+    td.colSpan = 2;
+
+    const wrap = document.createElement("div");
+    wrap.className = "duplicate-copies";
+    group.variants.forEach((variant, i) => {
+      const cluster = document.createElement("div");
+      cluster.className = "bank-filter-row name-collision-variant";
+      for (const m of variant.members) {
+        const label = isProgram
+          ? formatBankNumber({ isProgram: true, bank: m.bank, number: m.number }, m.bankType)
+          : formatBankNumber({ isProgram: false, bank: m.bank, number: m.number });
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "button is-small bank-filter-button";
+        badge.textContent = label;
+        badge.title =
+          `${label} -- variant ${i + 1} of ${group.variants.length} sharing the name "${group.name}". ` +
+          (variant.members.length > 1
+            ? `Byte-identical to the ${variant.members.length - 1} other entr${variant.members.length > 2 ? "ies" : "y"} in this same cluster. `
+            : "Its content differs from every other entry sharing this name. ") +
+          "Click to jump there. Shift+click: opposite pane. Shift+Cmd+click: opposite pane, same coordinate, keep its own dataset.";
+        badge.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          onJumpToInstrument({
+            isProgram,
+            bank: m.bank,
+            number: m.number,
+            from: null,
+            toOpposite: ev.shiftKey,
+            keepOppositeDataset: ev.metaKey,
+          });
+        });
+        cluster.appendChild(badge);
+      }
+      wrap.appendChild(cluster);
+    });
+    td.appendChild(wrap);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function renderNameCollisionTable(groups, isProgram, emptyMessage) {
+    const needle = getFilterText().trim().toLowerCase();
+    const visibleGroups = groups.filter((g) => !needle || g.name.toLowerCase().includes(needle));
+
+    if (visibleGroups.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "usage-empty";
+      empty.textContent = emptyMessage;
+      return empty;
+    }
+
+    const table = document.createElement("table");
+    table.className = "table is-fullwidth is-hoverable is-narrow";
+    table.innerHTML = colgroupHtml([8, 4]) + "<thead><tr><th>Name</th><th>Variants</th></tr></thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody");
+
+    for (const group of visibleGroups) {
+      const totalMembers = group.variants.reduce((sum, v) => sum + v.members.length, 0);
+      // Includes bankType now (2026-08-25) -- an HD-1 "Bass 1" and an EXi
+      // "Bass 1" are two INDEPENDENT groups now that grouping itself splits
+      // on bank type (findProgramNameCollisions()'s own doc comment in
+      // PcgFile.h), so the plain name alone is no longer a unique key here.
+      // Always -1 for Combi groups, so this is a no-op there.
+      const key = `${isProgram ? "p" : "c"}:${group.bankType}:${group.name}`;
+      const isOpen = expandedCollisionKeys.has(key);
+
+      const tr = document.createElement("tr");
+      const nameTd = document.createElement("td");
+      nameTd.textContent = nameCollisionGroupLabel(group, isProgram);
+      const countTd = document.createElement("td");
+      countTd.className = "duplicate-group-count-cell";
+      const countLabel = document.createElement("span");
+      countLabel.textContent = `${group.variants.length} variants, ${totalMembers} entries`;
+      // "..." opens the SAME resolve-picker sidebar the byte-exact table's
+      // own trigger uses (2026-08-25, per direct request: "Same name,
+      // different content" entries often really are minor modifications of
+      // the same sound, worth being able to consolidate the same way) --
+      // flattened across ALL this group's variants (not just one), since
+      // consolidating across variants is the whole point here.
+      // requireByteExactMatch=false: the picker must never require these
+      // entries to be byte-identical (they're expected to differ) and must
+      // never clear a folded-in entry's own bytes (it's genuinely
+      // different, non-recoverable content -- see resolvePicker's own doc
+      // comment above for the full reasoning).
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className = "button is-small duplicate-resolve-menu-button";
+      menuBtn.title = "Consolidate variants in this group";
+      menuBtn.textContent = "⋯";
+      menuBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openResolvePicker(
+          group.variants.flatMap((v) => v.members),
+          isProgram,
+          /*requireByteExactMatch=*/false,
+          { name: group.name, bankType: group.bankType }
+        );
+      });
+      countTd.append(countLabel, menuBtn);
+      tr.append(nameTd, countTd);
+
+      if (isOpen) tr.classList.add("is-selected");
+      tr.addEventListener("click", () => {
+        if (expandedCollisionKeys.has(key)) expandedCollisionKeys.delete(key);
+        else expandedCollisionKeys.add(key);
+        render();
+      });
+      tbody.appendChild(tr);
+
+      if (isOpen) tbody.appendChild(buildNameCollisionGroupRow(group, isProgram));
+    }
+
+    return table;
+  }
+
+  // The two views available on EITHER sub-tab, chosen via the dropdown
+  // render() builds below -- kept as one lookup table rather than inlined
+  // per-branch logic so both sub-tabs (Programs/Combi) share exactly the
+  // same option list/order.
+  const DUPLICATE_VIEWS = [
+    ["content", "Same content, different location"],
+    ["name", "Same name, different content"],
+  ];
+
+  function render() {
+    panel.innerHTML = "";
+
+    const body = document.createElement("div");
+    body.className = "duplicates-body";
+
+    // Vertical (rotated 90 degrees, see style.css) sub-tab strip -- Bulma's
+    // own .is-link "pressed" look, remapped to this app's own --editor-
+    // accent (darkorange) rather than Bulma's default blue, per explicit
+    // request -- see style.css's shared .is-link override comment (also
+    // used by bank-filter/pane-visibility buttons).
+    const subtabs = document.createElement("div");
+    subtabs.className = "duplicates-subtabs";
+    for (const [key, label] of [
+      ["programs", "Programs"],
+      ["combi", "Combi"],
+    ]) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "button is-small duplicates-subtab-button" + (activeSubTab === key ? " is-link" : "");
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        if (activeSubTab === key) return;
+        activeSubTab = key;
+        render();
+      });
+      subtabs.appendChild(btn);
+    }
+
+    const content = document.createElement("div");
+    content.className = "duplicates-content";
+
+    // Replaces what used to be two always-stacked sections (2026-08-25, per
+    // explicit request) -- a dropdown per sub-tab picks which one view
+    // shows, the same "Same content, different location" / "Same name,
+    // different content" wording the old section headings used, now as
+    // <option> labels doing double duty as the section's own heading.
+    const viewSelect = document.createElement("select");
+    viewSelect.className = "duplicates-view-select";
+    for (const [value, label] of DUPLICATE_VIEWS) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      viewSelect.appendChild(opt);
+    }
+    viewSelect.value = activeView[activeSubTab];
+    viewSelect.addEventListener("change", () => {
+      activeView[activeSubTab] = viewSelect.value;
+      render();
+    });
+    const viewSelectWrap = document.createElement("div");
+    viewSelectWrap.className = "select is-small is-fullwidth duplicates-view-select-wrap";
+    viewSelectWrap.appendChild(viewSelect);
+    content.appendChild(viewSelectWrap);
+
+    const isProgram = activeSubTab === "programs";
+    const table =
+      activeView[activeSubTab] === "content"
+        ? renderExactDuplicatesTable(
+            isProgram ? duplicateGroups : combiDuplicateGroups,
+            isProgram,
+            isProgram ? "No byte-exact duplicate Programs found." : "No byte-exact duplicate Combis found."
+          )
+        : renderNameCollisionTable(
+            isProgram ? programNameCollisions : combiNameCollisions,
+            isProgram,
+            isProgram
+              ? "No Programs share a name with different content."
+              : "No Combis share a name with different content."
+          );
+    content.appendChild(table);
+
+    body.append(subtabs, content);
+    panel.appendChild(body);
+  }
+
+  // Calls window[fnName](...args), never throwing/rejecting -- treats a
+  // missing binding (an older native build without it yet) or a genuine
+  // failure the same way, as "nothing found." Reported directly: pane.js's
+  // loadDataset() awaits setlistPanel.onDatasetChanged() then
+  // libraryPanels.onDatasetChanged() (which reaches fetchDuplicates()
+  // below) BEFORE its own updateCategoryTabAvailability() call -- the one
+  // thing that actually enables ANY category tab. An uncaught rejection
+  // here used to abort that whole chain, leaving Setlist/Programs/Combis
+  // ALL stuck disabled, not just Duplicates -- confirmed by tracing
+  // loadDataset()'s own sequential awaits, not guessed. One still-
+  // experimental fetch failing must never be able to take down totally
+  // unrelated tabs.
+  async function safeFetch(fnName, ...args) {
+    try {
+      const fn = window[fnName];
+      if (typeof fn !== "function") {
+        log(`[Library:Duplicates] window.${fnName} isn't available (older build?) -- treating as empty.`);
+        return [];
+      }
+      return await fn(...args);
+    } catch (err) {
+      log(`[Library:Duplicates] ${fnName} failed: ${err}`);
+      return [];
+    }
   }
 
   async function fetchDuplicates() {
     const datasetId = getDatasetId();
-    duplicateGroups = datasetId == null ? [] : await window.findDuplicatePrograms(datasetId);
-    if (datasetId != null) log(`[Library:Duplicates] Loaded dataset ${datasetId}: ${duplicateGroups.length} duplicate groups.`);
+    if (datasetId == null) {
+      duplicateGroups = [];
+      combiDuplicateGroups = [];
+      programNameCollisions = [];
+      combiNameCollisions = [];
+      return;
+    }
+    [duplicateGroups, combiDuplicateGroups, programNameCollisions, combiNameCollisions] = await Promise.all([
+      safeFetch("findDuplicatePrograms", datasetId),
+      safeFetch("findDuplicateCombis", datasetId),
+      safeFetch("findProgramNameCollisions", datasetId),
+      safeFetch("findCombiNameCollisions", datasetId),
+    ]);
+    log(
+      `[Library:Duplicates] Loaded dataset ${datasetId}: ${duplicateGroups.length} Program duplicate group(s), ` +
+        `${combiDuplicateGroups.length} Combi duplicate group(s), ${programNameCollisions.length} Program name ` +
+        `clash(es), ${combiNameCollisions.length} Combi name clash(es).`
+    );
   }
 
   async function onDatasetChanged() {
     expandedDuplicateKeys.clear();
+    expandedCollisionKeys.clear();
+    // A genuinely NEW dataset (unlike refresh() below, called after e.g. a
+    // resolve on the SAME dataset -- see pane.js's load()'s own doc
+    // comment) -- any open resolve picker's `group` is a stale reference
+    // into the OLD dataset's now-irrelevant data, so close it rather than
+    // leave it showing meaningless entries.
+    closeResolvePicker();
     await fetchDuplicates();
     render();
   }
@@ -664,8 +1273,14 @@ function createDuplicatesPanel(
   }
 
   // getGroupCount exposed so pane.js's own updateCategoryTabAvailability()
-  // can disable the Duplicates tab for a dataset with no duplicate groups
-  // at all -- the common case for most real files, unlike Setlist/Programs/
-  // Combis actually being genuinely empty.
-  return { onDatasetChanged, refresh, render, getGroupCount: () => duplicateGroups.length };
+  // can disable the Duplicates tab for a dataset with nothing to show on
+  // EITHER sub-tab at all -- the common case for most real files, unlike
+  // Setlist/Programs/Combis actually being genuinely empty.
+  return {
+    onDatasetChanged,
+    refresh,
+    render,
+    getGroupCount: () =>
+      duplicateGroups.length + combiDuplicateGroups.length + programNameCollisions.length + combiNameCollisions.length,
+  };
 }

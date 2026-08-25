@@ -935,23 +935,27 @@ td.has-comment {
   width: 100%;
 }
 
-/* Bank-filter buttons and the pane-visibility bar (Left only/Both/Right
-   only, index.html) both reuse Bulma's own `.is-link` "pressed/active"
-   look, which defaults to Bulma's blue -- switched to this app's own
-   --editor-accent (darkorange, the same color a Setlist row's own "editor
-   is open" left-border already uses, and the active category tab above)
-   for one consistent accent color throughout, per direct request. Scoped
-   to these two specific `.is-link` uses, not a global --bulma-link remap --
-   `.is-link` is reused elsewhere for unrelated things (Font size/Color
-   swatch/cross-dataset-panel/Comment Apply buttons) that should stay
-   Bulma's default blue. Text color is this app's own dark background
-   shade (already used as the cross-dataset panel's own background, see
-   .cross-dataset-panel above) rather than white, for better contrast
-   against a mid-brightness orange -- same idea as Bulma's own semantic
-   colors pairing a bright background with a DARK (not white) invert text.
+/* Bank-filter buttons, the pane-visibility bar (Left only/Both/Right only,
+   index.html), and the Duplicates panel's vertical sub-tab strip all reuse
+   Bulma's own `.is-link` "pressed/active" look, which defaults to Bulma's
+   blue -- switched to this app's own --editor-accent (darkorange, the same
+   color a Setlist row's own "editor is open" left-border already uses, and
+   the active category tab above) for one consistent accent color throughout,
+   per direct request (2026-08-25 addition: the Duplicates sub-tabs, so its
+   selected Programs/Combi button matches this same accent instead of
+   standing out in Bulma's default blue). Scoped to these specific `.is-link`
+   uses, not a global --bulma-link remap -- `.is-link` is reused elsewhere
+   for unrelated things (Font size/Color swatch/cross-dataset-panel/Comment
+   Apply buttons) that should stay Bulma's default blue. Text color is this
+   app's own dark background shade (already used as the cross-dataset
+   panel's own background, see .cross-dataset-panel above) rather than
+   white, for better contrast against a mid-brightness orange -- same idea
+   as Bulma's own semantic colors pairing a bright background with a DARK
+   (not white) invert text.
 */
 .bank-filter-button.is-link,
-.pane-visibility-button.is-link {
+.pane-visibility-button.is-link,
+.duplicates-subtab-button.is-link {
   background-color: var(--editor-accent);
   border-color: var(--editor-accent);
   color: #1b1d22;
@@ -1091,6 +1095,95 @@ td.has-comment {
    targets. */
 .duplicate-copies .bank-filter-row {
   grid-template-columns: repeat(auto-fit, minmax(max(14em, 100%/4), 1fr));
+}
+
+/* Duplicates' own two vertical sub-tabs (Programs / Combi) -- rotated 90
+   degrees, per direct request, since this pane is already tight on
+   horizontal width (two side-by-side panes) and a normal horizontal tab
+   row would compete with the table itself for it. `writing-mode:
+   vertical-rl` + `rotate(180deg)` is the standard trick for a label that
+   reads top-to-bottom without looking upside down (a bare `vertical-rl`
+   alone reads bottom-to-top) -- kept as two separate declarations rather
+   than `writing-mode: sideways-lr` (which reads the right direction on its
+   own) since that mode has weaker WebKit support, and this app only ever
+   runs inside a WebKit-based WebView (see STATE.md/docs/content/building
+   -- WKWebView on macOS, WebKit2GTK on Linux). */
+.duplicates-body {
+  display: flex;
+  height: 100%;
+  gap: 8px;
+}
+
+.duplicates-subtabs {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.duplicates-subtab-button {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  height: auto;
+  padding: 10px 6px;
+}
+
+.duplicates-content {
+  flex: 1;
+  min-width: 0; /* lets the table shrink/scroll instead of pushing the sub-tabs off-screen */
+  overflow-y: auto;
+}
+
+/* Picks which of the two views (Same content, different location / Same
+   name, different content) the active sub-tab shows -- replaces what used
+   to be two always-stacked ".duplicates-section" blocks (2026-08-25, per
+   explicit request), so its <option> labels now do double duty as the
+   section's own heading. */
+.duplicates-view-select-wrap {
+  margin-bottom: 12px;
+}
+
+/* A duplicate group's title row (renderExactDuplicatesTable() in
+   pane-program-editor.js) -- the "N identical copies" label beside the
+   "..." button that opens the resolve-picker sidebar (2026-08-25, replaces
+   an earlier per-copy "Keep only this" button -- resolving now always goes
+   through that sidebar, never a bare row click). */
+.duplicate-group-count-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.duplicate-resolve-menu-button {
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* The resolve-picker sidebar itself -- reuses combi-cross-dataset-panel.js's
+   own `.cross-dataset-panel*` shell (backdrop, slide-in, header/body/
+   footer) as-is rather than inventing a second one, just built with plain
+   DOM (createDuplicatesPanel() in pane-program-editor.js) instead of that
+   file's lit-html PILOT, to stay consistent with the rest of this
+   already-plain-DOM panel. Only the table inside needs its own rule --
+   Src/Dupl are narrow radio/checkbox columns, Slot gets the rest. */
+.duplicate-resolve-table th:first-child,
+.duplicate-resolve-table th:nth-child(2),
+.duplicate-resolve-table td:first-child,
+.duplicate-resolve-table td:nth-child(2) {
+  width: 3em;
+  text-align: center;
+}
+
+/* One "Same name, different content" group's variant clusters -- a rule
+   between each (not around every one, so two ADJACENT clusters read as
+   visually separated from each other without every individual cluster
+   getting a boxed-in look). */
+.name-collision-variant + .name-collision-variant {
+  border-top: 1px dashed var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
 }
 
 /* Transient popups -- app.js's showToast(). Fixed to the viewport (not a

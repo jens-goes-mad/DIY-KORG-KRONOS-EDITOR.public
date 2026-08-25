@@ -4638,6 +4638,363 @@ App/UI:
         signing needed for an already-local copy -> launches fine): quarantine is what
         actually triggers the strict check on a fresh browser download, not the missing
         signature by itself.
+  67. **BUILT (2026-08-24)**: "Duplicates" now covers the inverse question too, per direct
+      request -- Programs AND Combis sharing a **name** but NOT byte-identical (e.g. two
+      Programs both called "Bass 1" that turned out to actually be different), alongside
+      the original byte-exact check, which stays exactly as it was.
+      - **Combi got content hashing for the first time** -- `CombiDecoder.h`'s own doc
+        comment used to say "No contentHash -- byte-exact duplicate detection was only
+        requested for Programs." New `hashCombiRecord()` (`CombiDecoder.h`/`.cpp`,
+        identical FNV-1a algorithm to `hashProgramRecord()`, kept as its own function
+        rather than calling that one on Combi bytes -- this project's usual duplication-
+        over-a-premature-shared-abstraction convention between the two otherwise-
+        independent decoders) + new `CombiInfo::contentHash` (`PcgFile.h`), computed at
+        load (the CBK1 parse loop) and in the existing `refreshCombiInfo()` (already the
+        one central refresh point every Combi write path already routes through --
+        `swapCombis`/`moveCombiWithinBank`/`moveCombiToBank`/`copyCombi`/cross-dataset
+        copy all needed zero additional changes).
+      - New `PcgFile::NameCollisionGroup`/`NameCollisionVariant` (`PcgFile.h`) + two
+        finders, `findProgramNameCollisions()`/`findCombiNameCollisions()` -- group by
+        name, then by contentHash within each name; a name where every entry shares ONE
+        hash is a plain duplicate (already covered by `findDuplicatePrograms()`), not a
+        collision, so only names with 2+ distinct hashes are returned. Placeholder-named
+        slots (`looksLikeEmptyProgramName()`/`looksLikeEmptyCombiName()`, already existed)
+        are excluded first -- every untouched slot shares the same generic name, which
+        would otherwise drown every real collision in one meaningless giant group. The
+        actual grouping mechanics (shared, entity-agnostic) live in one internal
+        `groupNameCollisions()` helper; only which entries feed in and which empty-name
+        filter applies differs between the two public finders, kept as thin wrappers
+        rather than duplicating the grouping logic itself a second time.
+      - `EditorBridge::findProgramNameCollisions()`/`findCombiNameCollisions()`
+        (`[datasetId] -> [{name, variants: [{members: [ProgramInfo/CombiInfo...]}]}]`) +
+        `main.cpp` bindings mirror `findDuplicatePrograms()`'s existing shape -- each
+        member is a full `programToValue()`/`combiToValue()` object (re-decoded via the
+        existing `decodeProgram()`/`decodeCombi()`), not a bare bank/number pair, so the
+        frontend can render them the same way.
+      - **UI, per direct discussion on placement**: two vertical sub-tabs inside the
+        existing Duplicates category tab (not a new top-level tab, not a second table
+        bolted onto the old one) -- "Programs" (both checks: the original byte-exact
+        table, and the new name-collision one) and "Combi" (name-collision only, since
+        Combi never had a byte-exact check requested). Rotated 90 degrees
+        (`writing-mode: vertical-rl` + `rotate(180deg)`, style.css's `.duplicates-subtab-
+        button`) per direct follow-up request -- the pane is already tight on horizontal
+        width (two side-by-side panes), and a normal horizontal tab row would compete
+        with the table itself for it. The name-collision table (`pane-program-
+        editor.js`'s `renderNameCollisionTable()`/`buildNameCollisionGroupRow()`) is
+        deliberately **read-only** -- unlike a byte-exact duplicate, there's no safe way
+        to auto-resolve two entries that genuinely have different content, so each
+        variant renders as its own visually separated cluster (a dashed divider between
+        clusters, `.name-collision-variant`) with plain, non-interactive labels instead
+        of a write-triggering button.
+      - `mock_bridge.js`: new `findProgramNameCollisions()`/`findCombiNameCollisions()`,
+        sharing one internal `findNameCollisions()` helper. Mock data has no real bytes
+        to hash, so `bank` stands in as the "different content" signal one level past
+        what the existing `findDuplicatePrograms()` mock already does (name-only) --
+        `makeFakePrograms()`/`makeFakeCombis()` both already reuse the identical name
+        list per bank, so real bank0-vs-bank1 collisions exist in the fixture data with
+        no changes needed there.
+      - **Verified for real**: new `testFindNameCollisions()` (`tests/pcg_file_test.cpp`)
+        against a dedicated fixture (`buildNameCollisionFixture()`) built the same
+        "poke a byte outside the name field" way `buildSyntheticPcgFile()`'s own
+        duplicate-Program setup already does -- asserts exactly one Program collision
+        and one Combi collision, each with the right 2-variant/{2,1}-member shape, and
+        that the unique-named and placeholder-named entries are correctly excluded. Full
+        `cmake --build` (both the real `pcg_file_test` target and `kronos_editor` itself)
+        clean, `pcg_file_test` all passing. `EditorBridge.cpp`/`main.cpp` both
+        `-fsyntax-only` clean against the real CHOC headers. A real Debug build was
+        launched and confirmed it starts up without crashing; the frontend JS itself
+        (`pane-program-editor.js`'s new sub-tab rendering, `mock_bridge.js`) is **not**
+        verified live against actual UI interaction -- no `node` in this environment
+        either, same gap as every other frontend-only change this project has hit.
+        Needs a real smoke test: open a file with a genuine name collision, confirm the
+        vertical sub-tabs render correctly, expand a collision group, confirm the
+        variant clusters are visually distinct.
+  68. **BUILT (2026-08-25)**: follow-up to #67 above, per direct 4-part request -- Combi
+      got its own byte-exact duplicate check for symmetry with Programs, the Duplicates
+      panel's two views became a dropdown instead of always-stacked sections, every entry
+      in every Duplicates table became a real jump button, and the vertical sub-tab strip's
+      active-button color switched from Bulma's default blue to this app's own
+      `--editor-accent` (darkorange).
+      - **Combi byte-exact duplicates, backend**: `PcgFile::findDuplicateCombis()`
+        (`PcgFile.h`/`.cpp`) groups by the `contentHash` #67 already added to `CombiInfo`,
+        same shape as the existing `findDuplicatePrograms()`. `PcgFile::
+        resolveDuplicateCombis(keepBank, keepNumber)` is **deliberately NOT symmetric**
+        with `resolveDuplicates()` (Programs): it only repoints Set List references to the
+        kept copy, and never clears the *other* duplicates' own bytes -- there's no
+        confirmed "Init Combi" byte template to reset them to yet (unlike Programs, which
+        has real captured `Init-Program-HD1.raw`/`Init-Program-EXi.raw` files), and this
+        project's own "no guessing, ever" rule rules out fabricating one. `EditorBridge::
+        findDuplicateCombis()`/`resolveDuplicateCombis()` + `main.cpp` bindings mirror the
+        Program versions' shape (`combiToValue()` + `setlistReferenceCount`/
+        `setlistUsages`, matching `listCombis()`'s own augmentation pattern).
+      - **Verified for real**: new `testFindAndResolveDuplicateCombis()` (`tests/
+        pcg_file_test.cpp`) against `buildCombiDuplicateFixture()`. Hit and fixed a real
+        bug while building the fixture: an all-zero/padding Set List slot decodes as
+        `isProgram=false, bank=0, number=0` -- identical to a genuine reference to Combi
+        bank0/number0 -- so an initial fixture using bank0/number0 as the "kept" target
+        got `setlistRefsRepointed=127` (126 zero-padding slots + 1 real reference) instead
+        of the expected `1`. Fixed by moving the fixture off bank0/number0 entirely,
+        matching a convention already established (if previously undocumented) elsewhere
+        in this same test file (`testResolveDuplicates()`, `buildCombiRearrangeFixture()`).
+        Also hit a real compile error (`unknown type name 'CombiRearrangeResult'`) from
+        declaring `resolveDuplicateCombis()` before that nested struct's own definition in
+        `PcgFile.h` -- fixed by moving the declaration after it. Full `cmake --build`
+        (`pcg_file_test` + `kronos_editor`) clean, `pcg_file_test`: "All checks passed".
+      - **Frontend redesign** (`pane-program-editor.js`'s `createDuplicatesPanel()`): the
+        two views per sub-tab (Programs/Combi) -- "Same content, different location" /
+        "Same name, different content" -- used to render as two always-visible stacked
+        sections; now a single `<select>` dropdown (Bulma's own `.select` wrapper, same
+        pattern as `pane-combi-editor.js`'s existing Set List filter dropdown) picks one at
+        a time, per explicit request, tracked per-sub-tab (`activeView = { programs, combi
+        }`) so switching sub-tabs doesn't reset which view you had open. Every entry in
+        both kinds of table (byte-exact copies AND name-collision variants) is now a real
+        navigation button wired to `onJumpToInstrument` (newly threaded through from
+        `pane.js`'s `createLibraryPanels()` -- it was being built and passed to
+        `createProgramsPanel()`/`createCombisPanel()` already, but never to
+        `createDuplicatesPanel()`), same click/Shift+click (opposite pane)/Shift+Cmd+click
+        (opposite pane, same coordinate, keep its dataset) convention as every other
+        cross-reference in this app, with `from: null` (there's no single originating row
+        to record -- a duplicate-group listing isn't itself a jump target the way a
+        Setlist song or Combi Timbre row is). The byte-exact tables' old "click a copy to
+        resolve" gesture is now **two separate buttons per copy** (`.duplicate-copy-
+        actions` in style.css) -- the copy's own label navigates, a distinct **"Keep only
+        this"** button is the actual (still immediate, no-confirm) write action -- so
+        Duplicates' navigation isn't itself a destructive click, unlike before.
+      - **Color**: `.duplicates-subtab-button.is-link` added to style.css's existing
+        shared override rule (the same one that already remaps `.bank-filter-button.is-
+        link`/`.pane-visibility-button.is-link` off Bulma's default blue) rather than a new
+        rule of its own -- one comment block now documents all three scoped uses of
+        `--editor-accent` together instead of duplicating the reasoning a third time.
+      - `mock_bridge.js`: new `findDuplicateCombis()` (mirrors `findDuplicatePrograms()`'s
+        own mock simplification -- `name` stands in for real byte-identical content, since
+        mock data has no real bytes to hash) and `resolveDuplicateCombis()` (mirrors
+        `resolveDuplicateProgram()`'s mock but Set-List-repoint-only, matching the real
+        backend's deliberate asymmetry above).
+      - **Verified for real**: full `cmake --build` (`pcg_file_test` + `kronos_editor`)
+        clean, `pcg_file_test`: "All checks passed". All three touched frontend files
+        (`pane.js`, `pane-program-editor.js`, `mock_bridge.js`) parsed clean via `osascript
+        -l JavaScript`'s `new Function(...)` (no `node` in this environment, same
+        workaround used before). A real Debug build was launched and confirmed it starts
+        up without crashing. **Not yet verified live against actual UI interaction** --
+        the dropdown's rendering, the new jump/Keep-only-this button split, and the
+        vertical sub-tab color all still need a real hands-on smoke test in the running
+        app, same gap #67 above flagged and never got a follow-up check on either.
+      - Docs updated to match: `docs/content/guide/prog/index.md`'s Duplicates section
+        (both sub-sections now describe the jump-button/Keep-only-this split), `docs/
+        content/guide/combi/index.md`'s Duplicates section rewritten from "same name only"
+        to cover both checks (its own byte-exact one is new), `docs/content/guide/
+        _index.md`'s one-line Duplicates summary broadened from "Programs" to "Programs
+        *and* Combis".
+  69. **BUILT (2026-08-25)**: same-day follow-up to #68 above, confirmed working by the
+      project owner ("Itried it and it works perfect") who then proposed a UI change --
+      the per-copy "Keep only this" button (#68) always resolved the WHOLE group at once;
+      replaced with a resolve-picker **side panel** that lets the user choose exactly
+      WHICH duplicates to fold in, per group, leaving any others deliberately untouched
+      (e.g. an intentional backup copy someone doesn't want auto-cleared).
+      - **Backend: selective resolve, not whole-group**. `PcgFile::resolveDuplicates()`/
+        `resolveDuplicateCombis()` (`PcgFile.h`/`.cpp`) both gained a new `const
+        std::vector<std::pair<int, int>>& targets` parameter, REPLACING their old "search
+        the whole file for everything sharing this hash" behavior -- the caller now names
+        exactly which duplicates to act on. Both validate every named target up front,
+        all-or-nothing: it must exist, AND its `contentHash` must actually match the kept
+        copy's own -- **the real trust boundary against the JS frontend** (CLAUDE.md's
+        "validate at system boundaries" rule), not merely trusted because the picker UI
+        only ever offers same-group entries. A single bad target rejects the whole call,
+        nothing written, consistent with the existing template-size all-or-nothing check.
+        `EditorBridge::resolveDuplicateProgram()`/`resolveDuplicateCombis()` gained a
+        matching 4th JS arg (`targets`, an array of `{bank, number}`), parsed by a new
+        `targetsArg()` helper (`EditorBridge.cpp`) mirroring the existing `placementsArg()`
+        pattern for the cross-dataset Combi copy panel's own array-of-objects arg.
+      - Hit and fixed a real portability issue mid-build: capturing a structured binding
+        (`for (const auto& [bank, number] : targets)`) inside a lambda is a C++20
+        extension, not valid C++17 -- `clang++` warned (`-Wc++20-extensions`) on first
+        compile. Fixed by unpacking into two plain named locals (`targetBank`/
+        `targetNumber`) before the lambda, in both `resolveDuplicates()` and
+        `resolveDuplicateCombis()`; rebuilt clean, zero warnings.
+      - **Verified for real**: existing `testResolveDuplicates()`/
+        `testFindAndResolveDuplicateCombis()` call sites updated to the new signature
+        (passing the SAME targets the old auto-search would have found, preserving prior
+        coverage) plus two genuinely new checks: `testResolveDuplicates()` gained a
+        hash-mismatch-rejection case (bundling a real duplicate with one non-duplicate
+        target in the same call -- confirms NEITHER gets touched, all-or-nothing). A new
+        dedicated fixture, `buildCombiDuplicateTrioFixture()` (three byte-identical
+        Combis, not two -- the existing `buildCombiDuplicateFixture()` had no room to
+        prove "leaves an un-named duplicate alone"), backs a new
+        `testResolveDuplicateCombisSelective()`: resolving only ONE of two duplicates
+        confirms the other's Set List reference AND content are both untouched, and that
+        `findDuplicateCombis()` afterward still reports it as part of a byte-exact group
+        (Combi resolve never clears bytes, so content-hash grouping is unaffected by
+        which references have moved -- confirmed by an assertion that initially FAILED
+        with the wrong expected group size until this was reasoned through, not guessed).
+        Full `cmake --build` (`pcg_file_test` + `kronos_editor`) clean, `pcg_file_test`:
+        "All checks passed".
+      - **Frontend redesign** (`pane-program-editor.js`'s `createDuplicatesPanel()`): the
+        byte-exact tables' per-copy row is back to a single jump button (no write action
+        on a row at all now) -- `buildDuplicateGroupRow()` lost its "Keep only this"
+        button entirely. In its place, each group's own title row (`renderExact-
+        DuplicatesTable()`) gained a "⋯" button (visible whether the group is expanded or
+        not) that opens a new resolve-picker side panel: one row per copy in that group,
+        a radio (`Src` -- the copy to keep) and a checkbox (`Dupl` -- disabled on
+        whichever row is currently Src) per row, a `Resolve` button that only appears once
+        a Src and 1+ Dupl are chosen. Built with **plain DOM**, not lit-html -- deliberate
+        call: `combi-cross-dataset-panel.js` established lit-html for its own slide-in
+        panel (see its own PILOT comment), but everything else in this already-plain-DOM
+        Duplicates panel would have needed a THIRD near-duplicate lazy-lit-html-loader
+        copy (STATE.md's own entry 60 flagged "worth a deliberate look if a third file
+        ever needs lit-html the same way" -- this file hitting that exact trigger is
+        exactly why it's flagged here, not silently done either way) to gain nothing --
+        the panel's actual behavior (radio/checkbox state, conditional Resolve button) is
+        no harder to express with this file's own existing imperative
+        createElement()-plus-`render()`-on-change style than with lit-html. **Reused the
+        cross-dataset panel's own CSS shell as-is** (`.cross-dataset-panel`/`-backdrop`/
+        `-header`/`-title`/`-close`/`-body`/`-footer`, style.css) rather than inventing a
+        second one -- only a few new rules were needed (`.duplicate-group-count-cell`,
+        `.duplicate-resolve-menu-button`, `.duplicate-resolve-table`'s narrow Src/Dupl
+        columns), since the shell itself is generic (full-viewport slide-in, not tied to
+        the cross-dataset copy's own two-pane concept) and this feature reuses its own
+        `slideDirectionFor()`-equivalent logic (nearest edge of THIS pane, via
+        `panel.closest(".pane")`) rather than that file's two-pane version. After a
+        resolve, the picker re-syncs itself against the freshly re-fetched
+        `duplicateGroups`/`combiDuplicateGroups` (not a locally-patched guess) and stays
+        open -- per explicit request -- closing itself only if the kept copy no longer
+        shows up as a duplicate of anything at all. Closes automatically on a genuine
+        dataset switch (`onDatasetChanged()`, not `refresh()` -- confirmed these are
+        different call paths in `pane.js`'s own `load({resetFilters})`, so a resolve's
+        own reload-and-stay-open never gets undone by this).
+      - `mock_bridge.js`: `resolveDuplicateProgram()`/`resolveDuplicateCombis()` mocks
+        updated to accept and honor the same explicit `targets` array (only the named
+        entries get touched, same hash/existence validation in mock terms as the real
+        backend), replacing their old "clear every same-name entry" version.
+      - **Verified for real**: full `cmake --build` (`pcg_file_test` + `kronos_editor`)
+        clean, tests passing, all three touched frontend files parsed clean via
+        `osascript -l JavaScript` (no `node` in this environment). A real Debug build was
+        launched twice (before and after the frontend changes) and confirmed it starts up
+        without crashing both times. **Live UI interaction still not verified** in this
+        session (no browser/screenshot tooling available here) -- the resolve picker's
+        actual rendering, radio/checkbox behavior, and slide-in positioning all still need
+        a real hands-on smoke test, same repeatedly-noted gap as #67/#68 above.
+      - Docs updated again: `docs/content/guide/prog/index.md`'s "Same content, different
+        location" section rewritten for the picker (no more "Keep only this" per copy),
+        `docs/content/guide/combi/index.md`'s own version updated the same way plus its
+        Combi-specific "nothing gets cleared, so it can show up again for a later pass"
+        caveat.
+      - **Private-repo note only, nothing built**: per direct request, recorded a new
+        "OPEN:" idea at the end of `private/diy-korg-kronos-editor/STATE.md` -- once that
+        repo's own (not-yet-built) MIDI SysEx transport layer exists, let the user send a
+        single note to a real KRONOS for either variant of a "Same name, different
+        content" entry, to decide by ear which one is genuine rather than by eye alone.
+        Explicitly recorded as an unshaped idea (no message format, no UI, no decision on
+        which repo it would live in), not a design.
+  70. **BUILT (2026-08-25)**: same-day follow-up to #69 above, from two more pieces of
+      direct feedback. First: "Why uses 'Same name, different content' a different UI...
+      can we treat both the same?" -- answered (grouping by name alone mixes genuinely-
+      different content across variant clusters, unsafe to offer the same picker on
+      without scoping it correctly), which led directly to the second, larger ask: "For
+      all other programs 'Same name, different content'... sometimes can be consolidated
+      in the same way like 'Same content different location'" -- confirmed via
+      `AskUserQuestion` that consolidating a genuinely-different variant must NEVER clear
+      the non-kept variant's own bytes (only #68's byte-exact flow gets to do that, since
+      it's provably lossless there) -- "Leave slot untouched" chosen over full parity.
+      Also, independently: "Same name, different content should consider the underlying
+      category (EXi, HD-1) too... it's clearly a different sound and name matches by
+      accident" -- a real bug in #67's original grouping.
+      - **Bug fix: name-collision grouping is now bank-type-aware for Programs**.
+        `PcgFile::NameCollisionGroup` (`PcgFile.h`) gained an `int bankType = -1` field
+        (a real `kronos::ProgramBankType` for a Program group, always -1 -- meaning "no
+        such distinction" -- for a Combi group). The shared internal `groupNameCollisions()`
+        helper (`PcgFile.cpp`) now groups by `std::map<std::pair<std::string, int>, ...>`
+        (name + bankType) instead of name alone -- an HD-1 "Bass 1" and an EXi "Bass 1" are
+        now two INDEPENDENT groups (each still needs its own 2+ distinct hashes to be
+        reported at all), not one spurious cross-engine collision. `findCombiNameCollisions()`
+        passes `bankType=-1` for every entry, so Combis keep grouping by name alone,
+        unaffected. `EditorBridge::findProgramNameCollisions()`/`findCombiNameCollisions()`
+        now also set `bankType` on the returned group value. `mock_bridge.js`'s own
+        `findNameCollisions()` had the EXACT same bug in mock terms (`makeFakePrograms()`'s
+        bank 0 = HD-1 / bank 1 = EXi convention reuses one name list per bank, so nearly
+        every fake Program name used to register as a spurious collision) -- fixed the same
+        way, keyed by `${name} ${bankType ?? -1}` (the `?? -1` makes it a no-op for Combi
+        entries, which have no `bankType` field at all). **Net effect in mock/browser
+        mode**: the Programs "Same name, different content" table now correctly shows
+        (near-)empty for the stock demo data, since the fixture's only same-name repeats
+        were exactly this cross-engine coincidence -- not a regression, the intended fix.
+      - **Verified for real**: `buildNameCollisionFixture()` (`tests/pcg_file_test.cpp`)
+        gained a second Program bank (tagged `MBK1`/EXi, one "Lead" record) alongside the
+        existing HD-1 "Lead" 2-variant collision -- `testFindNameCollisions()` now asserts
+        the HD-1 group is still exactly 2 variants (not 3, which a regression would produce
+        by pulling the EXi entry in) and carries `bankType == 0`. Full `cmake --build`
+        (`pcg_file_test` + `kronos_editor`) clean, `pcg_file_test`: "All checks passed".
+      - **Backend: `requireByteExactMatch`, a new shared parameter on both resolve
+        methods**. `PcgFile::resolveDuplicates()`/`resolveDuplicateCombis()` each gained a
+        `bool requireByteExactMatch` parameter that deliberately gates TWO behaviors
+        together (chosen this way, not independently toggleable, per the "leave untouched"
+        decision above): `true` (the existing "Same content, different location" flow) --
+        validates every target's `contentHash` matches the kept copy's own, THEN clears it
+        (Programs only; Combis never clear regardless, see #68's own note); `false` (new
+        "Same name, different content" consolidate flow) -- skips the hash check entirely
+        (targets are EXPECTED to differ) and never clears anything, `clearedPrograms` stays
+        0. All-or-nothing target-existence validation still applies in either mode.
+        `EditorBridge::resolveDuplicateProgram()`/`resolveDuplicateCombis()` gained a
+        matching 5th JS arg (defaults `true` via `boolArg(args, 4, true)` if omitted, so
+        an older-shaped 4-arg call still resolves byte-exact duplicates exactly as before)
+        -- the Program version also skips reading `Init-Program-HD1.raw`/`-EXi.raw`
+        entirely when `false`, so an empty/missing `resources/` dir can't block a
+        consolidate that was never going to touch those templates anyway.
+      - **Verified for real**: two new tests, `testResolveDuplicatesConsolidateDifferentContent()`
+        and `testResolveDuplicateCombisConsolidateDifferentContent()`, both reusing
+        existing fixtures' own genuinely-different-content pairs (`buildSyntheticPcgFile()`'s
+        bank0/number2 "Unique Program" vs. "Test Program A"; `buildCombiDuplicateFixture()`'s
+        "Solo" vs. "Twin") that `testResolveDuplicates()`/`testFindAndResolveDuplicateCombis()`
+        already prove get REJECTED when `requireByteExactMatch=true` -- these prove the
+        exact same pairs get ACCEPTED, left byte-for-byte untouched, and (for the Program
+        case) have their real Set List/Combi Timbre references actually repointed, when
+        `false`. Full `cmake --build` clean, `pcg_file_test`: "All checks passed".
+      - **Frontend: the resolve-picker sidebar (#69) now opens from the name-collision
+        table too**. `renderNameCollisionTable()` (`pane-program-editor.js`) gained the
+        same "⋯" trigger `renderExactDuplicatesTable()` already has, opening
+        `openResolvePicker()` with `requireByteExactMatch=false` and the group FLATTENED
+        across ALL its variants (`group.variants.flatMap(v => v.members)`) -- consolidating
+        across variant clusters, not just within one, is the entire point of this mode.
+        `resolvePicker`'s own state gained `requireByteExactMatch` and (for the name-mode
+        case) `nameGroupKey` (`{name, bankType}`) -- the picker's title/footer-button text
+        now read "Consolidate variants"/"Consolidate N into Src" rather than "Resolve
+        duplicates"/"Resolve N into Src" in this mode, and the per-row Dupl checkbox's
+        tooltip is reworded to make clear nothing gets cleared, ever, in this mode.
+        `applyResolvePicker()`'s post-resolve re-sync is now mode-aware too: a byte-exact
+        group genuinely shrinks as members get cleared (re-synced by bank/number, as
+        before), but a name-collision group's own members NEVER disappear from a
+        consolidate (nothing about their content -- or hash -- changes, only references
+        move), so it's re-synced by re-finding the same `{name, bankType}` group instead.
+        Also added Program groups' own bank-type suffix to their displayed name (new
+        `nameCollisionGroupLabel()` helper, e.g. "Bass 1 (HD-1)") now that two groups can
+        legitimately share a bare name, and fixed `expandedCollisionKeys`' own key (used
+        to be name-only, now `${p|c}:${bankType}:${name}`) for the same reason.
+      - Fixed a real bug found while extending the Program resolve mock: `resolveDuplicateProgram()`'s
+        mock only marked the dataset dirty when `clearedPrograms > 0` -- missed the new
+        case where `requireByteExactMatch=false` clears nothing but still repoints real
+        Set List/Combi Timbre references (a genuine write). `mock_bridge.js` also gained
+        `requireByteExactMatch` support on both resolve mocks (default `true`, matching
+        the real bridge), and `findNameCollisions()`'s own fix above.
+      - **Verified for real**: full `cmake --build` (`pcg_file_test` + `kronos_editor`)
+        clean, `pcg_file_test`: "All checks passed" (6 tests added/extended this round).
+        All three touched frontend files parsed clean via `osascript -l JavaScript` (still
+        no `node` in this environment). A real Debug build was launched and confirmed it
+        starts up without crashing. **Live UI interaction still not verified** -- same
+        repeatedly-noted gap as #67/#68/#69 above; the consolidate mode's picker title/
+        wording, the bank-type-suffixed group labels, and the "⋯" trigger on the name-
+        collision table all still need a real hands-on smoke test.
+      - Docs updated same-session: `docs/content/guide/prog/index.md`'s "Same name,
+        different content" section rewritten for the Consolidate picker (bank-type-labeled
+        groups, cross-variant Src/Dupl selection, "never clears" emphasized); `docs/
+        content/guide/combi/index.md`'s own version updated the same way, cross-linking
+        back to the Programs page rather than re-explaining the shared mechanics.
+        `docker run hugomods/hugo` itself was unreliable in this environment this round
+        (hung/failed to even start a container on repeated attempts, unrelated to any
+        content change -- a working build of this exact docs tree from earlier in this
+        same session is still the most recent real confirmation) -- the new heading anchor
+        (`/guide/prog#same-name-different-content`) was checked by hand instead, against
+        Hugo's own slug algorithm as already confirmed by this file's existing
+        `#jumping-to-a-program-combi-or-set-list-slot` link (lowercase, punctuation
+        stripped, spaces to hyphens) rather than a real build.
 
 CLEAN UP -- noted 2026-08-15:
 

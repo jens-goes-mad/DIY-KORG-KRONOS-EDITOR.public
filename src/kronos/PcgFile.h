@@ -169,6 +169,7 @@ struct CombiInfo {
     int number = 0;
     std::string name;
     std::vector<TimbreRef> timbres;  // always 16 entries, Timbre 1..16 in order
+    uint64_t contentHash = 0;        // see CombiDecoder.h's hashCombiRecord()
 };
 
 // One Set List slot that directly references a given Program (as opposed
@@ -435,6 +436,55 @@ public:
     // duplicates). Programs with a unique hash are omitted entirely.
     std::vector<std::vector<ProgramInfo>> findDuplicatePrograms() const;
 
+    // The inverse question from findDuplicatePrograms()/findDuplicateCombis()
+    // above: entries that share the same NAME but are NOT byte-identical --
+    // e.g. two Programs both called "Bass 1" that are actually two different
+    // sounds someone lost track of, not real duplicates. One `variant` per
+    // distinct contentHash found under that name; a name with only one
+    // variant (every entry sharing that name is ALSO byte-identical) is a
+    // plain duplicate already covered by findDuplicatePrograms(), not a
+    // collision, so it's omitted here -- only names with 2+ variants (real
+    // content disagreement under one name) are returned. Entries whose name
+    // looks like an empty/placeholder slot (looksLikeEmptyProgramName()/
+    // looksLikeEmptyCombiName(), internal to PcgFile.cpp) are excluded
+    // entirely first -- every untouched slot shares the same generic
+    // "Init Program"/"Init Combi" name by construction, which would
+    // otherwise drown out every genuine collision in one giant, useless
+    // group.
+    //
+    // For Programs, a name match ACROSS bank types (HD-1 vs EXi) is never
+    // grouped together (2026-08-25, per direct request): two entirely
+    // different synth engines sharing a name is coincidence, not "these are
+    // probably the same sound gone astray" -- the whole point of this
+    // check. `bankType` (a raw kronos::ProgramBankType value) is part of
+    // the grouping key itself for Programs, so an HD-1 "Bass 1" and an EXi
+    // "Bass 1" become two independent groups (each still needs its OWN 2+
+    // distinct hashes to be reported at all). Always -1 for a Combi group --
+    // Combis have no bank-type distinction, so they keep grouping by name
+    // alone, unchanged.
+    struct NameCollisionVariant {
+        uint64_t contentHash = 0;
+        std::vector<std::pair<int, int>> members;  // (bank, number), sorted
+    };
+    struct NameCollisionGroup {
+        std::string name;
+        int bankType = -1;  // kronos::ProgramBankType, or -1 for a Combi group (no such distinction)
+        std::vector<NameCollisionVariant> variants;  // always 2+
+    };
+    std::vector<NameCollisionGroup> findProgramNameCollisions() const;
+    std::vector<NameCollisionGroup> findCombiNameCollisions() const;
+
+    // Same idea as findDuplicatePrograms() above, for Combis -- groups of
+    // 2+ Combis sharing an identical contentHash. Added later than the
+    // Program version (per direct request, for symmetry with the Combi
+    // sub-tab's own "same name, different content" check above), so it
+    // exists now even though CombiInfo::contentHash itself was originally
+    // added only for that name-collision check. resolveDuplicateCombis()
+    // (the write side) is declared further down, alongside
+    // CombiRearrangeResult and the other Combi-rearrange methods it shares
+    // that result shape with.
+    std::vector<std::vector<CombiInfo>> findDuplicateCombis() const;
+
     // Re-decodes one Program directly from the retained raw file bytes,
     // independently of programs() (which was built once during load) --
     // proof that the decoder is a real, reusable, on-demand operation
@@ -519,36 +569,62 @@ public:
         int combiRefsSkipped = 0;        // Combi Timbre references left alone -- see own doc comment below
     };
 
-    // Makes (keepBank, keepNumber) "the" copy of its byte-exact duplicate
-    // group (see findDuplicatePrograms()): every OTHER Program in this file
-    // sharing its contentHash gets its raw record overwritten with
-    // `hd1InitBytes`/`exiInitBytes` (whichever matches THAT duplicate's own
-    // bank type, not the kept slot's -- see resources/Init-Program-HD1.raw/
-    // Init-Program-EXi.raw and programRecordBytes()'s own doc comment for
-    // where these come from and the still-open Tone Adjust caveat), and
-    // every Set List slot / Combi Timbre that referenced any of those
-    // now-cleared duplicates gets repointed to (keepBank, keepNumber)
-    // instead.
+    // Makes (keepBank, keepNumber) "the" copy for exactly the duplicates
+    // named in `targets` (each a {bank, number} pair -- 2026-08-25, replaces
+    // an earlier all-or-nothing-across-the-WHOLE-group version per direct
+    // request: the Duplicates panel's resolve picker lets the user choose
+    // which specific copies to fold in, leaving any others in the same
+    // group untouched on purpose). Every Set List slot / Combi Timbre that
+    // referenced any target gets repointed to (keepBank, keepNumber).
     //
-    // All-or-nothing: every duplicate's own bank's record size is checked
-    // against the matching template BEFORE any write happens -- a size
-    // mismatch fails the whole call (ok=false, nothing written), never a
-    // partial clear. This app has no undo/rollback machinery anywhere else
-    // either, so "don't start a write that might not finish" is the only
-    // safety available.
+    // `requireByteExactMatch` picks which of the Duplicates panel's two
+    // checks this call is servicing, and controls TWO behaviors together
+    // (2026-08-25, per direct request/decision -- these two are meant to
+    // travel together, not independently toggleable):
+    //   - true ("Same content, different location"): every target's
+    //     contentHash must actually match (keepBank, keepNumber)'s own --
+    //     the caller is expected to only ever offer targets drawn from
+    //     findDuplicatePrograms()'s own grouping, but this is the real
+    //     trust boundary between the JS frontend and this backend, so it's
+    //     verified here independently rather than trusted blindly
+    //     (CLAUDE.md's own "validate at system boundaries" rule). Each
+    //     target's raw record is THEN overwritten with `hd1InitBytes`/
+    //     `exiInitBytes` (whichever matches THAT target's own bank type,
+    //     not the kept slot's -- see resources/Init-Program-HD1.raw/
+    //     Init-Program-EXi.raw and programRecordBytes()'s own doc comment
+    //     for where these come from and the still-open Tone Adjust
+    //     caveat) -- safe because the content is PROVEN identical first.
+    //   - false ("Same name, different content"): no contentHash check at
+    //     all -- these targets are expected to genuinely differ, that's
+    //     the whole point of this check. Nothing is cleared either --
+    //     `hd1InitBytes`/`exiInitBytes` are ignored, `clearedPrograms`
+    //     stays 0 -- a target's real, differing content stays exactly
+    //     where it is, just no longer referenced by anything. Only ever
+    //     discards data when `requireByteExactMatch` is true, where
+    //     "discarded" data is provably a byte-for-byte copy of what's kept.
+    //
+    // All-or-nothing regardless of mode: EVERY target is validated to
+    // actually exist (and, in byte-exact mode, every target's own bank's
+    // record size is checked against the matching template) BEFORE any
+    // write happens. A single bad target fails the WHOLE call (ok=false,
+    // nothing written), never a partial clear. This app has no undo/
+    // rollback machinery anywhere else either, so "don't start a write
+    // that might not finish" is the only safety available.
     //
     // Combi Timbre repointing needs to translate a PBK1 file-order bank
     // index to its raw Timbre bank code (see kConfirmedTimbreBanks in
-    // PcgFile.cpp) -- if a duplicate's own bank, or keepBank itself, has no
+    // PcgFile.cpp) -- if a target's own bank, or keepBank itself, has no
     // confirmed code, those specific Combi Timbre references are left
     // untouched (counted in combiRefsSkipped) rather than writing a
-    // guessed code. The Program clear and Set List repointing for that same
-    // duplicate still happen regardless -- only the Combi side depends on
-    // the translation being confirmed.
+    // guessed code. The Set List repointing for that same target still
+    // happens regardless -- only the Combi side depends on the translation
+    // being confirmed.
     //
     // Returns ok=false with `error` set if (keepBank, keepNumber) doesn't
-    // exist in this file, or on the record-size mismatch above.
+    // exist in this file, or on any of the target validation above.
     ResolveDuplicatesResult resolveDuplicates(int keepBank, int keepNumber,
+                                               const std::vector<std::pair<int, int>>& targets,
+                                               bool requireByteExactMatch,
                                                const std::vector<uint8_t>& hd1InitBytes,
                                                const std::vector<uint8_t>& exiInitBytes);
 
@@ -600,6 +676,38 @@ public:
     // if both refer to the same slot. Returns ok=false with `error` set if
     // either (bank, number) doesn't exist in this file.
     CombiRearrangeResult swapCombis(int bankA, int numberA, int bankB, int numberB);
+
+    // Deliberately NOT symmetric with resolveDuplicates() above (its
+    // Program equivalent): this repoints exactly the targets' (each a
+    // {bank, number} pair, same "explicit subset, not the whole group"
+    // model as resolveDuplicates() -- see its own doc comment) Set List
+    // references to (keepBank, keepNumber) but NEVER clears their own raw
+    // bytes to an Init Combi template the way resolveDuplicates() clears
+    // Programs -- no real Init Combi byte capture exists yet (resources/
+    // only has Init-Program-HD1.raw/-EXi.raw), so fabricating placeholder
+    // bytes isn't something this project's own "no guessing" rule allows.
+    // The targeted Combis are left exactly as they were -- still there,
+    // just no longer referenced by any Set List once this runs. Combis are
+    // only ever referenced by Set List slots (never by anything else --
+    // Combi Timbres reference Programs, never other Combis), so there's no
+    // Timbre-repointing dimension the Program version has either.
+    //
+    // `requireByteExactMatch` picks which of the Duplicates panel's two
+    // checks this call is servicing, same meaning as resolveDuplicates()'s
+    // own parameter -- true ("Same content, different location") validates
+    // every target's contentHash actually matches (keepBank, keepNumber)'s
+    // own before repointing (the real trust boundary against the JS
+    // frontend); false ("Same name, different content") skips that check
+    // entirely, since these targets are expected to genuinely differ. This
+    // method never clears bytes in EITHER mode (see above), so unlike the
+    // Program version the two modes only ever differ in this one
+    // validation step, nothing else.
+    //
+    // Returns ok=false with `error` set if (keepBank, keepNumber) doesn't
+    // exist in this file, or on any target validation failure.
+    CombiRearrangeResult resolveDuplicateCombis(int keepBank, int keepNumber,
+                                                 const std::vector<std::pair<int, int>>& targets,
+                                                 bool requireByteExactMatch);
 
     // Moves a Combi to a new position within its OWN bank, shifting the
     // intervening range by one to make room -- same mechanic as

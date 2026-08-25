@@ -415,7 +415,15 @@ function createLibraryPanels(
 
   const duplicatesPanel = createDuplicatesPanel(
     { panel: panels.duplicates },
-    { getDatasetId, getFilterText, log, onRefreshOppositeLibrary, onNeedsFullReload: () => load(), onSetlistRefsRepointed }
+    {
+      getDatasetId,
+      getFilterText,
+      onJumpToInstrument,
+      log,
+      onRefreshOppositeLibrary,
+      onNeedsFullReload: () => load(),
+      onSetlistRefsRepointed,
+    }
   );
 
   const combisPanel = createCombisPanel(

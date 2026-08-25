@@ -60,22 +60,68 @@ This applies immediately once confirmed -- no undo, same as every other write in
 
 ## Duplicates
 
-Groups Programs that are byte-for-byte identical (a real hash of the raw record, not just a
-matching name), one row per group. Expand a group to see every copy as its own button.
+Two vertical sub-tabs, **Programs** and **[Combi](/guide/combi)** -- library-hygiene checks
+for entries that are unexpectedly the same, or unexpectedly different, from each other.
+Each sub-tab has its own dropdown picking which of the two checks below is showing; both
+checks exist for both Programs and Combis. This page covers the Programs sub-tab; see
+[Combi](/guide/combi) for the same two checks applied to Combis instead.
 
 ![Duplicates](DIY-Duplicates.png)
 
-Clicking a copy's button makes it **the only version**: every *other* copy in that group is
-cleared back to a blank slot -- its bank's own factory-default template, HD-1 or EXi
-depending on that copy's engine type -- and every Set List slot or Combi Timbre that
-referenced any of the cleared copies is repointed to the one you clicked instead. A cleared
-slot's name reads `- Init Program (HD1) -` or `- Init Program (EXi) -` (deliberately more
-visible than Korg's own plain `Init Program`/`Init EXi Program`, so a cleared slot is
-unmistakable at a glance rather than looking like any other blank one).
+### Same content, different location
 
-This applies immediately -- no confirmation step, no undo, same as every other write in
-this app -- and shows a toast reporting exactly what changed (how many duplicates were
-cleared, how many Set List slots and Combi Timbres were repointed).
+Groups Programs that are byte-for-byte identical (a real hash of the raw record, not just a
+matching name), one row per group. Expand a group to see every copy as a plain jump button --
+same click/Shift+click/Shift+Cmd+click convention as every other cross-reference in this app,
+see [Jumping between panes](/guide#jumping-to-a-program-combi-or-set-list-slot). Clicking a
+copy never writes anything; resolving is a separate, deliberate step below.
+
+Click the **⋯** button beside a group's own title row (visible whether the group is expanded
+or not) to open the **resolve picker**, a side panel listing every copy in that group with two
+selectors each: a **Src** radio button (exactly one copy, the one to keep) and a **Dupl**
+checkbox (any number of the *other* copies -- disabled for whichever one is currently Src).
+This lets you fold in only *some* of a group's duplicates and deliberately leave others alone,
+e.g. copies you're keeping as an intentional backup rather than genuine clutter. A **Resolve**
+button appears once a Src and at least one Dupl are chosen; clicking it clears every checked
+Dupl back to a blank slot -- its bank's own factory-default template, HD-1 or EXi depending on
+that copy's engine type -- and repoints every Set List slot or Combi Timbre that referenced a
+cleared copy to Src instead. A cleared slot's name reads `- Init Program (HD1) -` or
+`- Init Program (EXi) -` (deliberately more visible than Korg's own plain `Init Program`/
+`Init EXi Program`, so a cleared slot is unmistakable at a glance rather than looking like any
+other blank one).
+
+This applies immediately -- no confirmation step, no undo, same as every other write in this
+app -- and shows a toast reporting exactly what changed. The picker stays open afterward and
+re-lists whatever's left in the group, so folding in a large group a few copies at a time
+(or checking your work) doesn't mean reopening it each time.
+
+### Same name, different content
+
+The inverse question: Programs that share a **name** but are *not* byte-identical -- e.g.
+two Programs both called "Bass 1" that turned out to actually be two different sounds
+somewhere along the way, not real duplicates, or a minor tweak of one that never got
+renamed. Expand a group to see each distinct variant as its own visually separated cluster
+of entries -- entries within one cluster really are identical to each other; entries in a
+different cluster under the same name are not. An HD-1 Program and an EXi Program never
+share a group here even if they happen to have the same name -- two entirely different
+synth engines is coincidence, not a real "these are probably the same sound" signal, so
+groups are labeled with their engine (e.g. "Bass 1 (HD-1)") once there's more than one.
+
+Every entry is a jump button (same click/Shift+click/Shift+Cmd+click convention as above),
+and the group's own title row has the same **⋯** menu the byte-exact check does, opening the
+same resolve-picker sidebar -- **Consolidate**, not Resolve, since these entries genuinely
+differ. Pick a **Src** and check one or more **Dupl** entries the same way, from *any* of
+the group's variant clusters (not just within one) -- consolidating a real, deliberate
+"this was just a minor edit of that" case is exactly the point. The key difference from the
+byte-exact picker: consolidating here **never clears anything**. A checked Dupl's own
+content stays exactly as it is -- only its Set List/Combi Timbre references move to Src --
+because that content is genuinely different and destroying it can't be undone. Since
+nothing about a variant's content changes, the group doesn't shrink the way a byte-exact
+one does -- the same entries are still there for a later pass if you want to consolidate
+more later.
+
+Placeholder-named slots (`Init Program`, empty slots) are excluded from this check entirely,
+since every untouched slot would otherwise show up as one giant, meaningless "collision."
 
 Resolving a duplicate can only repoint a Combi Timbre reference to/from a Program bank
 whose raw Timbre bank code is independently confirmed (see [The file format](/format)) --

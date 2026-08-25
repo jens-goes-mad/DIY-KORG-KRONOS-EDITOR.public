@@ -74,6 +74,45 @@ same-dataset copy, only the destination changes.
 supported yet** -- only the copy-onto-an-empty-slot gesture above works across two
 different files; the other three rearrange gestures stay same-dataset-only for now.
 
+## Duplicates
+
+The **[Duplicates](/guide/prog#duplicates)** tab has a **Combi** sub-tab alongside its
+Programs one, with the same dropdown picking between the same two checks -- see
+[Programs](/guide/prog#duplicates) for the full explanation of each; only the Combi-specific
+differences are called out below.
+
+### Same content, different location
+
+Groups Combis that are byte-for-byte identical, one row per group. Expand a group to see
+every copy as a plain jump button, and use the group title row's own **⋯** button to open
+the same **resolve picker** side panel the Programs version uses -- a **Src** radio (the
+copy to keep) plus a **Dupl** checkbox per other copy (choose any subset), a **Resolve**
+button once both are set. Resolving repoints every checked Dupl's Set List references to
+Src -- **unlike the Programs version, the checked copies' own content is left untouched**:
+there's no confirmed "Init Combi" template to reset them to yet, so rather than guess at
+one, this only ever repoints references, never clears bytes. Since nothing gets cleared, a
+resolved Combi keeps showing up in this same group afterward (it's still byte-identical) --
+the picker stays open and simply reflects that, so it's still there to fold in on a later
+pass if you want to. The toast reports exactly how many Set List slots were repointed.
+
+### Same name, different content
+
+Combis that share a **name** but are *not* byte-identical, e.g. two Combis both called
+"Live Set 1" that turned out to actually be different, or a minor tweak of one that never
+got renamed. Expand a group to see each distinct variant as its own visually separated
+cluster -- entries within one cluster really are identical to each other; entries in a
+different cluster under the same name are not. Every entry is a jump button, same
+convention as the Programs sub-tab. Combis have no HD-1/EXi-style engine split, so unlike
+the Programs version there's no bank-type label on the group -- a shared name always means
+the same kind of thing here.
+
+This check also has the same **⋯** menu on its title row, opening the resolve picker in
+**Consolidate** mode -- see [Programs](/guide/prog#same-name-different-content) for the
+full explanation. Combis are already the "never clears bytes" case even in the byte-exact
+check above, so consolidating different-content Combis behaves exactly the same way as
+resolving byte-exact ones: only Set List references move, a checked Dupl's own content
+(genuinely different here, unlike the byte-exact case) is always left completely alone.
+
 ## See also
 
 - [Programs](/guide/prog) -- what a Timbre reference actually points at, and how Program

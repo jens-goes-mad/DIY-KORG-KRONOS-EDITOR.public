@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <optional>
 #include <unordered_map>
 
@@ -590,7 +591,8 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
             size_t off = recordsStart + static_cast<size_t>(i) * bytesPerRecord;
             const uint8_t* record = &data[off];
             CombiFields fields = decodeCombiFields(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i));
-            combis_.push_back({fields.bank, fields.number, fields.name, fields.timbres});
+            uint64_t combiHash = hashCombiRecord(record, bytesPerRecord);
+            combis_.push_back({fields.bank, fields.number, fields.name, fields.timbres, combiHash});
 
             if (fields.bank >= static_cast<int>(combiBankNames.size())) combiBankNames.resize(fields.bank + 1);
             if (fields.number >= static_cast<int>(combiBankNames[fields.bank].size())) {
@@ -776,6 +778,24 @@ std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const {
     return groups;
 }
 
+std::vector<std::vector<CombiInfo>> PcgFile::findDuplicateCombis() const {
+    std::unordered_map<uint64_t, std::vector<CombiInfo>> byHash;
+    for (const auto& combi : combis_) byHash[combi.contentHash].push_back(combi);
+
+    std::vector<std::vector<CombiInfo>> groups;
+    for (auto& [hash, group] : byHash) {
+        if (group.size() < 2) continue;
+        std::sort(group.begin(), group.end(), [](const CombiInfo& a, const CombiInfo& b) {
+            return a.bank != b.bank ? a.bank < b.bank : a.number < b.number;
+        });
+        groups.push_back(std::move(group));
+    }
+    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
+        return a.front().bank != b.front().bank ? a.front().bank < b.front().bank : a.front().number < b.front().number;
+    });
+    return groups;
+}
+
 void PcgFile::repointOneSetlistSlot(int setlistIndex, int songIndex, int toBank, int toNumber) {
     auto bytes = songRecordBytes(setlistIndex, songIndex);
     if (!bytes) return;  // shouldn't happen -- callers always have a live (setlistIndex, songIndex) in hand
@@ -803,6 +823,8 @@ int PcgFile::repointSetlistReferences(bool isProgram, int fromBank, int fromNumb
 }
 
 PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int keepNumber,
+                                                              const std::vector<std::pair<int, int>>& targets,
+                                                              bool requireByteExactMatch,
                                                               const std::vector<uint8_t>& hd1InitBytes,
                                                               const std::vector<uint8_t>& exiInitBytes) {
     ResolveDuplicatesResult result;
@@ -816,32 +838,64 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
     }
     const uint64_t keepHash = keepIt->contentHash;
 
+    // Every named target must actually exist -- and, when
+    // requireByteExactMatch, must ALSO be byte-identical to the kept copy
+    // (the real trust boundary against the JS frontend -- see this
+    // method's own doc comment in PcgFile.h). Resolved up front, all-or-
+    // nothing, same as the template-size check just below.
     std::vector<ProgramInfo> duplicates;
-    for (const auto& p : programs_) {
-        if (p.bank == keepBank && p.number == keepNumber) continue;
-        if (p.contentHash == keepHash) duplicates.push_back(p);
+    for (const auto& target : targets) {
+        const int targetBank = target.first;
+        const int targetNumber = target.second;
+        if (targetBank == keepBank && targetNumber == keepNumber) continue;
+        auto it = std::find_if(programs_.begin(), programs_.end(), [&](const ProgramInfo& p) {
+            return p.bank == targetBank && p.number == targetNumber;
+        });
+        if (it == programs_.end()) {
+            result.error =
+                "No such Program to resolve: bank " + std::to_string(targetBank) + ", number " + std::to_string(targetNumber);
+            return result;
+        }
+        if (requireByteExactMatch && it->contentHash != keepHash) {
+            result.error = "Program at bank " + std::to_string(targetBank) + ", number " + std::to_string(targetNumber) +
+                            " isn't byte-identical to the kept copy";
+            return result;
+        }
+        duplicates.push_back(*it);
     }
 
     // Validate every distinct bank type's template size BEFORE writing
-    // anything -- all-or-nothing, see this method's own doc comment.
-    for (const auto& dup : duplicates) {
-        const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
-        const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
-        if (templateBytes.size() != loc.bytesPerRecord) {
-            result.error = "Init Program template size (" + std::to_string(templateBytes.size()) +
-                            " bytes) doesn't match bank " + std::to_string(dup.bank) + "'s own record size (" +
-                            std::to_string(loc.bytesPerRecord) + " bytes)";
-            return result;
+    // anything -- all-or-nothing, see this method's own doc comment. Only
+    // relevant when actually clearing (requireByteExactMatch) -- the
+    // "Same name, different content" flow never touches hd1InitBytes/
+    // exiInitBytes at all, so a caller in that mode can pass empty vectors.
+    if (requireByteExactMatch) {
+        for (const auto& dup : duplicates) {
+            const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
+            const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
+            if (templateBytes.size() != loc.bytesPerRecord) {
+                result.error = "Init Program template size (" + std::to_string(templateBytes.size()) +
+                                " bytes) doesn't match bank " + std::to_string(dup.bank) + "'s own record size (" +
+                                std::to_string(loc.bytesPerRecord) + " bytes)";
+                return result;
+            }
         }
     }
 
     const int keepRawCode = confirmedTimbreCodeForProgramBank(keepBank);
 
     for (const auto& dup : duplicates) {
-        const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
-        const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
-        putProgramRecordBytes(dup.bank, dup.number, templateBytes);
-        result.clearedPrograms++;
+        if (requireByteExactMatch) {
+            const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
+            const auto& templateBytes = loc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
+            putProgramRecordBytes(dup.bank, dup.number, templateBytes);
+            result.clearedPrograms++;
+        }
+        // requireByteExactMatch=false ("Same name, different content"):
+        // this target's own bytes are deliberately left untouched -- its
+        // content genuinely differs from the kept copy, so clearing it
+        // would destroy real, non-recoverable data (no undo anywhere in
+        // this app). Only its references move.
 
         result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, dup.bank, dup.number, keepBank, keepNumber);
 
@@ -972,7 +1026,76 @@ bool looksLikeEmptyProgramName(const std::string& name) {
     return lower == "init exi program" || lower.find("init program") != std::string::npos;
 }
 
+// Shared grouping logic for findProgramNameCollisions()/
+// findCombiNameCollisions() below -- both need the exact same "group by
+// (name, bankType), then by hash within each group, keep only groups with
+// 2+ distinct hashes" mechanics; only which entries feed in (programs_ vs
+// combis_) and which empty-name filter applies differs between the two, so
+// that stays in each of their own thin wrappers rather than duplicated
+// here too. `bankType` is always -1 for Combi entries (findCombiName-
+// Collisions() below) -- see NameCollisionGroup's own doc comment in
+// PcgFile.h for why grouping needs it at all for Programs.
+struct NameHashEntry {
+    std::string name;
+    int bank;
+    int number;
+    uint64_t hash;
+    int bankType;
+};
+
+std::vector<PcgFile::NameCollisionGroup> groupNameCollisions(const std::vector<NameHashEntry>& entries) {
+    // std::map (not unordered_map) since std::pair<std::string, int> has no
+    // default std::hash -- iteration order ends up irrelevant either way,
+    // since the final groups list is explicitly re-sorted below regardless.
+    std::map<std::pair<std::string, int>, std::vector<NameHashEntry>> byNameAndType;
+    for (const auto& e : entries) byNameAndType[{e.name, e.bankType}].push_back(e);
+
+    std::vector<PcgFile::NameCollisionGroup> groups;
+    for (auto& [key, sameNameAndType] : byNameAndType) {
+        std::unordered_map<uint64_t, std::vector<std::pair<int, int>>> byHash;
+        for (const auto& e : sameNameAndType) byHash[e.hash].push_back({e.bank, e.number});
+        if (byHash.size() < 2) continue;  // every entry byte-identical -- a plain duplicate, not a collision
+
+        PcgFile::NameCollisionGroup group;
+        group.name = key.first;
+        group.bankType = key.second;
+        for (auto& [hash, members] : byHash) {
+            std::sort(members.begin(), members.end());
+            group.variants.push_back({hash, std::move(members)});
+        }
+        // unordered_map iteration order isn't deterministic run-to-run --
+        // sort variants (by their own first member) and groups themselves
+        // (by their first variant's first member) so callers/tests see a
+        // stable order, same reasoning as findDuplicatePrograms() above.
+        std::sort(group.variants.begin(), group.variants.end(),
+                  [](const auto& a, const auto& b) { return a.members.front() < b.members.front(); });
+        groups.push_back(std::move(group));
+    }
+    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
+        return a.variants.front().members.front() < b.variants.front().members.front();
+    });
+    return groups;
+}
+
 }  // namespace
+
+std::vector<PcgFile::NameCollisionGroup> PcgFile::findProgramNameCollisions() const {
+    std::vector<NameHashEntry> entries;
+    for (const auto& p : programs_) {
+        if (looksLikeEmptyProgramName(p.name)) continue;
+        entries.push_back({p.name, p.bank, p.number, p.contentHash, static_cast<int>(p.bankType)});
+    }
+    return groupNameCollisions(entries);
+}
+
+std::vector<PcgFile::NameCollisionGroup> PcgFile::findCombiNameCollisions() const {
+    std::vector<NameHashEntry> entries;
+    for (const auto& c : combis_) {
+        if (looksLikeEmptyCombiName(c.name)) continue;
+        entries.push_back({c.name, c.bank, c.number, c.contentHash, /*bankType=*/-1});
+    }
+    return groupNameCollisions(entries);
+}
 
 PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int bankB, int numberB) {
     CombiRearrangeResult result;
@@ -1033,6 +1156,59 @@ PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int ba
             putSongRecordBytes(setlist.index, song.index, *bytes);
             result.setlistRefsRepointed++;
         }
+    }
+
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::resolveDuplicateCombis(int keepBank, int keepNumber,
+                                                                const std::vector<std::pair<int, int>>& targets,
+                                                                bool requireByteExactMatch) {
+    CombiRearrangeResult result;
+
+    auto keepIt = std::find_if(combis_.begin(), combis_.end(), [&](const CombiInfo& c) {
+        return c.bank == keepBank && c.number == keepNumber;
+    });
+    if (keepIt == combis_.end()) {
+        result.error = "No such Combi to keep";
+        return result;
+    }
+    const uint64_t keepHash = keepIt->contentHash;
+
+    // Same all-or-nothing target validation as resolveDuplicates() (the
+    // real trust boundary against the JS frontend) -- resolved up front so
+    // a bad target never leaves some references repointed and others not.
+    // The contentHash check only applies when requireByteExactMatch --
+    // "Same name, different content" targets are expected to genuinely
+    // differ, that's the whole point of that check (see this method's own
+    // doc comment in PcgFile.h).
+    std::vector<CombiInfo> duplicates;
+    for (const auto& target : targets) {
+        const int targetBank = target.first;
+        const int targetNumber = target.second;
+        if (targetBank == keepBank && targetNumber == keepNumber) continue;
+        auto it = std::find_if(combis_.begin(), combis_.end(), [&](const CombiInfo& c) {
+            return c.bank == targetBank && c.number == targetNumber;
+        });
+        if (it == combis_.end()) {
+            result.error =
+                "No such Combi to resolve: bank " + std::to_string(targetBank) + ", number " + std::to_string(targetNumber);
+            return result;
+        }
+        if (requireByteExactMatch && it->contentHash != keepHash) {
+            result.error = "Combi at bank " + std::to_string(targetBank) + ", number " + std::to_string(targetNumber) +
+                            " isn't byte-identical to the kept copy";
+            return result;
+        }
+        duplicates.push_back(*it);
+    }
+
+    for (const auto& dup : duplicates) {
+        // Unlike resolveDuplicates() (Programs), the duplicate's own bytes
+        // are never touched -- see this method's own doc comment in
+        // PcgFile.h for why. Only its Set List references move.
+        result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/false, dup.bank, dup.number, keepBank, keepNumber);
     }
 
     result.ok = true;
@@ -1810,7 +1986,8 @@ void PcgFile::refreshCombiInfo(int bank, int number) {
     size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
     const uint8_t* record = &data_[off];
     CombiFields fields = decodeCombiFields(record, loc.bytesPerRecord, bank, number);
-    CombiInfo updated{fields.bank, fields.number, fields.name, fields.timbres};
+    uint64_t hash = hashCombiRecord(record, loc.bytesPerRecord);
+    CombiInfo updated{fields.bank, fields.number, fields.name, fields.timbres, hash};
 
     auto it = std::find_if(combis_.begin(), combis_.end(),
                             [&](const CombiInfo& c) { return c.bank == bank && c.number == number; });

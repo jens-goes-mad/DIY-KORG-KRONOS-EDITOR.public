@@ -13,10 +13,11 @@ namespace kronos {
 // -- see docs/content/components/index.md and STATE.md's "ARCHITECTURE:
 // DECODER/ENCODER REFACTOR" for the rationale. Same shape as
 // ProgramDecoder.h, extended to also decode each Combi's 16
-// Timbre-to-Program references (Programs have no equivalent). No
-// contentHash -- byte-exact duplicate detection was only requested for
-// Programs, see CombiInfo's doc comment in PcgFile.h. No encoder yet --
-// every current use of Combi data is read-only.
+// Timbre-to-Program references (Programs have no equivalent).
+// hashCombiRecord() (byte-exact content hashing, originally requested for
+// Programs only -- see CombiInfo's own doc comment in PcgFile.h for why
+// Combi got it too later) is the one encoder-adjacent thing here; every
+// other current use of Combi data is still read-only.
 
 // Raw Kronos fields for one Combi record -- read directly off the bytes.
 // bank/number are the record's own position among its siblings, not
@@ -35,6 +36,15 @@ struct CombiFields {
 // default (isDefault=true) TimbreRefs for whatever doesn't fit, matching
 // this project's usual "degrade gracefully" convention for optional data.
 CombiFields decodeCombiFields(const uint8_t* record, size_t recordSize, int bank, int number);
+
+// Standard FNV-1a 64-bit over the raw record's own bytes -- identical
+// algorithm to ProgramDecoder.h's hashProgramRecord(), kept as a separate
+// function (not a shared helper) rather than calling that one on Combi
+// bytes, matching this project's own convention of small duplication over
+// a premature shared abstraction between the two otherwise-independent
+// decoders. Used for content-based duplicate/collision detection the same
+// way ProgramInfo::contentHash already is.
+uint64_t hashCombiRecord(const uint8_t* record, size_t recordSize);
 
 // Byte offset within a Combi record where Timbre `timbreIndex`'s (0-15) own
 // 3-byte block starts (number, rawBankCode, status) -- see

@@ -93,6 +93,29 @@ std::vector<kronos::PcgFile::ProgramPlacement> placementsArg(const choc::value::
     return result;
 }
 
+// Reads args[index] as a JS array of {bank, number} objects (the Duplicates
+// panel's own resolve-picker sidebar, one entry per duplicate the user
+// checked to fold into the kept copy -- see PcgFile::resolveDuplicates()'s
+// own doc comment for why this became an explicit list rather than "every
+// same-hash entry in the file", 2026-08-25) into
+// std::vector<std::pair<int, int>>. Empty if the argument is missing or
+// isn't an array -- PcgFile::resolveDuplicates()/resolveDuplicateCombis()
+// then simply have nothing to do, not a crash.
+std::vector<std::pair<int, int>> targetsArg(const choc::value::ValueView& args, size_t index) {
+    std::vector<std::pair<int, int>> result;
+    if (!args.isArray() || args.size() <= index) return result;
+    auto arr = args[static_cast<uint32_t>(index)];
+    if (!arr.isArray()) return result;
+    result.reserve(arr.size());
+    for (uint32_t i = 0; i < arr.size(); ++i) {
+        auto element = arr[i];
+        const int bank = static_cast<int>(element["bank"].getWithDefault<double>(0));
+        const int number = static_cast<int>(element["number"].getWithDefault<double>(0));
+        result.emplace_back(bank, number);
+    }
+    return result;
+}
+
 choc::value::Value bytesToValue(const std::vector<uint8_t>& bytes) {
     return choc::value::createArray(static_cast<uint32_t>(bytes.size()),
                                      [&](uint32_t i) { return static_cast<int32_t>(bytes[i]); });
@@ -701,6 +724,86 @@ choc::value::Value EditorBridge::findDuplicatePrograms(const choc::value::ValueV
     return result;
 }
 
+choc::value::Value EditorBridge::findDuplicateCombis(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return choc::value::createEmptyArray();
+
+    auto setlistCounts = file->setlistUsageCounts(/*isProgram=*/false);
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& group : file->findDuplicateCombis()) {
+        auto groupValue = choc::value::createEmptyArray();
+        for (const auto& combi : group) {
+            auto v = combiToValue(combi);
+            const int count = countAt(setlistCounts, combi.bank, combi.number);
+            v.setMember("setlistReferenceCount", count);
+            v.setMember("setlistUsages", count > 0
+                                              ? setlistUsagesToValue(file->combiSetlistUsages(combi.bank, combi.number))
+                                              : choc::value::createEmptyArray());
+            groupValue.addArrayElement(v);
+        }
+        result.addArrayElement(groupValue);
+    }
+    return result;
+}
+
+choc::value::Value EditorBridge::findProgramNameCollisions(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return choc::value::createEmptyArray();
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& group : file->findProgramNameCollisions()) {
+        auto groupValue = choc::value::createObject("NameCollisionGroup");
+        groupValue.setMember("name", group.name);
+        // Always a real ProgramBankType for a Program group now (never -1)
+        // -- see NameCollisionGroup's own doc comment in PcgFile.h: grouping
+        // itself splits on bank type, so every group here is homogeneous.
+        groupValue.setMember("bankType", group.bankType);
+        auto variantsValue = choc::value::createEmptyArray();
+        for (const auto& variant : group.variants) {
+            auto membersValue = choc::value::createEmptyArray();
+            for (const auto& [bank, number] : variant.members) {
+                auto program = file->decodeProgram(bank, number);
+                if (program) membersValue.addArrayElement(programToValue(*program));
+            }
+            auto variantValue = choc::value::createObject("NameCollisionVariant");
+            variantValue.setMember("members", membersValue);
+            variantsValue.addArrayElement(variantValue);
+        }
+        groupValue.setMember("variants", variantsValue);
+        result.addArrayElement(groupValue);
+    }
+    return result;
+}
+
+choc::value::Value EditorBridge::findCombiNameCollisions(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return choc::value::createEmptyArray();
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& group : file->findCombiNameCollisions()) {
+        auto groupValue = choc::value::createObject("NameCollisionGroup");
+        groupValue.setMember("name", group.name);
+        auto variantsValue = choc::value::createEmptyArray();
+        for (const auto& variant : group.variants) {
+            auto membersValue = choc::value::createEmptyArray();
+            for (const auto& [bank, number] : variant.members) {
+                auto combi = file->decodeCombi(bank, number);
+                if (combi) membersValue.addArrayElement(combiToValue(*combi));
+            }
+            auto variantValue = choc::value::createObject("NameCollisionVariant");
+            variantValue.setMember("members", membersValue);
+            variantsValue.addArrayElement(variantValue);
+        }
+        groupValue.setMember("variants", variantsValue);
+        result.addArrayElement(groupValue);
+    }
+    return result;
+}
+
 choc::value::Value EditorBridge::getProgramBankTypes(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     auto* file = fileOf(datasetId);
@@ -835,17 +938,31 @@ choc::value::Value EditorBridge::resolveDuplicateProgram(const choc::value::Valu
     const int datasetId = intArg(args, 0);
     const int bank = intArg(args, 1);
     const int number = intArg(args, 2);
+    const auto targets = targetsArg(args, 3);
+    // Defaults true (the original "Same content, different location"
+    // behavior) so any older-shaped call (3 args, no 5th) still resolves
+    // byte-exact duplicates exactly as before. See PcgFile::
+    // resolveDuplicates()'s own doc comment for what this actually gates.
+    const bool requireByteExactMatch = boolArg(args, 4, true);
 
     auto* file = fileOf(datasetId);
     if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
 
-    const auto hd1Bytes = readResourceFile("Init-Program-HD1.raw");
-    const auto exiBytes = readResourceFile("Init-Program-EXi.raw");
-    if (hd1Bytes.empty() || exiBytes.empty()) {
-        return makeError("Couldn't read the Init Program template files from " + std::string(EDITOR_RESOURCES_DIR));
+    // Only needed in byte-exact mode -- the "Same name, different content"
+    // consolidate flow never clears a target's bytes, so it never touches
+    // these templates at all (an empty resources/ dir must never block
+    // that flow).
+    std::vector<uint8_t> hd1Bytes;
+    std::vector<uint8_t> exiBytes;
+    if (requireByteExactMatch) {
+        hd1Bytes = readResourceFile("Init-Program-HD1.raw");
+        exiBytes = readResourceFile("Init-Program-EXi.raw");
+        if (hd1Bytes.empty() || exiBytes.empty()) {
+            return makeError("Couldn't read the Init Program template files from " + std::string(EDITOR_RESOURCES_DIR));
+        }
     }
 
-    auto result = file->resolveDuplicates(bank, number, hd1Bytes, exiBytes);
+    auto result = file->resolveDuplicates(bank, number, targets, requireByteExactMatch, hd1Bytes, exiBytes);
     if (!result.ok) return makeError(result.error);
 
     auto value = makeOk();
@@ -853,6 +970,25 @@ choc::value::Value EditorBridge::resolveDuplicateProgram(const choc::value::Valu
     value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
     value.setMember("combiRefsRepointed", result.combiRefsRepointed);
     value.setMember("combiRefsSkipped", result.combiRefsSkipped);
+    return value;
+}
+
+choc::value::Value EditorBridge::resolveDuplicateCombis(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int number = intArg(args, 2);
+    const auto targets = targetsArg(args, 3);
+    // Same default/meaning as resolveDuplicateProgram() above.
+    const bool requireByteExactMatch = boolArg(args, 4, true);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->resolveDuplicateCombis(bank, number, targets, requireByteExactMatch);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
     return value;
 }
 

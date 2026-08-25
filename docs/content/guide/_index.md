@@ -45,8 +45,10 @@ built internally, see [App architecture & components](/components).
 - **[Combi](/guide/combi)**: browse/filter every Combi bank, with each Timbre's own Program
   reference shown as a jump button; drag-and-drop to swap, move within/between banks, or
   copy onto an empty slot -- copying also works *across datasets*.
-- **[Duplicates](/guide/prog#duplicates)**: finds byte-for-byte identical Programs and resolves a
-  group in one click, repointing every reference that pointed at a cleared copy.
+- **[Duplicates](/guide/prog#duplicates)**: finds byte-for-byte identical Programs *and*
+  Combis and resolves a group in one click, repointing every reference that pointed at a
+  cleared copy; also finds the opposite -- entries sharing a name but *not* actually
+  identical.
 - **Cross-links everywhere**: click any bank/number reference to jump straight to it (see
   [Jumping between panes](#jumping-to-a-program-combi-or-set-list-slot) below).
 - **Internals**: a read-only view of exactly which chunks/banks a loaded backup actually

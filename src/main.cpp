@@ -131,6 +131,12 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
                [&bridge](const choc::value::ValueView& args) { return bridge.getProgramUsage(args); });
     view.bind("findDuplicatePrograms",
                [&bridge](const choc::value::ValueView& args) { return bridge.findDuplicatePrograms(args); });
+    view.bind("findProgramNameCollisions",
+               [&bridge](const choc::value::ValueView& args) { return bridge.findProgramNameCollisions(args); });
+    view.bind("findCombiNameCollisions",
+               [&bridge](const choc::value::ValueView& args) { return bridge.findCombiNameCollisions(args); });
+    view.bind("findDuplicateCombis",
+               [&bridge](const choc::value::ValueView& args) { return bridge.findDuplicateCombis(args); });
     view.bind("getProgramBankTypes",
                [&bridge](const choc::value::ValueView& args) { return bridge.getProgramBankTypes(args); });
     view.bind("copyProgram", [&bridge](const choc::value::ValueView& args) { return bridge.copyProgram(args); });
@@ -139,6 +145,9 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
         return bridge.resolveDuplicateProgram(args);
     });
     view.bind("resetProgram", [&bridge](const choc::value::ValueView& args) { return bridge.resetProgram(args); });
+    view.bind("resolveDuplicateCombis", [&bridge](const choc::value::ValueView& args) {
+        return bridge.resolveDuplicateCombis(args);
+    });
     view.bind("swapCombis", [&bridge](const choc::value::ValueView& args) { return bridge.swapCombis(args); });
     view.bind("moveCombiWithinBank",
                [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiWithinBank(args); });

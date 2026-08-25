@@ -1227,7 +1227,8 @@ void testResolveDuplicates() {
         CHECK(hd1Template.has_value());
         if (!hd1Template) return;
 
-        auto result = pcg.resolveDuplicates(/*keepBank=*/0, /*keepNumber=*/0, *hd1Template, /*exiInitBytes=*/{});
+        auto result = pcg.resolveDuplicates(/*keepBank=*/0, /*keepNumber=*/0, /*targets=*/{{0, 1}},
+                                             /*requireByteExactMatch=*/true, *hd1Template, /*exiInitBytes=*/{});
         CHECK(result.ok);
         if (!result.ok) {
             std::fprintf(stderr, "  resolveDuplicates() error: %s\n", result.error.c_str());
@@ -1276,7 +1277,7 @@ void testResolveDuplicates() {
         CHECK(loaded);
         if (!loaded) return;
 
-        auto result = pcg.resolveDuplicates(99, 0, {}, {});
+        auto result = pcg.resolveDuplicates(99, 0, {}, /*requireByteExactMatch=*/true, {}, {});
         CHECK(!result.ok);
     }
 
@@ -1290,7 +1291,7 @@ void testResolveDuplicates() {
         if (!loaded) return;
 
         const std::vector<uint8_t> wrongSize(4, 0);  // real bank 0 record size in this fixture is 32
-        auto result = pcg.resolveDuplicates(0, 0, wrongSize, wrongSize);
+        auto result = pcg.resolveDuplicates(0, 0, {{0, 1}}, /*requireByteExactMatch=*/true, wrongSize, wrongSize);
         CHECK(!result.ok);
 
         auto stillDuplicate = pcg.decodeProgram(0, 1);
@@ -1299,6 +1300,108 @@ void testResolveDuplicates() {
             CHECK_EQ(stillDuplicate->name, std::string("Test Program A"),
                      "size-mismatch rejection writes nothing -- duplicate untouched");
         }
+    }
+
+    // --- Rejected: a named target isn't actually byte-identical to the
+    // kept copy -- the real trust boundary against the JS frontend's own
+    // resolve-picker sidebar (2026-08-25), which is expected to only ever
+    // offer targets drawn from findDuplicatePrograms()'s own grouping, but
+    // is verified here independently rather than trusted blindly. All-or-
+    // nothing: bank0/number1 IS a real duplicate, but since it's bundled
+    // in the same call as the bad target (bank0/number2, "Unique Program",
+    // a different hash entirely), NEITHER gets touched. -------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        const auto hd1Template = pcg.programRecordBytes(0, 2);
+        CHECK(hd1Template.has_value());
+        if (!hd1Template) return;
+
+        auto result = pcg.resolveDuplicates(0, 0, {{0, 1}, {0, 2}}, /*requireByteExactMatch=*/true, *hd1Template, {});
+        CHECK(!result.ok);
+
+        auto stillDuplicate = pcg.decodeProgram(0, 1);
+        CHECK(stillDuplicate.has_value());
+        if (stillDuplicate) {
+            CHECK_EQ(stillDuplicate->name, std::string("Test Program A"),
+                     "hash-mismatch rejection writes nothing -- the OTHER, genuinely-matching target is untouched too");
+        }
+        auto stillUnique = pcg.decodeProgram(0, 2);
+        CHECK(stillUnique.has_value());
+        if (stillUnique) CHECK_EQ(stillUnique->name, std::string("Unique Program"), "the mismatched target itself is untouched");
+    }
+}
+
+// requireByteExactMatch=false -- the Duplicates panel's "Same name,
+// different content" consolidate flow (2026-08-25, per direct decision:
+// destroying a genuinely-different Program's real content isn't
+// acceptable, so this mode ONLY ever repoints references, never clears
+// bytes -- see resolveDuplicates()'s own doc comment in PcgFile.h). Reuses
+// buildSyntheticPcgFile()'s bank0/number2 ("Unique Program"), which is
+// GENUINELY different content from bank0/number0/1 ("Test Program A") --
+// the exact case testResolveDuplicates() above proves gets REJECTED when
+// requireByteExactMatch=true; this proves it's ACCEPTED (and left
+// untouched) when false.
+void testResolveDuplicatesConsolidateDifferentContent() {
+    kronos::PcgFile pcg;
+    std::string error;
+    bool loaded = pcg.loadFromMemory(buildSyntheticPcgFile(), error);
+    CHECK(loaded);
+    if (!loaded) return;
+
+    // Same setup shape as testResolveDuplicates()'s own happy path, just
+    // pointed at bank0/number2 (genuinely different content) instead of
+    // the byte-identical bank0/number1.
+    {
+        auto bytes = pcg.songRecordBytes(0, 2);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            (*bytes)[12] |= 0x01;  // Type bits0-1 = 1 (Program)
+            (*bytes)[13] = 0;      // bank 0
+            (*bytes)[14] = 2;      // number 2
+            CHECK(pcg.putSongRecordBytes(0, 2, *bytes));
+        }
+    }
+    {
+        auto bytes = pcg.combiRecordBytes(0, 0);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            kronos::writeTimbreProgramRef(bytes->data(), bytes->size(), /*timbreIndex=*/2, /*number=*/2, /*rawBankCode=*/0);
+            size_t statusOff = kronos::timbreByteOffset(2) + 2;
+            (*bytes)[statusOff] = static_cast<uint8_t>(1 << 5);
+            CHECK(pcg.putCombiRecordBytes(0, 0, *bytes));
+        }
+    }
+
+    auto result = pcg.resolveDuplicates(/*keepBank=*/0, /*keepNumber=*/0, /*targets=*/{{0, 2}},
+                                         /*requireByteExactMatch=*/false, /*hd1InitBytes=*/{}, /*exiInitBytes=*/{});
+    CHECK(result.ok);
+    if (!result.ok) {
+        std::fprintf(stderr, "  resolveDuplicates() error: %s\n", result.error.c_str());
+        return;
+    }
+    CHECK_EQ(result.clearedPrograms, 0, "requireByteExactMatch=false never clears a target's bytes");
+    CHECK_EQ(result.setlistRefsRepointed, 1, "the Set List slot referencing number 2 was repointed");
+    CHECK_EQ(result.combiRefsRepointed, 1, "the Combi Timbre referencing number 2 was repointed");
+
+    CHECK_EQ(pcg.setlists()[0].songs[2].params.number, 0, "Set List slot repointed to the kept number 0");
+    {
+        auto combi = pcg.decodeCombi(0, 0);
+        CHECK(combi.has_value());
+        if (combi) CHECK_EQ(combi->timbres[2].number, 0, "Combi Timbre repointed to the kept number 0");
+    }
+
+    // The real point of this whole mode: bank0/number2's own content is
+    // untouched -- still "Unique Program", not overwritten with anything.
+    auto stillUnique = pcg.decodeProgram(0, 2);
+    CHECK(stillUnique.has_value());
+    if (stillUnique) {
+        CHECK_EQ(stillUnique->name, std::string("Unique Program"),
+                 "requireByteExactMatch=false leaves the target's genuinely-different content untouched");
     }
 }
 
@@ -1619,6 +1722,402 @@ std::vector<uint8_t> buildCombiRearrangeFixture() {
     pushZeros(data, 12);
     appendChunk(data, "PCG1", pcg1Content);
     return data;
+}
+
+// Dedicated minimal fixture for testFindNameCollisions() -- a Program bank
+// and a Combi bank, each with the same shape: two byte-identical records
+// sharing a name (a plain duplicate, NOT a collision -- see
+// findProgramNameCollisions()/findCombiNameCollisions()'s own doc comment),
+// a third record under the SAME name but with a byte changed outside the
+// name field (the real collision: 2 variants under one name), a
+// uniquely-named record (never a collision), and an empty/placeholder-named
+// record ("" for Program -- looksLikeEmptyProgramName() treats a blank name
+// as empty on its own, no literal text needed; "Init Combi" for Combi,
+// which has no such special case) that must be filtered out entirely even
+// though a real file could have many placeholder-named slots that would
+// otherwise register as their own spurious "collision."
+// The MBK1 (EXi) bank below (2026-08-25) exercises the fix for a real
+// reported issue: an HD-1 Program and an EXi Program sharing a name is
+// coincidence, not "these are probably the same sound gone astray" (two
+// entirely different synth engines can't be a "minor modification" of each
+// other) -- see findProgramNameCollisions()'s own doc comment in PcgFile.h.
+// "Lead" appears in BOTH banks here specifically so a regression (grouping
+// by name alone, ignoring bank type) would have merged them into one
+// 3-variant group instead of the correct outcome: the HD-1 "Lead" collision
+// stays exactly 2 variants, and the EXi "Lead" (alone in its own bank type)
+// forms no collision of its own at all.
+std::vector<uint8_t> buildNameCollisionFixture() {
+    constexpr size_t kProgramRecordSize = 32;
+    constexpr size_t kCombiRecordSize = 40;
+
+    std::vector<uint8_t> pbk1BankA;
+    pushU32BE(pbk1BankA, 5);
+    pushU32BE(pbk1BankA, static_cast<uint32_t>(kProgramRecordSize));
+    pushNameRecord(pbk1BankA, "Lead", kProgramRecordSize);   // number 0
+    pushNameRecord(pbk1BankA, "Lead", kProgramRecordSize);   // number 1 -- byte-identical to 0
+    size_t programVariantStart = pbk1BankA.size();
+    pushNameRecord(pbk1BankA, "Lead", kProgramRecordSize);   // number 2 -- same name, different bytes
+    pbk1BankA[programVariantStart] = 0xFF;                   // outside the name field (offset 4+), same trick as buildSyntheticPcgFile()
+    pushNameRecord(pbk1BankA, "Piano", kProgramRecordSize);  // number 3 -- unique name, never a collision
+    pushZeros(pbk1BankA, kProgramRecordSize);                // number 4 -- empty name, filtered out
+
+    std::vector<uint8_t> mbk1BankB;
+    pushU32BE(mbk1BankB, 1);
+    pushU32BE(mbk1BankB, static_cast<uint32_t>(kProgramRecordSize));
+    pushNameRecord(mbk1BankB, "Lead", kProgramRecordSize);  // number 0 -- same NAME as bank A, different engine (EXi)
+
+    std::vector<uint8_t> cbk1BankA;
+    pushU32BE(cbk1BankA, 5);
+    pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));
+    pushNameRecord(cbk1BankA, "Lead", kCombiRecordSize);   // number 0
+    pushNameRecord(cbk1BankA, "Lead", kCombiRecordSize);   // number 1 -- byte-identical to 0
+    size_t combiVariantStart = cbk1BankA.size();
+    pushNameRecord(cbk1BankA, "Lead", kCombiRecordSize);   // number 2 -- same name, different bytes
+    cbk1BankA[combiVariantStart] = 0xFF;
+    pushNameRecord(cbk1BankA, "Piano", kCombiRecordSize);       // number 3 -- unique name, never a collision
+    pushNameRecord(cbk1BankA, "Init Combi", kCombiRecordSize);  // number 4 -- placeholder name, filtered out
+
+    std::vector<uint8_t> prg1Content;
+    appendChunk(prg1Content, "PBK1", pbk1BankA);
+    appendChunk(prg1Content, "MBK1", mbk1BankB);
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1BankA);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "PRG1", prg1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testFindNameCollisions() {
+    kronos::PcgFile pcg;
+    std::string error;
+    bool loaded = pcg.loadFromMemory(buildNameCollisionFixture(), error);
+    CHECK(loaded);
+    if (!loaded) return;
+
+    auto programGroups = pcg.findProgramNameCollisions();
+    CHECK_EQ(programGroups.size(), static_cast<size_t>(1),
+             "exactly one Program name collision (\"Piano\", the empty name, and the cross-engine EXi \"Lead\" are "
+             "not collisions)");
+    if (programGroups.size() == 1) {
+        CHECK_EQ(programGroups[0].name, std::string("Lead"), "the collision is under \"Lead\"");
+        CHECK_EQ(programGroups[0].bankType, 0, "the collision is the HD-1 bank's own group (ProgramBankType::Hd1 = 0)");
+        // The real regression check: the EXi bank's own "Lead" (same name,
+        // different engine) must NOT have been folded into this group --
+        // still exactly the original 2 variants from the HD-1 bank alone,
+        // not 3.
+        CHECK_EQ(programGroups[0].variants.size(), static_cast<size_t>(2), "two distinct variants: {0,1} identical, {2} different");
+        if (programGroups[0].variants.size() == 2) {
+            CHECK_EQ(programGroups[0].variants[0].members.size(), static_cast<size_t>(2), "first variant has the two byte-identical records");
+            CHECK_EQ(programGroups[0].variants[1].members.size(), static_cast<size_t>(1), "second variant has the one differing record");
+            if (programGroups[0].variants[0].members.size() == 2) {
+                CHECK_EQ(programGroups[0].variants[0].members[0].second, 0, "variant 0's first member is number 0");
+                CHECK_EQ(programGroups[0].variants[0].members[1].second, 1, "variant 0's second member is number 1");
+            }
+            if (programGroups[0].variants[1].members.size() == 1) {
+                CHECK_EQ(programGroups[0].variants[1].members[0].second, 2, "variant 1's member is number 2");
+            }
+        }
+    }
+
+    auto combiGroups = pcg.findCombiNameCollisions();
+    CHECK_EQ(combiGroups.size(), static_cast<size_t>(1), "exactly one Combi name collision (\"Piano\" and \"Init Combi\" are not collisions)");
+    if (combiGroups.size() == 1) {
+        CHECK_EQ(combiGroups[0].name, std::string("Lead"), "the collision is under \"Lead\"");
+        CHECK_EQ(combiGroups[0].variants.size(), static_cast<size_t>(2), "two distinct variants: {0,1} identical, {2} different");
+    }
+}
+
+// Dedicated fixture for testFindAndResolveDuplicateCombis() -- two
+// byte-identical Combis ("Twin", built via the real makeCbkCombiRecord()
+// so this exercises hashCombiRecord() against a realistic record, not just
+// a flat pushNameRecord() one), a third unique one ("Solo"), and two Set
+// List slots -- one already referencing the copy that'll be kept (number
+// 1), one referencing the one that'll be superseded (number 0) -- so
+// resolveDuplicateCombis() has a real repoint to do AND a real "already
+// correct, leave alone" case to not double-count.
+std::vector<uint8_t> buildCombiDuplicateFixture() {
+    constexpr uint32_t kSongsPerSetlist = 128;
+    constexpr size_t kRecordSize = 28;
+    constexpr size_t kSbkHeaderSize = 40;
+    constexpr size_t kSbkRecordSize = 542;
+    constexpr size_t kCombiRecordSize = kTimbreBaseOffset + kTimbreStride * 16;
+
+    std::vector<uint8_t> sdb1;
+    pushU32BE(sdb1, 1);
+    pushU32BE(sdb1, (kSongsPerSetlist + 1) * kRecordSize);
+    pushNameRecord(sdb1, "Test Setlist", kRecordSize);
+    pushNameRecord(sdb1, "Song A", kRecordSize);
+    pushNameRecord(sdb1, "Song B", kRecordSize);
+    for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+
+    std::vector<uint8_t> sbk1;
+    pushU32BE(sbk1, 1);
+    pushU32BE(sbk1, static_cast<uint32_t>(kSbkHeaderSize + kSongsPerSetlist * kSbkRecordSize));
+    pushZeros(sbk1, kSbkHeaderSize);
+    // Neither references number 0 -- an all-zero (empty/padding) song slot
+    // decodes as isProgram=false/bank=0/number=0 too (Type/bank/number are
+    // all zero-byte defaults), genuinely indistinguishable at the raw-byte
+    // level from a real reference there. Every other fixture in this file
+    // already avoids bank0/number0 for a real reference target for exactly
+    // this reason -- confirmed the hard way here (a first version of this
+    // fixture DID use number 0 and saw 127 "repoints", one per zero-filled
+    // padding slot beyond the two real ones, not the expected 1).
+    auto songA = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/1, 1, 0, 100, 0, 0, 0, "");
+    auto songB = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/2, 1, 0, 100, 0, 0, 0, "");
+    sbk1.insert(sbk1.end(), songA.begin(), songA.end());
+    sbk1.insert(sbk1.end(), songB.begin(), songB.end());
+    for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+
+    std::vector<uint8_t> cbk1BankA;
+    pushU32BE(cbk1BankA, 3);
+    pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));
+    auto solo = makeCbkCombiRecord("Solo", kCombiRecordSize);
+    cbk1BankA.insert(cbk1BankA.end(), solo.begin(), solo.end());  // number 0 -- unique, never referenced
+    auto twin = makeCbkCombiRecord("Twin", kCombiRecordSize);
+    cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 1
+    cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 2 -- byte-identical to number 1
+
+    std::vector<uint8_t> sls1Content;
+    appendChunk(sls1Content, "SDB1", sdb1);
+    appendChunk(sls1Content, "SBK1", sbk1);
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1BankA);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "SLS1", sls1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testFindAndResolveDuplicateCombis() {
+    // --- findDuplicateCombis(): exactly one group, {1,2} -----------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto groups = pcg.findDuplicateCombis();
+        CHECK_EQ(groups.size(), static_cast<size_t>(1), "exactly one duplicate Combi group (\"Solo\" is unique)");
+        if (groups.size() == 1) {
+            CHECK_EQ(groups[0].size(), static_cast<size_t>(2), "two byte-identical copies");
+            if (groups[0].size() == 2) {
+                CHECK_EQ(groups[0][0].number, 1, "first copy is number 1");
+                CHECK_EQ(groups[0][1].number, 2, "second copy is number 2");
+            }
+        }
+    }
+
+    // --- resolveDuplicateCombis(): keep number 2, repoints number 1's Set
+    // List reference, leaves number 1's own bytes untouched --------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 1, "setup: Song A references number 1");
+
+        auto result =
+            pcg.resolveDuplicateCombis(/*keepBank=*/0, /*keepNumber=*/2, /*targets=*/{{0, 1}}, /*requireByteExactMatch=*/true);
+        CHECK(result.ok);
+        if (!result.ok) {
+            std::fprintf(stderr, "  resolveDuplicateCombis() error: %s\n", result.error.c_str());
+            return;
+        }
+        CHECK_EQ(result.setlistRefsRepointed, 1, "exactly one Set List slot referenced the duplicate (number 1)");
+
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 2, "Song A repointed to number 2");
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 2, "Song B still references number 2 (already correct)");
+
+        // The duplicate's OWN bytes are untouched -- still there, still
+        // named "Twin", per this method's own doc comment: no Init Combi
+        // template exists yet to clear it to.
+        auto stillThere = pcg.decodeCombi(0, 1);
+        CHECK(stillThere.has_value());
+        if (stillThere) CHECK_EQ(stillThere->name, std::string("Twin"), "the duplicate's own content is untouched");
+    }
+
+    // --- Rejected: no such Combi to keep ---------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.resolveDuplicateCombis(0, 99, {{0, 1}}, /*requireByteExactMatch=*/true);
+        CHECK(!result.ok);
+    }
+}
+
+// requireByteExactMatch=false -- the Combi side of the same "Same name,
+// different content" consolidate flow tested for Programs above (see
+// testResolveDuplicatesConsolidateDifferentContent()'s own comment).
+// "Solo" (number 0) and "Twin" (number 1) in buildCombiDuplicateFixture()
+// are genuinely different content -- the exact pair testFindAndResolve-
+// DuplicateCombis() above proves gets REJECTED when requireByteExactMatch=
+// true; this proves it's ACCEPTED when false. Combis never clear bytes in
+// EITHER mode (PcgFile.h's own doc comment on resolveDuplicateCombis()), so
+// unlike the Program version there's no clearedPrograms-style count to
+// check -- "Solo"'s own content simply staying "Solo" IS the assertion.
+void testResolveDuplicateCombisConsolidateDifferentContent() {
+    kronos::PcgFile pcg;
+    std::string error;
+    bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(), error);
+    CHECK(loaded);
+    if (!loaded) return;
+
+    auto result = pcg.resolveDuplicateCombis(/*keepBank=*/0, /*keepNumber=*/1, /*targets=*/{{0, 0}},
+                                              /*requireByteExactMatch=*/false);
+    CHECK(result.ok);
+    if (!result.ok) {
+        std::fprintf(stderr, "  resolveDuplicateCombis() error: %s\n", result.error.c_str());
+        return;
+    }
+
+    auto stillSolo = pcg.decodeCombi(0, 0);
+    CHECK(stillSolo.has_value());
+    if (stillSolo) {
+        CHECK_EQ(stillSolo->name, std::string("Solo"),
+                 "requireByteExactMatch=false leaves the target's genuinely-different content untouched");
+    }
+}
+
+// Dedicated fixture for testResolveDuplicateCombisSelective() below -- THREE
+// byte-identical Combis ("Twin", numbers 1/2/3) plus one unique ("Solo",
+// number 0), and two Set List slots each referencing a different Twin copy
+// (2/3). buildCombiDuplicateFixture() above only has room for two Twins,
+// which is enough to prove resolveDuplicateCombis() repoints a duplicate,
+// but not enough to prove it LEAVES AN UNNAMED one alone -- the whole point
+// of the 2026-08-25 explicit-targets change (Duplicates panel's resolve-
+// picker sidebar lets the user fold in only SOME of a group's duplicates).
+std::vector<uint8_t> buildCombiDuplicateTrioFixture() {
+    constexpr uint32_t kSongsPerSetlist = 128;
+    constexpr size_t kRecordSize = 28;
+    constexpr size_t kSbkHeaderSize = 40;
+    constexpr size_t kSbkRecordSize = 542;
+    constexpr size_t kCombiRecordSize = kTimbreBaseOffset + kTimbreStride * 16;
+
+    std::vector<uint8_t> sdb1;
+    pushU32BE(sdb1, 1);
+    pushU32BE(sdb1, (kSongsPerSetlist + 1) * kRecordSize);
+    pushNameRecord(sdb1, "Test Setlist", kRecordSize);
+    pushNameRecord(sdb1, "Song A", kRecordSize);
+    pushNameRecord(sdb1, "Song B", kRecordSize);
+    for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+
+    std::vector<uint8_t> sbk1;
+    pushU32BE(sbk1, 1);
+    pushU32BE(sbk1, static_cast<uint32_t>(kSbkHeaderSize + kSongsPerSetlist * kSbkRecordSize));
+    pushZeros(sbk1, kSbkHeaderSize);
+    // Neither song references number 0 -- see buildCombiDuplicateFixture()'s
+    // own comment above for why (an all-zero Set List slot decodes as
+    // bank=0/number=0 too, indistinguishable from a real reference there).
+    auto songA = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/2, 1, 0, 100, 0, 0, 0, "");
+    auto songB = makeSbkSongRecord(/*isProgram=*/false, /*bank=*/0, /*number=*/3, 1, 0, 100, 0, 0, 0, "");
+    sbk1.insert(sbk1.end(), songA.begin(), songA.end());
+    sbk1.insert(sbk1.end(), songB.begin(), songB.end());
+    for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+
+    std::vector<uint8_t> cbk1BankA;
+    pushU32BE(cbk1BankA, 4);
+    pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));
+    auto solo = makeCbkCombiRecord("Solo", kCombiRecordSize);
+    cbk1BankA.insert(cbk1BankA.end(), solo.begin(), solo.end());  // number 0 -- unique, mismatch-rejection target
+    auto twin = makeCbkCombiRecord("Twin", kCombiRecordSize);
+    cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 1 -- kept
+    cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 2 -- duplicate A, referenced by Song A
+    cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 3 -- duplicate B, referenced by Song B
+
+    std::vector<uint8_t> sls1Content;
+    appendChunk(sls1Content, "SDB1", sdb1);
+    appendChunk(sls1Content, "SBK1", sbk1);
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1BankA);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "SLS1", sls1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testResolveDuplicateCombisSelective() {
+    // --- Fold in only duplicate A (number 2), leave duplicate B (number 3)
+    // completely alone -- the core selective-resolve guarantee. -----------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiDuplicateTrioFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result =
+            pcg.resolveDuplicateCombis(/*keepBank=*/0, /*keepNumber=*/1, /*targets=*/{{0, 2}}, /*requireByteExactMatch=*/true);
+        CHECK(result.ok);
+        if (!result.ok) {
+            std::fprintf(stderr, "  resolveDuplicateCombis() error: %s\n", result.error.c_str());
+            return;
+        }
+        CHECK_EQ(result.setlistRefsRepointed, 1, "only Song A's reference (to the targeted number 2) was repointed");
+
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 1, "Song A repointed to the kept number 1");
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 3, "Song B untouched -- number 3 was never a target");
+
+        auto untouchedDup = pcg.decodeCombi(0, 3);
+        CHECK(untouchedDup.has_value());
+        if (untouchedDup) CHECK_EQ(untouchedDup->name, std::string("Twin"), "the un-targeted duplicate's content is untouched");
+
+        // Still findable as the SAME 3-member duplicate group as before --
+        // unlike the Program version, resolving a Combi duplicate never
+        // clears its bytes (this method's own doc comment), so number 2 is
+        // still byte-identical to numbers 1 and 3 even though its Set List
+        // reference already moved. Confirms resolving one member doesn't
+        // make it invisible to a follow-up resolve round (the sidebar's own
+        // "stays open" model) -- there's still a real reason to come back.
+        auto groups = pcg.findDuplicateCombis();
+        CHECK_EQ(groups.size(), static_cast<size_t>(1), "numbers 1, 2, and 3 still form one byte-exact group");
+        if (groups.size() == 1) CHECK_EQ(groups[0].size(), static_cast<size_t>(3), "content hashing is unaffected by resolve -- all three copies remain");
+    }
+
+    // --- Rejected: one target (number 0, "Solo") doesn't share the kept
+    // copy's contentHash -- all-or-nothing, so the OTHER, genuinely-
+    // matching target in the same call is left untouched too. ------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiDuplicateTrioFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.resolveDuplicateCombis(0, 1, {{0, 2}, {0, 0}}, /*requireByteExactMatch=*/true);
+        CHECK(!result.ok);
+
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 2, "hash-mismatch rejection writes nothing -- Song A still references number 2");
+        CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 3, "Song B untouched");
+    }
 }
 
 void testCombiRearrange() {
@@ -2332,6 +2831,11 @@ int main() {
     testSaveRoundTrip();
     testDirtyTracking();
     testResolveDuplicates();
+    testResolveDuplicatesConsolidateDifferentContent();
+    testFindNameCollisions();
+    testFindAndResolveDuplicateCombis();
+    testResolveDuplicateCombisSelective();
+    testResolveDuplicateCombisConsolidateDifferentContent();
     testResetProgram();
     testProgramSwap();
     testCombiRearrange();

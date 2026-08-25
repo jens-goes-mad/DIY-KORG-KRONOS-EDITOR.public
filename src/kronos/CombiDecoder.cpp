@@ -68,6 +68,15 @@ CombiFields decodeCombiFields(const uint8_t* record, size_t recordSize, int bank
     return fields;
 }
 
+uint64_t hashCombiRecord(const uint8_t* record, size_t recordSize) {
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < recordSize; ++i) {
+        hash ^= record[i];
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
 size_t timbreByteOffset(int timbreIndex) {
     return kTimbreBaseOffset + static_cast<size_t>(timbreIndex) * kTimbreStride;
 }

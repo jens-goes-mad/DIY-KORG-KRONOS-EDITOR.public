@@ -679,24 +679,49 @@
   // combiUsages computation above already makes this same simplification --
   // mock mode has no real kConfirmedTimbreBanks translation table to
   // replicate, so combiRefsSkipped is always 0 here).
-  window.resolveDuplicateProgram = (datasetId, bank, number) => {
+  //
+  // `targets` (2026-08-25, replaces an earlier "clear every same-name
+  // entry" version): a real array of {bank, number} objects -- exactly
+  // which duplicates the Duplicates panel's resolve-picker sidebar had
+  // checked, same explicit-subset model the real backend now uses.
+  //
+  // `requireByteExactMatch` (defaults true, 2026-08-25) -- same meaning as
+  // PcgFile::resolveDuplicates()'s own parameter: true validates every
+  // target's name matches the kept copy's (this mock's own "hash" stand-in,
+  // see this function's own top comment) before clearing it to Init
+  // Program; false skips that check entirely AND never clears anything --
+  // the "Same name, different content" consolidate flow, where targets are
+  // expected to genuinely differ, so their real content must never be
+  // destroyed (see PcgFile.h's own doc comment for the full reasoning).
+  window.resolveDuplicateProgram = (datasetId, bank, number, targets, requireByteExactMatch = true) => {
     const dataset = datasets[datasetId];
     if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
 
     const keep = dataset.programs.find((p) => p.bank === bank && p.number === number);
     if (!keep) return fail("No such Program to keep");
 
-    const duplicates = dataset.programs.filter(
-      (p) => p.name && p.name === keep.name && !(p.bank === bank && p.number === number)
-    );
+    const duplicates = [];
+    for (const t of targets || []) {
+      if (t.bank === bank && t.number === number) continue;
+      const dup = dataset.programs.find((p) => p.bank === t.bank && p.number === t.number);
+      if (!dup) return fail(`No such Program to resolve: bank ${t.bank}, number ${t.number}`);
+      if (requireByteExactMatch && (!dup.name || dup.name !== keep.name)) {
+        return fail(`Program at bank ${t.bank}, number ${t.number} isn't byte-identical to the kept copy`);
+      }
+      duplicates.push(dup);
+    }
 
     let clearedPrograms = 0;
     let setlistRefsRepointed = 0;
     let combiRefsRepointed = 0;
 
     for (const dup of duplicates) {
-      dup.name = dup.bankType === 0 ? "Init Program" : "Init EXi Program";  // kronos::ProgramBankType::Hd1 = 0
-      clearedPrograms++;
+      if (requireByteExactMatch) {
+        dup.name = dup.bankType === 0 ? "Init Program" : "Init EXi Program";  // kronos::ProgramBankType::Hd1 = 0
+        clearedPrograms++;
+      }
+      // requireByteExactMatch=false: dup's own content is deliberately left
+      // exactly as-is -- see this function's own doc comment above.
 
       for (const setlistIndex of Object.keys(dataset.songs)) {
         for (const song of dataset.songs[setlistIndex]) {
@@ -717,8 +742,54 @@
       }
     }
 
-    if (clearedPrograms > 0) dataset.dirty = true;
+    // Was `clearedPrograms > 0` only -- missed marking the dataset dirty
+    // when requireByteExactMatch=false clears nothing but still repoints
+    // real references (found while adding that mode, 2026-08-25).
+    if (clearedPrograms > 0 || setlistRefsRepointed > 0 || combiRefsRepointed > 0) dataset.dirty = true;
     return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
+  };
+
+  // Mirrors PcgFile::resolveDuplicateCombis() -- deliberately NOT symmetric
+  // with resolveDuplicateProgram() above: no real Init Combi byte capture
+  // exists yet (see that method's own doc comment in PcgFile.cpp), so the
+  // other duplicate Combis' own content is left untouched here too, only
+  // their Set List references move -- true in EITHER requireByteExactMatch
+  // mode, unlike the Program version above (Combis never clear bytes at
+  // all, see PcgFile.cpp's own doc comment). Same explicit `targets` model
+  // and `requireByteExactMatch` meaning/default as resolveDuplicateProgram()
+  // above (2026-08-25) -- see its own comment.
+  window.resolveDuplicateCombis = (datasetId, bank, number, targets, requireByteExactMatch = true) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+
+    const keep = dataset.combis.find((c) => c.bank === bank && c.number === number);
+    if (!keep) return fail("No such Combi to keep");
+
+    const duplicates = [];
+    for (const t of targets || []) {
+      if (t.bank === bank && t.number === number) continue;
+      const dup = dataset.combis.find((c) => c.bank === t.bank && c.number === t.number);
+      if (!dup) return fail(`No such Combi to resolve: bank ${t.bank}, number ${t.number}`);
+      if (requireByteExactMatch && (!dup.name || dup.name !== keep.name)) {
+        return fail(`Combi at bank ${t.bank}, number ${t.number} isn't byte-identical to the kept copy`);
+      }
+      duplicates.push(dup);
+    }
+
+    let setlistRefsRepointed = 0;
+    for (const dup of duplicates) {
+      for (const setlistIndex of Object.keys(dataset.songs)) {
+        for (const song of dataset.songs[setlistIndex]) {
+          if (song.isProgram || song.bank !== dup.bank || song.number !== dup.number) continue;
+          song.bank = bank;
+          song.number = number;
+          setlistRefsRepointed++;
+        }
+      }
+    }
+
+    if (setlistRefsRepointed > 0) dataset.dirty = true;
+    return ok({ setlistRefsRepointed });
   };
 
   // Mirrors PcgFile::resetProgram() -- the single-slot "reset entry" half of
@@ -1125,6 +1196,78 @@
       .filter((g) => g.length >= 2)
       .map((g) => g.map((p) => Object.assign({ setlistUsageCount: 0, combiUsageCountAvailable: true, combiUsageCount: 0 }, p)));
     return Promise.resolve(groups);
+  };
+
+  // Combi counterpart of findDuplicatePrograms() above, for symmetry (see
+  // STATE.md). Mock has no real bytes to hash, so -- same simplification
+  // resolveDuplicateProgram() above already uses -- `name` stands in for
+  // real byte-identical content. dataset.combis entries already carry their
+  // own setlistReferenceCount/setlistUsages (listCombis() above returns them
+  // as-is), so no extra Object.assign() overlay is needed here.
+  window.findDuplicateCombis = (datasetId) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return Promise.resolve([]);
+
+    const byName = {};
+    for (const c of dataset.combis) {
+      if (!c.name) continue;
+      (byName[c.name] = byName[c.name] || []).push(c);
+    }
+    const groups = Object.values(byName).filter((g) => g.length >= 2);
+    return Promise.resolve(groups);
+  };
+
+  // The inverse question from findDuplicatePrograms() above -- entries
+  // sharing a NAME but not actually the same (fake) content. Mock data has
+  // no real bytes to hash, so `bank` stands in as the "different content"
+  // signal one level further than findDuplicatePrograms() already goes:
+  // two same-named entries in the SAME bank are presumed identical fakes
+  // (one variant), different banks presumed different (separate variants)
+  // -- makeFakePrograms()/makeFakeCombis() both reuse the exact same name
+  // list per bank, so real bank0-vs-bank1 collisions already exist in the
+  // fixture data with no changes needed here.
+  //
+  // Grouped by (name, bankType) now, not name alone (2026-08-25, real bug
+  // fix mirrored from findProgramNameCollisions()'s own doc comment in
+  // PcgFile.h): makeFakePrograms()'s bank 0 = HD-1 / bank 1 = EXi convention
+  // means a fake "Bass 1" living in both banks used to register as a
+  // spurious 2-variant collision, even though two different synth engines
+  // sharing a name is coincidence, not a real "these are probably the same
+  // sound" signal. `e.bankType ?? -1` makes this a no-op for Combi entries
+  // (no such field at all) -- every Combi entry ends up keyed under the
+  // same -1, so they keep grouping by name alone exactly as before.
+  function findNameCollisions(entries, looksEmpty) {
+    const byNameAndType = {};
+    for (const e of entries) {
+      if (looksEmpty(e.name)) continue;
+      const key = `${e.name} ${e.bankType ?? -1}`;
+      (byNameAndType[key] = byNameAndType[key] || []).push(e);
+    }
+    const groups = [];
+    for (const sameNameAndType of Object.values(byNameAndType)) {
+      const byBank = {};
+      for (const e of sameNameAndType) (byBank[e.bank] = byBank[e.bank] || []).push(e);
+      const variants = Object.values(byBank);
+      if (variants.length < 2) continue;
+      groups.push({
+        name: sameNameAndType[0].name,
+        bankType: sameNameAndType[0].bankType ?? -1,
+        variants: variants.map((members) => ({ members })),
+      });
+    }
+    return groups;
+  }
+
+  window.findProgramNameCollisions = (datasetId) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return Promise.resolve([]);
+    return Promise.resolve(findNameCollisions(dataset.programs, looksLikeEmptyProgramName));
+  };
+
+  window.findCombiNameCollisions = (datasetId) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return Promise.resolve([]);
+    return Promise.resolve(findNameCollisions(dataset.combis, looksLikeEmptyCombiName));
   };
 
   // Experimental multi-window scaffolding (see STATE.md) -- the real

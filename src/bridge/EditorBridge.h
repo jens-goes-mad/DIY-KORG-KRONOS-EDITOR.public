@@ -216,6 +216,22 @@ public:
     choc::value::Value getProgramUsage(const choc::value::ValueView& args);       // [datasetId, bank, number]
     choc::value::Value findDuplicatePrograms(const choc::value::ValueView& args); // [datasetId]
 
+    // Same idea, for Combis -- added later than the Program version, for
+    // symmetry with the Combi tab's own name-collision check below.
+    choc::value::Value findDuplicateCombis(const choc::value::ValueView& args); // [datasetId]
+
+    // [datasetId] -> [{name, variants: [{members: [ProgramInfo/CombiInfo...]}]}].
+    // The inverse question from findDuplicatePrograms() above: entries
+    // sharing a NAME but NOT byte-identical -- see PcgFile::
+    // NameCollisionGroup's own doc comment for exactly what counts (2+
+    // variants under one name; a name where every entry is ALSO
+    // byte-identical is a plain duplicate, not returned here). `members` are
+    // full ProgramInfo/CombiInfo objects (via programToValue()/
+    // combiToValue()), not bare bank/number pairs, so the frontend can
+    // render them the same way findDuplicatePrograms()'s groups already are.
+    choc::value::Value findProgramNameCollisions(const choc::value::ValueView& args); // [datasetId]
+    choc::value::Value findCombiNameCollisions(const choc::value::ValueView& args);   // [datasetId]
+
     // [datasetId] -> [{bank, bankType}] for every Program bank in this file --
     // lighter than listPrograms() for UI that labels a *bank* rather than a
     // specific Program row (bank-filter buttons, a Set List slot's Bank-jump
@@ -247,17 +263,39 @@ public:
     // check doesn't apply here at all.
     choc::value::Value swapProgram(const choc::value::ValueView& args);
 
-    // [datasetId, bank, number] -> {ok, clearedPrograms, setlistRefsRepointed,
-    // combiRefsRepointed, combiRefsSkipped} or {ok:false, error}. Makes the
-    // given Program "the" copy of its byte-exact duplicate group (Duplicates
-    // panel) -- every OTHER duplicate gets cleared to its own bank's factory
-    // Init Program template, and every Set List/Combi reference to a cleared
-    // duplicate gets repointed to this one. See PcgFile::resolveDuplicates()'s
-    // own doc comment for the full behavior, including the Combi-repointing
-    // caveat (combiRefsSkipped). Reads resources/Init-Program-HD1.raw/
-    // Init-Program-EXi.raw fresh off disk on every call (small files, no
-    // caching needed) via EDITOR_RESOURCES_DIR -- see CMakeLists.txt.
+    // [datasetId, bank, number, targets, requireByteExactMatch] -> {ok,
+    // clearedPrograms, setlistRefsRepointed, combiRefsRepointed,
+    // combiRefsSkipped} or {ok:false, error}. `targets` is a JS array of
+    // {bank, number} objects -- exactly which duplicates to fold in, chosen
+    // by the user in the Duplicates panel's resolve-picker sidebar
+    // (2026-08-25 -- replaces an earlier "resolve the WHOLE group" version;
+    // see PcgFile::resolveDuplicates()'s own doc comment for why an explicit
+    // list). `requireByteExactMatch` (defaults true if omitted) picks which
+    // of the panel's two checks this is servicing -- true ("Same content,
+    // different location") clears every target to its own bank's factory
+    // Init Program template; false ("Same name, different content") never
+    // clears anything, targets are expected to genuinely differ (2026-08-25,
+    // per direct decision: destroying real, non-recoverable content isn't
+    // acceptable there). Either way every Set List/Combi reference to a
+    // target gets repointed to (bank, number). See PcgFile::
+    // resolveDuplicates()'s own doc comment for the full behavior, including
+    // the Combi-repointing caveat (combiRefsSkipped). Reads resources/
+    // Init-Program-HD1.raw/Init-Program-EXi.raw fresh off disk on every
+    // byte-exact call (small files, no caching needed) via
+    // EDITOR_RESOURCES_DIR -- see CMakeLists.txt; never read at all when
+    // requireByteExactMatch is false.
     choc::value::Value resolveDuplicateProgram(const choc::value::ValueView& args);
+
+    // [datasetId, bank, number, targets, requireByteExactMatch] -> {ok,
+    // setlistRefsRepointed} or {ok:false, error}. Same `targets`/
+    // `requireByteExactMatch` shapes/defaults as resolveDuplicateProgram()
+    // above. Deliberately NOT symmetric with resolveDuplicateProgram() --
+    // see PcgFile::resolveDuplicateCombis()'s own doc comment for why: no
+    // real Init Combi byte capture exists yet, so a target's own content is
+    // NEVER cleared in either mode, only its Set List references move --
+    // requireByteExactMatch only changes whether the contentHash match is
+    // verified first.
+    choc::value::Value resolveDuplicateCombis(const choc::value::ValueView& args);
 
     // [datasetId, bank, number] -> {ok} or {ok:false, error}. Writes the
     // matching Init Program template (HD-1 or EXi, by this bank's own type)
