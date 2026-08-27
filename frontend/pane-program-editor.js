@@ -1197,6 +1197,17 @@ function createDuplicatesPanel(
     viewSelectWrap.appendChild(viewSelect);
     content.appendChild(viewSelectWrap);
 
+    // Its own scrolling region, separate from `content` itself (2026-08-27,
+    // reported directly: the sub-tab strip AND the view dropdown were both
+    // scrolling away along with the table, instead of staying put like the
+    // sub-tabs already visually suggest they should -- `content` holds
+    // BOTH the dropdown above and this wrapper below, but only THIS one
+    // scrolls; see style.css's own .duplicates-table-scroll comment for
+    // the matching height/overflow chain fix this pairs with.
+    const tableScroll = document.createElement("div");
+    tableScroll.className = "duplicates-table-scroll";
+    content.appendChild(tableScroll);
+
     const isProgram = activeSubTab === "programs";
     const table =
       activeView[activeSubTab] === "content"
@@ -1212,7 +1223,7 @@ function createDuplicatesPanel(
               ? "No Programs share a name with different content."
               : "No Combis share a name with different content."
           );
-    content.appendChild(table);
+    tableScroll.appendChild(table);
 
     body.append(subtabs, content);
     panel.appendChild(body);

@@ -1108,6 +1108,20 @@ td.has-comment {
    own) since that mode has weaker WebKit support, and this app only ever
    runs inside a WebKit-based WebView (see STATE.md/docs/content/building
    -- WKWebView on macOS, WebKit2GTK on Linux). */
+
+/* .lib-panel itself has no CSS rule of its own anywhere else in this file --
+   a plain block element, height: auto by default -- so without this,
+   .duplicates-body's own `height: 100%` below has no real height to
+   resolve against (a percentage height against an auto-height ancestor
+   computes to auto too) and silently does nothing. Scoped to just the
+   Duplicates panel, not a bare `.lib-panel` rule -- Programs/Combis rely
+   on the OUTER .library-body's own overflow-y: auto instead (their
+   .lib-panel is a plain flowing block there, on purpose), so this must
+   not change their sizing. */
+.lib-panel[data-panel="duplicates"] {
+  height: 100%;
+}
+
 .duplicates-body {
   display: flex;
   height: 100%;
@@ -1129,9 +1143,27 @@ td.has-comment {
   padding: 10px 6px;
 }
 
+/* A flex COLUMN now, not just a plain scrolling box (2026-08-27, reported
+   directly: the sub-tab strip AND the view dropdown were both scrolling
+   away along with the table) -- the dropdown (.duplicates-view-select-wrap
+   below) stays a fixed, non-scrolling header; only .duplicates-table-scroll
+   underneath it actually scrolls. `min-height: 0` is the actual fix, not
+   just belt-and-suspenders -- a flex item's default min-height is `auto`
+   (sized to fit its content), which silently defeats ANY overflow rule on
+   it or its children until this is set; `min-width: 0` was already here
+   for the equivalent reason along the row axis (.duplicates-body itself is
+   a row), kept unchanged. */
 .duplicates-content {
   flex: 1;
-  min-width: 0; /* lets the table shrink/scroll instead of pushing the sub-tabs off-screen */
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.duplicates-table-scroll {
+  flex: 1;
+  min-height: 0; /* same flex gotcha as .duplicates-content above -- required for overflow-y to actually engage */
   overflow-y: auto;
 }
 
@@ -1142,6 +1174,7 @@ td.has-comment {
    section's own heading. */
 .duplicates-view-select-wrap {
   margin-bottom: 12px;
+  flex-shrink: 0; /* stays fixed, same reasoning as .duplicates-subtabs' own flex-shrink: 0 above */
 }
 
 /* A duplicate group's title row (renderExactDuplicatesTable() in

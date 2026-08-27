@@ -5113,6 +5113,64 @@ App/UI:
           review only, not a live click-through -- no UI automation/Accessibility
           permission available in this environment (confirmed via a failed `osascript`
           keystroke-simulation attempt) to actually click the dialog's own buttons.
+  72. **FIXED (2026-08-27)**, two more pieces of direct feedback on #71's work:
+      - **Duplicates panel: the whole pane was scrolling, not just the table.** The
+        vertical sub-tab strip and the view dropdown (`pane-program-editor.js`'s
+        `render()`) were both plain children of `.duplicates-content`, which is itself
+        just a child of `.lib-panel[data-panel="duplicates"]` inside `.library-body`
+        (`pane.js`) -- and `.lib-panel` has no CSS rule of its own anywhere (a plain
+        block, `height: auto`), so `.duplicates-body`'s own `height: 100%` (already
+        present) resolved against nothing and did nothing; `.library-body`'s OWN
+        `overflow-y: auto` ended up scrolling the entire thing together instead.
+        Fixed with a real height/overflow chain: `.lib-panel[data-panel="duplicates"]`
+        gained `height: 100%` (scoped to just this panel -- Programs/Combis
+        deliberately keep relying on `.library-body`'s own scroll, unaffected),
+        `.duplicates-content` became a flex COLUMN with `min-height: 0` (the actual
+        fix -- a flex item's default `min-height: auto` silently defeats ANY overflow
+        rule on it or its children until this is set, the same well-known gotcha
+        `min-width: 0` on the same element already existed to solve along the other
+        axis), and the table now lives in a NEW `.duplicates-table-scroll` wrapper
+        (`overflow-y: auto`, `flex: 1`, `min-height: 0`) separate from the dropdown,
+        which stays a fixed, non-scrolling header (`flex-shrink: 0`) above it. Verified
+        via balanced-brace and syntax checks only (no browser/screenshot tooling in
+        this environment) -- the reasoning is a standard, well-understood flexbox
+        pattern, not a guess, but genuinely not seen rendered.
+      - **Real bug, reported directly: "Closing the window leaves an artifact in the
+        process list."** Root cause: `DesktopWindow::forceClose()`'s own macOS
+        implementation (#71's CHOC patch) called plain `"close"` on the NSWindow, on
+        the INCORRECT, never-actually-verified assumption that it would re-invoke
+        `windowShouldClose:` the same way a user-initiated close does -- a real "no
+        guessing" violation, caught the hard way instead of checked first. Per Apple's
+        own documented contract, `-[NSWindow close]` deliberately does NOT consult the
+        delegate's `windowShouldClose:` at all (only the informational,
+        after-the-fact `windowWillClose:`) -- only `-performClose:` does, simulating a
+        real user-initiated close end to end. Calling plain `"close"` meant `p.window`
+        was never cleared and `windowClosed()` (what actually runs
+        `openWindows.erase()`/checks `openWindows.empty()`/stops the message loop in
+        `main.cpp`) never fired -- the NSWindow itself still visibly closed (`"close"`
+        DOES do that part), but the whole process silently never exited. Fixed by
+        switching to `"performClose:"`.
+        - **Root cause of never catching this earlier**: every one of #71's own live
+          tests exercised the APP-level `applicationShouldTerminate:` gate (Cmd+Q /
+          AppleScript `quit`, reached via a real `.app` bundle so AppleScript could
+          address it), never the PER-WINDOW `closeRequested`/`forceClose()` path this
+          bug actually lived in -- confirmed by re-reading that session's own test
+          trace, not assumed.
+        - **Verified for real this time, with an actual positive AND negative
+          control** -- no Accessibility/UI-scripting permission exists in this
+          environment to click a real title-bar close button (confirmed again), so a
+          TEMPORARY background `std::thread` (removed once done) posted a real
+          `closeRequested()` call onto the main message loop 3 seconds after launch,
+          simulating the exact gesture. With the bug still in place (`"close"`): the
+          process was confirmed STILL RUNNING 5+ seconds later (`ps`) -- a genuine
+          negative control, not just re-reading the same passing case. Switched to
+          `"performClose:"`: the same live test now showed the process genuinely GONE
+          within 4 seconds, no crash, log clean. `cmake --build` (`pcg_file_test` +
+          `kronos_editor`) clean throughout both directions, `pcg_file_test`: "All
+          checks passed" (untouched, confirms no regression). All temporary test code
+          (the background thread, its now-unneeded `<thread>`/`<chrono>` includes)
+          fully removed afterward -- confirmed via a final clean rebuild with none of
+          it present.
 
 CLEAN UP -- noted 2026-08-15:
 

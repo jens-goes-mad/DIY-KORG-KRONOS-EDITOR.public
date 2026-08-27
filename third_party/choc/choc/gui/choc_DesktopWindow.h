@@ -482,14 +482,30 @@ struct DesktopWindow::Pimpl
         CHOC_AUTORELEASE_END
     }
 
-    // DIY-KRONOS-EDITOR local addition (2026-08-26) -- see closeRequested's
-    // own doc comment in the public class declaration, and the
-    // windowShouldClose: handler above for the forcingClose escape hatch
-    // this sets. "close" re-enters that same delegate method (Cocoa always
-    // consults windowShouldClose: for a delegate that implements it, even
-    // for a programmatic close, not just a user-initiated one) -- forcing
-    // it to return TRUE this one time is what actually lets the close
-    // through for real.
+    // DIY-KRONOS-EDITOR local addition (2026-08-26, FIXED 2026-08-27 -- see
+    // closeRequested's own doc comment in the public class declaration, and
+    // the windowShouldClose: handler above for the forcingClose escape
+    // hatch this sets). Reported directly: closing the window left the
+    // process running forever, never actually exiting -- root cause was
+    // this method originally calling plain "close" here, on the incorrect
+    // assumption (an actual violation of this project's own "no guessing"
+    // rule, caught the hard way instead of verified first) that it would
+    // re-enter windowShouldClose: the same way a user-initiated close does.
+    // It doesn't: per Apple's own documented contract, -[NSWindow close]
+    // deliberately does NOT consult the delegate's windowShouldClose: at
+    // all (only windowWillClose:, informational, after the fact) --
+    // -performClose: is the one that does, simulating a real user-
+    // initiated close (title-bar button/Cmd+W) end to end, INCLUDING that
+    // delegate check. Calling plain "close" meant `p.window` was never
+    // cleared and windowClosed() (owner.windowClosed -- what actually runs
+    // openWindows.erase()/checks openWindows.empty()/stops the message
+    // loop in main.cpp) never fired: the NSWindow itself still visibly
+    // closed (that part "close" DOES do), but the whole app silently never
+    // exited -- exactly the reported symptom. "performClose:" now
+    // re-enters windowShouldClose: exactly like the real user gesture does
+    // (this time with forcingClose already true, so it takes the "actually
+    // close" branch instead of vetoing again), which is what actually lets
+    // windowClosed() fire this time.
     void forceClose()
     {
         if (window == id{})
@@ -497,7 +513,7 @@ struct DesktopWindow::Pimpl
 
         CHOC_AUTORELEASE_BEGIN
         forcingClose = true;
-        objc::call<void> (window, "close");
+        objc::call<void> (window, "performClose:", (id) nullptr);
         forcingClose = false;
         CHOC_AUTORELEASE_END
     }
