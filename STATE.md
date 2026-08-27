@@ -4995,6 +4995,124 @@ App/UI:
         Hugo's own slug algorithm as already confirmed by this file's existing
         `#jumping-to-a-program-combi-or-set-list-slot` link (lowercase, punctuation
         stripped, spaces to hyphens) rather than a real build.
+  71. **BUILT (2026-08-26)**: two more pieces of direct feedback on #70's resolve picker,
+      plus a substantial new feature -- a real "you have unsaved changes, quit anyway?"
+      guard, which turned out to require patching vendored third_party/choc code.
+      - **Picking Src auto-checks every other copy as Dupl** (`pane-program-editor.js`'s
+        `srcRadio`'s own `change` listener) -- the common case is folding in everything
+        except the kept copy, so that's now the one-click default; the user un-checks any
+        specific entry to leave it alone instead. Picking a DIFFERENT Src resets the whole
+        selection back to "everyone else," rather than trying to preserve a prior partial
+        selection that no longer has a clear meaning against the new Src.
+      - **Blue replaced with orange** in the resolve picker: `accent-color: var(--editor-
+        accent)` on the Src/Dupl native radio/checkbox inputs (`.duplicate-resolve-table`,
+        style.css) -- the standard, WebKit-supported way to recolor a native control without
+        replacing it with a custom fake one -- plus the picker's own "Resolve"/"Consolidate"
+        button, which #69/#70 had deliberately left Bulma-blue ("a genuine write action, not
+        a toggled state") -- overridden per this direct request via its own new
+        `.duplicate-resolve-apply-button` class (not folded into style.css's shared
+        `.is-link` override list, since this button never uses `.is-link` at all).
+      - **Guard against quitting with unsaved changes** -- reported directly: "all unsaved
+        changes are lost without warning the user," wants a "you have unsaved changes, quit
+        without saving?" [yes]/[no] dialog. Investigation found this app's native windowing
+        (`choc::ui::DesktopWindow`, vendored `third_party/choc/`) has NO way to veto or
+        delay a close at all -- macOS's `windowShouldClose:` was hardcoded `return TRUE`,
+        Linux never connected to GTK's vetoable `"delete-event"` signal (only the
+        post-destruction `"destroy"`), and Windows' WM_CLOSE handler never destroyed
+        anything itself anyway (incidentally already "vetoable" by construction). Asked the
+        user via `AskUserQuestion` whether to scope this to macOS-only (the only platform
+        buildable/testable here) or write all three now, unverified on Windows/Linux --
+        chose all three now.
+        - **CHOC patch** (`choc_DesktopWindow.h`, every addition marked "DIY-KRONOS-EDITOR
+          local addition" with a date, so a future CHOC upgrade doesn't silently eat them):
+          new `DesktopWindow::closeRequested` (set = suppresses the window's own default
+          close entirely, notifies this callback instead of `windowClosed`) and
+          `DesktopWindow::forceClose()` (bypasses `closeRequested`, actually closes for
+          real, fires `windowClosed` as before). macOS: `windowShouldClose:` now checks
+          `closeRequested`/a new `forcingClose` re-entrancy flag (`forceClose()`'s own
+          `"close"` call would otherwise just re-trigger the same handler and veto itself).
+          Linux: added the missing `"delete-event"` connection (UNVERIFIED, no GTK
+          toolchain available -- `"destroy"` alone is provably too late to veto, per GTK's
+          own documented signal semantics, but never compiled). Windows: `handleClose()`
+          (WM_CLOSE) now calls `closeRequested` instead of `windowClosed` when set;
+          `forceClose()` reuses the existing `HWNDHolder::reset()` (UNVERIFIED, no Windows
+          toolchain available). Real bug hit and fixed on the FIRST macOS compile attempt:
+          `CHOC_AUTORELEASE_BEGIN`/`END` are a literal `{`/`}` pair (an `@autoreleasepool`
+          block) wrapping `windowShouldClose:`'s body -- an early `return` nested inside an
+          `if` block with `CHOC_AUTORELEASE_END` placed INSIDE that `if` closed the wrong
+          brace (the `if`'s own, not the autoreleasepool's), a real brace-mismatch compile
+          error, not a logic bug -- fixed by deciding the veto via a plain `bool shouldVeto`
+          declared BEFORE the autoreleasepool (so it's still in scope for one unified
+          `return` AFTER it closes), never nesting a return inside it at all.
+        - **A second, completely separate native gate, found the hard way**: after the CHOC
+          patch compiled and `EditorBridge::anyDatasetDirty()` (new -- `bool`, iterates
+          every open dataset's own already-existing `isDirty()`, no JS shape to bridge,
+          same "direct C++ caller" convention `getProgramRecordBytesRaw()` already
+          established) + `main.cpp`'s own `closeRequested` wiring were built and believed
+          complete, a REAL live test (a genuine `.app` bundle build, launched via `open` so
+          AppleScript could address it by bundle ID -- a raw `./kronos_editor` binary isn't
+          addressable that way at all, confirmed as a dead end first) sent a real `quit`
+          Apple Event and the app closed INSTANTLY anyway, despite the window-level veto.
+          Root cause, confirmed by reading Cocoa's own documented default: Cmd+Q / the Quit
+          menu item / Dock "Quit" / an AppleScript `quit` event all go through
+          `-[NSApplication terminate:]`, a COMPLETELY SEPARATE gate from any window's own
+          `windowShouldClose:` -- with no `NSApplicationDelegate` installed at all (true of
+          this app before this session), Cocoa's documented default is to just terminate
+          immediately, never consulting any window whatsoever. Fixed with a second, genuinely
+          new mechanism: a minimal `NSApplicationDelegate` (`main.cpp`'s own
+          `installAppTerminateDelegate()`/`AppTerminateContext`, macOS-only, `#if
+          CHOC_APPLE` -- NOT folded into the vendored CHOC patch, since this is an app-level,
+          not per-window, concern) implementing `applicationShouldTerminate:`, built with
+          the exact same raw-ObjC-runtime pattern (`createDelegateClass`,
+          `class_addMethod` with a stateless captureless `+[]` IMP,
+          `objc_setAssociatedObject`/`objc_getAssociatedObject` to reach real C++ context)
+          CHOC's own per-window delegate already establishes. Returns `NSTerminateNow` (1)
+          immediately if nothing's dirty; `NSTerminateLater` (2) otherwise, triggering the
+          SAME confirm-dialog round trip and leaving Cocoa waiting on an explicit later
+          `replyToApplicationShouldTerminate:` (YES, confirmed -- then
+          `choc::messageloop::stop()` directly, the same mechanism every normal window
+          close already uses to end `main()`'s `[NSApp run]` loop; NO, cancelled -- Cocoa is
+          genuinely BLOCKED waiting on exactly one reply once `NSTerminateLater` is
+          returned, so unlike the per-window veto, doing nothing here is NOT enough).
+        - **Frontend**: `app.js` gained `window.confirmQuitRequested()` (the per-window
+          path, called from `closeRequested`) and `window.confirmAppQuitRequested()` (the
+          app-level path, called from `applicationShouldTerminate:`) -- both show the exact
+          same dialog via `window.showConfirmDialog()` (confirm-dialog.js) -- NOT
+          `window.confirm()`, same reason `pane.js`'s existing Unload button already uses
+          it: WKWebView silently drops native JS `confirm()` under this app's WebView --
+          but reply differently afterward (`confirmQuitAndClose()`/`confirmAppQuitAndTerminate()`
+          + `cancelAppQuitReply()`, all bound per-window in `main.cpp` alongside the
+          existing `bindEditorBridgeFunctions()` call, `#if CHOC_APPLE`-guarded for the
+          app-level pair).
+        - **Verified for real, iteratively, catching two real bugs live**: a temporary
+          `TEMP_FORCE_DIRTY_FOR_MANUAL_TEST` constant (removed before finishing) simulated
+          a dirty dataset without needing a real `.PCG` file. First live test of the
+          per-window veto alone: worked (process stayed alive on a plain `./kronos_editor`
+          quit attempt). First live test of a real `quit` Apple Event against a proper
+          `.app` bundle: FAILED (app closed instantly) -- this is what surfaced the missing
+          `applicationShouldTerminate:` gate above. After adding it: temporary
+          `std::cerr` tracing confirmed the new delegate installs and IS invoked, but
+          initially still returned `NSTerminateNow` -- a real test-harness bug, not a code
+          bug (the temporary force-dirty flag had only been wired into the per-window path,
+          not the new app-level one) -- fixed, then a live `quit` Apple Event against the
+          dirty app correctly returned `NSTerminateLater` and the process stayed alive
+          waiting on the confirm dialog. (One false alarm along the way: forcibly killing
+          `osascript` mid-flight while it was blocked waiting for the Apple Event reply
+          appeared to kill the target app too -- running `osascript` detached instead
+          resolved this; not a real bug in this app, an artifact of the test harness
+          itself.) Full `cmake --build` (`pcg_file_test` + `kronos_editor`, both the normal
+          Debug `build/` dir and a separate, deliberately temporary `build_bundle_test/`
+          configured with `-DEDITOR_EMBED_RESOURCES=ON` purely to get a real `.app` bundle
+          for this live testing, removed afterward) clean throughout, `pcg_file_test`: "All
+          checks passed" (untouched by this feature, confirms no regression). All touched
+          frontend files parsed clean via `osascript -l JavaScript`.
+        - **Still open**: Linux/Windows halves of the CHOC patch are unverified (never
+          compiled) -- see their own doc comments in `choc_DesktopWindow.h` for exactly
+          what's untested there. The confirm→terminate and cancel→stay-open sub-paths
+          (`confirmAppQuitAndTerminate()`/`cancelAppQuitReply()`) were verified by code
+          review only, not a live click-through -- no UI automation/Accessibility
+          permission available in this environment (confirmed via a failed `osascript`
+          keystroke-simulation attempt) to actually click the dialog's own buttons.
 
 CLEAN UP -- noted 2026-08-15:
 

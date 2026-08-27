@@ -1176,6 +1176,32 @@ td.has-comment {
   text-align: center;
 }
 
+/* The Src radio / Dupl checkbox inputs themselves -- `accent-color` is the
+   standard, widely-supported way to recolor a NATIVE checkbox/radio's own
+   checked-state look without replacing it with a custom-styled fake input;
+   this app only ever runs inside a WebKit WebView (see STATE.md), which has
+   supported it for years. Per direct request -- these otherwise render in
+   the browser/OS's own default blue, the one remaining spot of un-recolored
+   blue in this picker now that its Resolve/Consolidate button (below) also
+   uses --editor-accent. */
+.duplicate-resolve-table input[type="radio"],
+.duplicate-resolve-table input[type="checkbox"] {
+  accent-color: var(--editor-accent);
+}
+
+/* The picker's own "Resolve"/"Consolidate" button -- orange now (2026-08-26,
+   per direct request), not Bulma's default blue an earlier pass deliberately
+   left it as ("a genuine write action, not a toggled state"). Given its own
+   class rather than folded into style.css's shared `.is-link` override list
+   above -- this button never uses `.is-link` at all, so it needs its own
+   rule, not a shared selector. Same dark-on-orange contrast treatment as
+   that shared rule for consistency. */
+.duplicate-resolve-apply-button {
+  background-color: var(--editor-accent);
+  border-color: var(--editor-accent);
+  color: #1b1d22;
+}
+
 /* One "Same name, different content" group's variant clusters -- a rule
    between each (not around every one, so two ADJACENT clusters read as
    visually separated from each other without every individual cluster

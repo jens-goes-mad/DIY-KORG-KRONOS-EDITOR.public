@@ -175,6 +175,74 @@ struct EditorWindowInstance {
     std::unique_ptr<choc::ui::WebView> webView;
 };
 
+#if CHOC_APPLE
+// Guard against quitting with unsaved changes (2026-08-26, see STATE.md) --
+// macOS-only half of that feature. Every DesktopWindow already gets a
+// closeRequested veto (choc_DesktopWindow.h, a DIY-KRONOS-EDITOR-local
+// patch to that otherwise-vendored file) covering a PER-WINDOW close
+// gesture -- the title-bar button, or Cmd+W. Cmd+Q, the app's own "Quit"
+// menu item, Dock "Quit", and an AppleScript `quit` Apple Event are a
+// COMPLETELY SEPARATE gate: all of them go straight through
+// -[NSApplication terminate:], which (confirmed the hard way -- a live
+// `quit` Apple Event sent to a real .app bundle build closed the app
+// instantly even with every open window's own closeRequested forcing a
+// veto) never consults any window's delegate AT ALL when, as here before
+// this addition, no NSApplicationDelegate implements
+// applicationShouldTerminate: -- Cocoa's documented default with no
+// delegate opinion is to just terminate immediately.
+//
+// NSTerminateLater (2) + a later explicit replyToApplicationShouldTerminate:
+// is the standard Cocoa pattern for an asynchronous decision here --
+// applicationShouldTerminate: itself must return synchronously, but
+// confirming via this app's own JS dialog (showConfirmDialog(), the only
+// one that actually shows anything in this WebView -- see confirm-dialog.js's
+// own doc comment) can't be. Raw ObjC runtime, mirroring EXACTLY the
+// pattern choc_DesktopWindow.h's own per-window delegate already
+// establishes (createDelegateClass, class_addMethod with a stateless
+// captureless `+[]` IMP, objc_setAssociatedObject to reach real context
+// from inside it) -- kept in this file rather than folded into that
+// vendored one, since applicationShouldTerminate: is a genuinely
+// app-level, not per-window, concern.
+struct AppTerminateContext {
+    EditorBridge* bridge = nullptr;
+    // Runs the confirm-then-terminate round trip against whichever
+    // window's WebView is still available (any one -- every window shares
+    // the exact same in-memory datasets, see EditorWindowInstance's own
+    // doc comment above) once applicationShouldTerminate: has already
+    // decided there's something worth asking about (bridge->anyDatasetDirty()).
+    // Always eventually calls choc::messageloop::stop() (confirmed) or
+    // replyToApplicationShouldTerminate:NO (cancelled) -- Cocoa is
+    // BLOCKED waiting on exactly one reply once NSTerminateLater is
+    // returned below, and never receiving one would leave the app stuck
+    // in a "still quitting" limbo state indefinitely.
+    std::function<void()> confirmThenTerminate;
+};
+
+void installAppTerminateDelegate(AppTerminateContext* context) {
+    using namespace choc::objc;
+
+    static Class delegateClass = [] {
+        auto c = createDelegateClass("NSObject", "CHOCAppTerminateDelegate_");
+        class_addMethod(c, sel_registerName("applicationShouldTerminate:"),
+                         (IMP)(+[](id self, SEL, id) -> unsigned long {
+                             auto* ctx = (AppTerminateContext*)objc_getAssociatedObject(self, "ctx");
+                             if (ctx == nullptr || ctx->bridge == nullptr || !ctx->bridge->anyDatasetDirty())
+                                 return 1;  // NSTerminateNow
+
+                             if (ctx->confirmThenTerminate) ctx->confirmThenTerminate();
+                             return 2;  // NSTerminateLater -- see confirmThenTerminate's own doc comment above
+                         }),
+                         "L@:@");
+        objc_registerClassPair(c);
+        return c;
+    }();
+
+    auto delegate = call<id>((id)delegateClass, "new");
+    objc_setAssociatedObject(delegate, "ctx", (CHOC_OBJC_CAST_BRIDGED id)context, OBJC_ASSOCIATION_ASSIGN);
+    call<void>(getSharedNSApplication(), "setDelegate:", delegate);
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -234,6 +302,14 @@ int main() {
                               int minWidth, int minHeight, std::function<void(choc::ui::WebView&)> extraBindings,
                               std::function<void()> onClosed, const std::string& resourceDir) -> EditorWindowInstance* {
         auto instance = std::make_unique<EditorWindowInstance>();
+        // Computed here (not after openWindows.push_back(std::move(instance))
+        // below, where it USED to first appear) so options.webviewIsReady's
+        // own closure below can bind confirmQuitAndClose to THIS exact
+        // window instance -- `instance` itself can't be captured by value
+        // (unique_ptr) or safely by reference (about to be moved into
+        // openWindows), but the raw pointer stays valid identically to how
+        // windowClosed's own closure already relies on further down.
+        EditorWindowInstance* rawInstance = instance.get();
         instance->window = std::make_unique<choc::ui::DesktopWindow>(choc::ui::Bounds{100, 100, width, height});
         instance->window->setWindowTitle(title);
         instance->window->setResizable(true);
@@ -260,10 +336,46 @@ int main() {
             return loadFrontendResource(relative, resourceDir);
         };
 
-        options.webviewIsReady = [&bridge, &ctx, extraBindings](choc::ui::WebView& view) {
+        options.webviewIsReady = [&bridge, &ctx, extraBindings, rawInstance](choc::ui::WebView& view) {
             bindEditorBridgeFunctions(view, bridge);
 #ifdef EDITOR_HAS_PRIVATE_MODULE
             registerPrivateEditorExtensions(view, ctx);
+#endif
+            // Per-WINDOW-instance binding, not part of bindEditorBridgeFunctions()'s
+            // shared set (2026-08-26, see STATE.md's "Guard against quitting
+            // with unsaved changes") -- the JS-side confirm dialog this
+            // window's own closeRequested triggers (below) calls this once
+            // the user actually confirms "quit without saving", to close
+            // THIS specific window for real. Bound directly to rawInstance
+            // rather than reaching through some shared registry, since each
+            // window already owns its own WebView/bindings pair.
+            view.bind("confirmQuitAndClose", [rawInstance](const choc::value::ValueView&) -> choc::value::Value {
+                rawInstance->window->forceClose();
+                return choc::value::Value();
+            });
+#if CHOC_APPLE
+            // Bound on every window (not just whichever one happens to run
+            // the confirm dialog -- installAppTerminateDelegate's own
+            // confirmThenTerminate picks any available window's WebView, see
+            // its doc comment above) so the binding is always there
+            // regardless of which one that ends up being. See app.js's
+            // confirmAppQuitRequested()'s own doc comment for why this pair
+            // isn't just confirmQuitAndClose() reused: this ends the WHOLE
+            // app (every window), and Cocoa is left BLOCKED waiting on
+            // exactly one reply to applicationShouldTerminate: once
+            // NSTerminateLater was returned, so the cancel path must
+            // explicitly say so too, unlike a plain per-window close veto.
+            view.bind("confirmAppQuitAndTerminate", [](const choc::value::ValueView&) -> choc::value::Value {
+                choc::objc::call<void>(choc::objc::getSharedNSApplication(), "replyToApplicationShouldTerminate:",
+                                        (BOOL)YES);
+                choc::messageloop::stop();
+                return choc::value::Value();
+            });
+            view.bind("cancelAppQuitReply", [](const choc::value::ValueView&) -> choc::value::Value {
+                choc::objc::call<void>(choc::objc::getSharedNSApplication(), "replyToApplicationShouldTerminate:",
+                                        (BOOL)NO);
+                return choc::value::Value();
+            });
 #endif
             if (extraBindings) extraBindings(view);
         };
@@ -283,7 +395,6 @@ int main() {
             viewPtr->evaluateJavascript("if (window.refreshDatasets) window.refreshDatasets();");
         });
 
-        EditorWindowInstance* rawInstance = instance.get();
         instance->window->windowClosed = [&openWindows, rawInstance, onClosed] {
             if (onClosed) onClosed();
             openWindows.erase(std::remove_if(openWindows.begin(), openWindows.end(),
@@ -292,6 +403,39 @@ int main() {
                                               }),
                                openWindows.end());
             if (openWindows.empty()) choc::messageloop::stop();
+        };
+
+        // Guard against quitting with unsaved changes (2026-08-26, reported
+        // directly: "all unsaved changes are lost without warning the
+        // user"). Setting closeRequested at all suppresses this window's
+        // OWN native close (any gesture: title-bar button, Cmd+Q, Alt+F4,
+        // window-manager Close -- see choc_DesktopWindow.h's own doc
+        // comment on closeRequested, a DIY-KRONOS-EDITOR-local addition to
+        // that otherwise-vendored third_party/choc header) until
+        // forceClose() is actually called -- either immediately below (no
+        // unsaved changes anywhere -- the common case, no dialog needed at
+        // all) or later, once the JS-side confirm dialog resolves and calls
+        // back into confirmQuitAndClose (bound above).
+        //
+        // Deliberately asks bridge.anyDatasetDirty() -- every dataset
+        // currently open in ANY pane of ANY window, not just this one --
+        // since this app has one shared EditorBridge instance (see this
+        // file's own EditorWindowInstance doc comment): a second window
+        // (e.g. a private module's own SGX-2 editor) can hold the very same
+        // in-memory data this window does, and losing it is losing it
+        // regardless of which window's close gesture the user happened to
+        // use. Real native confirm() is silently swallowed by this WebView
+        // (see confirm-dialog.js's own doc comment, and pane.js's Unload
+        // button, the first feature to hit this) -- window.showConfirmDialog()
+        // is what actually shows something, hence the JS round-trip instead
+        // of trying to block here synchronously and show a native dialog
+        // directly from C++.
+        instance->window->closeRequested = [&bridge, viewPtr, rawInstance] {
+            if (!bridge.anyDatasetDirty()) {
+                rawInstance->window->forceClose();
+                return;
+            }
+            viewPtr->evaluateJavascript("if (window.confirmQuitRequested) window.confirmQuitRequested();");
         };
 
         openWindows.push_back(std::move(instance));
@@ -317,6 +461,33 @@ int main() {
         createEditorWindow("/index.html", "DIY Kronos Editor (jens-goes-mad with claude) -- built " __DATE__ " " __TIME__,
                             1100, 650, 800, 500, nullptr, nullptr, frontendDir);
     if (mainWindow == nullptr) return 1;
+
+#if CHOC_APPLE
+    // Guard against quitting with unsaved changes (2026-08-26, see
+    // STATE.md) -- see installAppTerminateDelegate's own doc comment above
+    // for why this is a separate mechanism from every window's own
+    // closeRequested. appTerminateContext must outlive choc::messageloop::run()
+    // below (the delegate holds a raw, non-owning pointer to it via
+    // objc_setAssociatedObject/OBJC_ASSOCIATION_ASSIGN, mirroring
+    // choc_DesktopWindow.h's own getPimplFromContext() pattern) -- declared
+    // here, a local in main() itself, rather than heap-allocated and
+    // deliberately leaked, since main() only returns once the app is
+    // already quitting for real.
+    AppTerminateContext appTerminateContext;
+    appTerminateContext.bridge = &bridge;
+    appTerminateContext.confirmThenTerminate = [&openWindows] {
+        // Any open window's WebView works -- they all share the exact same
+        // in-memory datasets (EditorWindowInstance's own doc comment), so
+        // it doesn't matter which one actually shows the dialog.
+        for (auto& w : openWindows) {
+            if (w->webView) {
+                w->webView->evaluateJavascript("if (window.confirmAppQuitRequested) window.confirmAppQuitRequested();");
+                return;
+            }
+        }
+    };
+    installAppTerminateDelegate(&appTerminateContext);
+#endif
 
     choc::messageloop::run();
     return 0;

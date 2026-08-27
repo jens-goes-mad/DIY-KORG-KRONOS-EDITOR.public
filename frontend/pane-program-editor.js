@@ -711,9 +711,17 @@ function createDuplicatesPanel(
         srcRadio.name = "duplicate-resolve-src";
         srcRadio.checked = isSrc;
         srcRadio.title = `Keep ${label} -- the copy every checked "Dupl" below gets folded into.`;
+        // Picking a new Src auto-checks every OTHER entry as Dupl (2026-08-26,
+        // per direct request) -- the common case is folding in everything
+        // except the one being kept, so this makes that the one-click
+        // default; the user un-checks any specific entry they want to leave
+        // alone instead of having to check each one by hand. Re-picking a
+        // DIFFERENT Src resets the whole selection to "everyone else" again,
+        // rather than trying to preserve a prior partial selection that no
+        // longer has a clear meaning against the new Src.
         srcRadio.addEventListener("change", () => {
           resolvePicker.src = entryKey;
-          resolvePicker.dupl.delete(entryKey);  // a copy can't be its own duplicate
+          resolvePicker.dupl = new Set(group.map((e) => `${e.bank}-${e.number}`).filter((key) => key !== entryKey));
           renderResolvePicker();
         });
         srcTd.appendChild(srcRadio);
@@ -752,7 +760,11 @@ function createDuplicatesPanel(
     if (resolvePicker.src != null && resolvePicker.dupl.size > 0) {
       const resolveBtn = document.createElement("button");
       resolveBtn.type = "button";
-      resolveBtn.className = "button is-small is-link";
+      // Own class, not Bulma's `.is-link` (2026-08-26, per direct request --
+      // overrides an earlier deliberate call to leave this one blue) --
+      // style.css gives it --editor-accent, matching the rest of this
+      // picker's now-fully-orange look (sub-tab strip, Src/Dupl inputs).
+      resolveBtn.className = "button is-small duplicate-resolve-apply-button";
       resolveBtn.textContent = requireByteExactMatch
         ? `Resolve ${resolvePicker.dupl.size} into Src`
         : `Consolidate ${resolvePicker.dupl.size} into Src`;

@@ -80,8 +80,10 @@ Click the **⋯** button beside a group's own title row (visible whether the gro
 or not) to open the **resolve picker**, a side panel listing every copy in that group with two
 selectors each: a **Src** radio button (exactly one copy, the one to keep) and a **Dupl**
 checkbox (any number of the *other* copies -- disabled for whichever one is currently Src).
-This lets you fold in only *some* of a group's duplicates and deliberately leave others alone,
-e.g. copies you're keeping as an intentional backup rather than genuine clutter. A **Resolve**
+Picking a Src automatically checks every other copy as Dupl -- the common case is folding in
+everything except the one you're keeping, so that's the one-click default; un-check any
+specific copy you want to leave alone instead (e.g. an intentional backup rather than genuine
+clutter) -- picking a *different* Src resets the selection back to "everyone else" again. A **Resolve**
 button appears once a Src and at least one Dupl are chosen; clicking it clears every checked
 Dupl back to a blank slot -- its bank's own factory-default template, HD-1 or EXi depending on
 that copy's engine type -- and repoints every Set List slot or Combi Timbre that referenced a

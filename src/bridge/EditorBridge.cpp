@@ -372,6 +372,13 @@ choc::value::Value EditorBridge::isDatasetDirty(const choc::value::ValueView& ar
     return result;
 }
 
+bool EditorBridge::anyDatasetDirty() const {
+    for (const auto& [id, dataset] : m_datasets) {
+        if (dataset.file.isDirty()) return true;
+    }
+    return false;
+}
+
 choc::value::Value EditorBridge::listSetlists(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     auto it = m_datasets.find(datasetId);

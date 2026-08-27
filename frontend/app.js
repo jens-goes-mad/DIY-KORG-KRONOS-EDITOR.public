@@ -370,3 +370,61 @@ openFileButton.addEventListener("click", async () => {
     topbarLoading.hidden = true;
   }
 });
+
+// Called from native code (src/main.cpp's own closeRequested handler, via
+// evaluateJavascript()) the instant the user tries to close THIS window
+// specifically -- the title-bar button, or Cmd+W -- AND at least one open
+// dataset has unsaved changes -- native code already checked that part
+// (EditorBridge::anyDatasetDirty(), across every dataset in every pane of
+// every window, not just this one) before ever calling this, so this
+// function's only job is showing the dialog and acting on the answer.
+// window.confirmQuitAndClose() (bound per-window in main.cpp) is what
+// actually lets the close through for real -- native code otherwise
+// vetoes EVERY close attempt outright while closeRequested is set, so
+// doing nothing here (the Cancel/dismiss path) correctly leaves the
+// window exactly as it was, nothing lost.
+//
+// Deliberately NOT what fires for Cmd+Q / the app's own Quit menu item /
+// an AppleScript `quit` Apple Event -- confirmed the hard way (2026-08-26,
+// see STATE.md) that those go through a COMPLETELY SEPARATE native gate
+// (-[NSApplication terminate:], macOS-only), which calls
+// window.confirmAppQuitRequested() below instead.
+//
+// window.showConfirmDialog() (confirm-dialog.js), NOT window.confirm() --
+// same reason pane.js's own Unload button uses it: WKWebView silently
+// drops native JS confirm() dialogs under CHOC's WebView here.
+window.confirmQuitRequested = async () => {
+  const confirmed = await window.showConfirmDialog("You have unsaved changes. Quit without saving?", {
+    confirmLabel: "Quit Without Saving",
+    isDanger: true,
+  });
+  if (!confirmed) return;
+  await window.confirmQuitAndClose();
+};
+
+// The app-level counterpart of confirmQuitRequested() above -- called from
+// native code's own applicationShouldTerminate: delegate (main.cpp,
+// macOS-only) for Cmd+Q / the Quit menu item / Dock "Quit" / an AppleScript
+// `quit` Apple Event, once it's already established something is unsaved.
+// Same dialog, same wording -- from the user's perspective this is the
+// exact same question confirmQuitRequested() asks, just reached from a
+// different native gesture. The two native-side replies are NOT
+// symmetric, though: confirmAppQuitAndTerminate() ends the whole app (all
+// windows, not just one), and the Cancel/dismiss path here MUST explicitly
+// reply "don't terminate" (cancelAppQuitReply()) -- unlike
+// confirmQuitRequested() above, where doing nothing is enough (nothing
+// native is left waiting on an answer over there), a rejected
+// applicationShouldTerminate: leaves Cocoa BLOCKED expecting exactly one
+// reply, and never sending one would leave the app stuck looking like
+// it's still quitting.
+window.confirmAppQuitRequested = async () => {
+  const confirmed = await window.showConfirmDialog("You have unsaved changes. Quit without saving?", {
+    confirmLabel: "Quit Without Saving",
+    isDanger: true,
+  });
+  if (confirmed) {
+    await window.confirmAppQuitAndTerminate();
+  } else {
+    await window.cancelAppQuitReply();
+  }
+};

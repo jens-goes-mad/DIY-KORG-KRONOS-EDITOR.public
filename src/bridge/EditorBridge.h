@@ -407,6 +407,16 @@ public:
     std::optional<std::vector<uint8_t>> getProgramRecordBytesRaw(int datasetId, int bank, int number);
     bool putProgramRecordBytesRaw(int datasetId, int bank, int number, const std::vector<uint8_t>& bytes);
 
+    // Same "direct C++ caller" reasoning as the Raw pair above -- main.cpp's
+    // own quit-confirmation guard (2026-08-26, see STATE.md) needs to ask
+    // "is there ANYTHING unsaved, across every open dataset, in any pane of
+    // any window" before letting the app actually close, and that's a plain
+    // native question with no JS-facing shape to bridge at all. True the
+    // instant ANY open dataset's own PcgFile::isDirty() is true -- same
+    // dirty flag isDatasetDirty() already exposes per-dataset to JS (see its
+    // own doc comment), just checked across all of them at once here.
+    bool anyDatasetDirty() const;
+
 private:
     struct Dataset {
         kronos::PcgFile file;

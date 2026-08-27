@@ -106,6 +106,30 @@ struct DesktopWindow
     /// An optional callback that will be called when the parent window is closed
     std::function<void()> windowClosed;
 
+    /// DIY-KRONOS-EDITOR local addition (2026-08-26, see that project's own
+    /// STATE.md -- "Guard against quitting with unsaved changes"): an
+    /// optional callback invoked when the user attempts to close this window
+    /// via any native gesture (title-bar close button, Cmd+Q, Alt+F4, a
+    /// window-manager "Close", etc). Setting this SUPPRESSES the window's
+    /// default native close behavior -- the window no longer closes on its
+    /// own just because the user tried to; returning from this callback does
+    /// nothing by itself. Call forceClose() (immediately, or later from an
+    /// asynchronous decision such as a confirmation dialog resolving) to
+    /// actually close the window for real. Leave unset (the default, and the
+    /// only behavior every OTHER user of this vendored class still gets) for
+    /// a close attempt to succeed immediately exactly as before --
+    /// windowClosed still fires once the window is genuinely gone, in either
+    /// case.
+    std::function<void()> closeRequested;
+
+    /// DIY-KRONOS-EDITOR local addition (2026-08-26) -- actually closes this
+    /// window for real, bypassing closeRequested if it's set (so it's safe
+    /// to call from inside that very callback, for a "yes, always allow"
+    /// case, or later/asynchronously once some other decision resolves).
+    /// Fires windowClosed() once done, exactly as an unintercepted close
+    /// always did. A no-op if the window is already gone.
+    void forceClose();
+
     /// Information about a file drop event - see setFileDropCallback()
     struct FileDropEvent
     {
@@ -166,14 +190,38 @@ struct choc::ui::DesktopWindow::Pimpl
                                                  static_cast<Pimpl*> (arg)->windowDestroyEvent();
                                              }),
                                              this);
+        // DIY-KRONOS-EDITOR local addition (2026-08-26, UNVERIFIED -- no
+        // Linux/GTK toolchain available where this was written, see that
+        // project's own STATE.md): "delete-event" is GTK's own VETOABLE
+        // close signal (fired when the window manager asks the window to
+        // close -- the title-bar X, Alt+F4, etc); returning TRUE from its
+        // handler stops the default action (destroying the widget) dead,
+        // unlike "destroy" above, which only ever fires once destruction is
+        // already underway -- too late to prevent anything. Needed as a
+        // SEPARATE connection (closeRequested's own veto-then-confirm
+        // model, see its own doc comment above) since gtk_widget_destroy()
+        // (forceClose() below) does NOT re-emit "delete-event" -- only a
+        // window-manager-initiated close does -- so there's no risk of this
+        // handler re-vetoing a forceClose() call.
+        deleteEventHandlerID = g_signal_connect (G_OBJECT (window), "delete-event",
+                                                 G_CALLBACK (+[](GtkWidget*, GdkEvent*, gpointer arg) -> gboolean
+                                                 {
+                                                     return static_cast<Pimpl*> (arg)->windowDeleteEvent();
+                                                 }),
+                                                 this);
         setBounds (bounds);
         setVisible (true);
     }
 
     ~Pimpl()
     {
-        if (destroyHandlerID != 0 && window != nullptr)
-            g_signal_handler_disconnect (G_OBJECT (window), destroyHandlerID);
+        if (window != nullptr)
+        {
+            if (destroyHandlerID != 0)
+                g_signal_handler_disconnect (G_OBJECT (window), destroyHandlerID);
+            if (deleteEventHandlerID != 0)
+                g_signal_handler_disconnect (G_OBJECT (window), deleteEventHandlerID);
+        }
 
         g_clear_object (&window);
     }
@@ -184,6 +232,37 @@ struct choc::ui::DesktopWindow::Pimpl
 
         if (owner.windowClosed != nullptr)
             owner.windowClosed();
+    }
+
+    // DIY-KRONOS-EDITOR local addition (2026-08-26, UNVERIFIED, see the
+    // "delete-event" connection above for the full reasoning) -- returning
+    // TRUE vetoes the close outright (owner.closeRequested is responsible
+    // for calling forceClose() later if it decides the close should
+    // actually happen); returning FALSE (the un-intercepted, default case)
+    // lets GTK proceed exactly as it always did, which still ends up
+    // emitting "destroy" -> windowDestroyEvent() -> windowClosed() above,
+    // unchanged.
+    gboolean windowDeleteEvent()
+    {
+        if (owner.closeRequested != nullptr)
+        {
+            owner.closeRequested();
+            return TRUE;
+        }
+
+        return FALSE;
+    }
+
+    // DIY-KRONOS-EDITOR local addition (2026-08-26, UNVERIFIED) --
+    // gtk_widget_destroy() is a direct, programmatic destroy: unlike a
+    // window-manager-initiated close, it does NOT go through "delete-event"
+    // at all, so this can never re-trigger windowDeleteEvent()'s own veto
+    // above. Still emits "destroy" as normal, so windowClosed() above fires
+    // exactly the same way a real close always did.
+    void forceClose()
+    {
+        if (window != nullptr)
+            gtk_widget_destroy (window);
     }
 
     void* getWindowHandle() const     { return (void*) window; }
@@ -319,6 +398,7 @@ struct choc::ui::DesktopWindow::Pimpl
     GtkWidget* window = {};
     GtkWidget* content = {};
     unsigned long destroyHandlerID = 0;
+    unsigned long deleteEventHandlerID = 0;
     FileDropCallback fileDropCallback;
 };
 
@@ -399,6 +479,26 @@ struct DesktopWindow::Pimpl
     {
         CHOC_AUTORELEASE_BEGIN
         objc::call<void> (window, "setIsVisible:", (BOOL) visible);
+        CHOC_AUTORELEASE_END
+    }
+
+    // DIY-KRONOS-EDITOR local addition (2026-08-26) -- see closeRequested's
+    // own doc comment in the public class declaration, and the
+    // windowShouldClose: handler above for the forcingClose escape hatch
+    // this sets. "close" re-enters that same delegate method (Cocoa always
+    // consults windowShouldClose: for a delegate that implements it, even
+    // for a programmatic close, not just a user-initiated one) -- forcing
+    // it to return TRUE this one time is what actually lets the close
+    // through for real.
+    void forceClose()
+    {
+        if (window == id{})
+            return;
+
+        CHOC_AUTORELEASE_BEGIN
+        forcingClose = true;
+        objc::call<void> (window, "close");
+        forcingClose = false;
         CHOC_AUTORELEASE_END
     }
 
@@ -535,6 +635,7 @@ struct DesktopWindow::Pimpl
     DesktopWindow& owner;
     id window = {}, delegate = {}, intermediateView = {};
     FileDropCallback fileDropCallback;
+    bool forcingClose = false;  // DIY-KRONOS-EDITOR local addition (2026-08-26) -- see forceClose() above
 
     struct DelegateClass
     {
@@ -551,15 +652,53 @@ struct DesktopWindow::Pimpl
             class_addMethod (delegateClass, sel_registerName ("windowShouldClose:"),
                              (IMP) (+[](id self, SEL, id) -> BOOL
                              {
+                                 // Declared OUTSIDE the CHOC_AUTORELEASE_BEGIN/
+                                 // END pair (a plain `{`/`}` brace pair around
+                                 // an @autoreleasepool -- see
+                                 // choc_ObjectiveCHelpers.h) so it's still in
+                                 // scope for the `return` below, after that
+                                 // scope closes. `p` itself (from
+                                 // getPimplFromContext()) can't be read out
+                                 // here the same way -- it's declared INSIDE
+                                 // that scope -- hence deciding the actual
+                                 // BOOL via this flag instead of `p` directly.
+                                 bool shouldVeto = false;
+
                                  CHOC_AUTORELEASE_BEGIN
                                  auto& p = getPimplFromContext (self);
-                                 p.window = {};
 
-                                 if (auto callback = p.owner.windowClosed)
-                                     choc::messageloop::postMessage ([callback] { callback(); });
+                                 // DIY-KRONOS-EDITOR local addition
+                                 // (2026-08-26, see closeRequested's own doc
+                                 // comment in the public class declaration
+                                 // above): closeRequested being set means
+                                 // "this window closes ONLY via an explicit
+                                 // forceClose() call" -- veto every close
+                                 // attempt unconditionally (shouldVeto=true,
+                                 // leaving `window` untouched) while it's
+                                 // set, notify the callback instead of
+                                 // windowClosed, and let IT decide whether/
+                                 // when to call forceClose(). forcingClose
+                                 // is forceClose()'s own escape hatch --
+                                 // without it, forceClose()'s own "close"
+                                 // call below would just re-enter this exact
+                                 // handler and veto itself right back.
+                                 if (p.owner.closeRequested != nullptr && ! p.forcingClose)
+                                 {
+                                     shouldVeto = true;
+
+                                     if (auto callback = p.owner.closeRequested)
+                                         choc::messageloop::postMessage ([callback] { callback(); });
+                                 }
+                                 else
+                                 {
+                                     p.window = {};
+
+                                     if (auto callback = p.owner.windowClosed)
+                                         choc::messageloop::postMessage ([callback] { callback(); });
+                                 }
 
                                  CHOC_AUTORELEASE_END
-                                 return TRUE;
+                                 return shouldVeto ? FALSE : TRUE;
                              }),
                              "c@:@");
 
@@ -957,6 +1096,39 @@ private:
 
     void handleClose()
     {
+        // DIY-KRONOS-EDITOR local addition (2026-08-26, UNVERIFIED -- no
+        // Windows toolchain available where this was written, see that
+        // project's own STATE.md): WM_CLOSE never destroyed the window
+        // itself even before this change -- DestroyWindow() only ever
+        // happened elsewhere (this Pimpl's own destructor, via
+        // HWNDHolder::reset(), or forceClose() below) -- so WM_CLOSE was
+        // ALREADY a natural veto point on this platform; the only real
+        // change is notifying closeRequested (whose owner decides whether/
+        // when to call forceClose()) instead of windowClosed when it's set,
+        // rather than treating every WM_CLOSE as an immediate real close.
+        if (owner.closeRequested != nullptr)
+        {
+            owner.closeRequested();
+            return;
+        }
+
+        if (owner.windowClosed != nullptr)
+            owner.windowClosed();
+    }
+
+    // DIY-KRONOS-EDITOR local addition (2026-08-26, UNVERIFIED) --
+    // HWNDHolder::reset() sends WM_DESTROY (via DestroyWindow), not
+    // WM_CLOSE, so this can never re-enter handleClose()'s own veto above.
+    // wndProc doesn't handle WM_DESTROY at all (this Pimpl otherwise relies
+    // on its owning DesktopWindow simply going out of scope to clean up),
+    // so windowClosed is fired explicitly here rather than from a
+    // WM_DESTROY handler, to preserve the existing contract (main.cpp's own
+    // bookkeeping needs this to fire once the window is genuinely gone,
+    // exactly as before this whole change).
+    void forceClose()
+    {
+        hwnd.reset();
+
         if (owner.windowClosed != nullptr)
             owner.windowClosed();
     }
@@ -1066,6 +1238,7 @@ inline Bounds DesktopWindow::getBounds()                                   { ret
 inline void DesktopWindow::centreWithSize (int w, int h)                   { pimpl->centreWithSize (w, h); }
 inline void DesktopWindow::toFront()                                       { pimpl->toFront(); }
 inline void DesktopWindow::setFileDropCallback (FileDropCallback h)         { pimpl->setFileDropCallback (std::move (h)); }
+inline void DesktopWindow::forceClose()                                    { pimpl->forceClose(); }  // DIY-KRONOS-EDITOR local addition (2026-08-26)
 
 } // namespace choc::ui
 
