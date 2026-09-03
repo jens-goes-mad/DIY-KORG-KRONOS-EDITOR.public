@@ -133,6 +133,9 @@ thus: [jens-goes-mad](/me).
 - [The file format](/format) -- the full `.PCG`/`.SNG` container/chunk layout,
   SDB1/SBK1/CBK1/MBK1/PBK1 record structures, Combi Timbre references, and a running
   list of open questions.
+- [MIDI SysEx Protocol](/midi) -- Korg's own published Kronos MIDI wire protocol: the
+  Excl Header, Mode Change, Object Dump Request/Dump, and what's actually been verified
+  so far.
 - [User Guide](/guide) -- how to actually use the app: every pane, every button, every
   cross-link.
 - [Building the app](/building) -- how to compile it yourself on macOS, Linux, or

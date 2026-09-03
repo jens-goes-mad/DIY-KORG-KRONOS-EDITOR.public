@@ -542,7 +542,7 @@ td.has-comment {
    openRowMenu()'s own comment on why display/position are set inline), so
    Bulma's own --bulma-dropdown-* background/text variables never resolve
    here and the item read as unstyled/illegible without this. Same dark
-   floating-panel background as .cross-dataset-panel/.modal-card above
+   floating-panel background as .sidebar-panel/.modal-card above
    (--bg, this app's actual near-black, not Bulma's), hover in
    --editor-accent (darkorange) -- the app's one existing orange token,
    reused rather than a second hardcoded orange.  */
@@ -947,8 +947,8 @@ td.has-comment {
    uses, not a global --bulma-link remap -- `.is-link` is reused elsewhere
    for unrelated things (Font size/Color swatch/cross-dataset-panel/Comment
    Apply buttons) that should stay Bulma's default blue. Text color is this
-   app's own dark background shade (already used as the cross-dataset
-   panel's own background, see .cross-dataset-panel above) rather than
+   app's own dark background shade (already used as the sidebar
+   panel's own background, see .sidebar-panel above) rather than
    white, for better contrast against a mid-brightness orange -- same idea
    as Bulma's own semantic colors pairing a bright background with a DARK
    (not white) invert text.
@@ -1222,17 +1222,46 @@ td.has-comment {
   accent-color: var(--editor-accent);
 }
 
-/* The picker's own "Resolve"/"Consolidate" button -- orange now (2026-08-26,
-   per direct request), not Bulma's default blue an earlier pass deliberately
-   left it as ("a genuine write action, not a toggled state"). Given its own
-   class rather than folded into style.css's shared `.is-link` override list
-   above -- this button never uses `.is-link` at all, so it needs its own
-   rule, not a shared selector. Same dark-on-orange contrast treatment as
-   that shared rule for consistency. */
-.duplicate-resolve-apply-button {
+/* A generic "this is the primary orange action" button -- originally named
+   for the Duplicates picker's own "Resolve"/"Consolidate" button
+   (2026-08-26, per direct request: orange, not Bulma's default blue an
+   earlier pass deliberately left it as -- "a genuine write action, not a
+   toggled state"), renamed generic (2026-08-28) once the MIDI Settings
+   sidebar's own "Dump Request" button (midi-settings-panel.js) wanted the
+   exact same treatment -- two unrelated features both needing "the orange
+   primary-action button" is exactly the point where a Duplicates-specific
+   name stopped being honest. Given its own class rather than folded into
+   style.css's shared `.is-link` override list above -- neither of these
+   buttons uses `.is-link` at all, so this needs its own rule, not a shared
+   selector. Same dark-on-orange contrast treatment as that shared rule for
+   consistency. */
+.accent-button {
   background-color: var(--editor-accent);
   border-color: var(--editor-accent);
   color: #1b1d22;
+}
+
+/* MIDI Settings sidebar (midi-settings-panel.js, 2026-08-28) -- reuses
+   .cross-dataset-panel's own shell wholesale (see that file's own doc
+   comment for why it fits without a second native window), only these
+   three small pieces are genuinely new. */
+.midi-kronos-flag {
+  color: var(--editor-accent);
+  font-weight: 600;
+}
+
+/* Bulma's own semantic "danger" color, same reasoning as .toast-error
+   above -- reuse Bulma's real color system rather than a one-off red. */
+.midi-status-error {
+  color: var(--bulma-danger);
+}
+
+.midi-dump-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
 }
 
 /* One "Same name, different content" group's variant clusters -- a rule
@@ -1381,17 +1410,31 @@ td.has-comment {
    .accordion-content's own bottom padding. padding-top for the same
    reason as .internals-chunk-row above -- no header of its own to supply
    the gap under the topic row's title. */
-/* Cross-dataset Combi copy's Program-placement panel
-   (combi-cross-dataset-panel.js) -- a sliding side drawer, not a modal (this
-   app has none), mirroring a common tablet/mobile drawer pattern. Slides in
-   from whichever screen edge is nearest the destination pane
-   (slide-from-left/slide-from-right, toggled by that file's own
-   slideDirectionFor()), so it always emerges from the side the drop
-   actually landed on rather than a fixed corner. z-index below the toast
-   container (1000) so an error toast (e.g. Apply failing) still reads on
-   top of this panel, same layering intent as everywhere else in this app --
-   a transient interrupt always wins over a persistent one. */
-.cross-dataset-panel-backdrop {
+/* Generic sliding side panel shell (sidebar-panel.js's createSidebarPanel())
+   -- a sliding side drawer, not a modal (this app has none), mirroring a
+   common tablet/mobile drawer pattern. Originally built as this file's own
+   `.cross-dataset-panel*` (combi-cross-dataset-panel.js, the first caller),
+   then hand-copied twice more (the Duplicates panel's own resolve-picker,
+   then the MIDI Settings sidebar) before being extracted into one real
+   shared component (2026-08-28, per direct request: "make the sidebar
+   generic and usable for all kinds of content... avoid tightly coupling
+   between the different components") -- renamed `.sidebar-panel*` at the
+   same time so the CSS naming matches what it actually is now: a
+   content-agnostic shell every caller shares, not a cross-dataset-copy-
+   specific thing. combi-cross-dataset-panel.js itself is NOT yet migrated
+   onto the shared JS component (still its own lit-html rendering) but DOES
+   use these same renamed classes -- see that file's own doc comment, and
+   this file's `.cross-dataset-dep-row`/`-unmappable-row`/`-unresolved-*`/
+   `-slot-picker-*` rules further below, which stay named `.cross-dataset-*`
+   since THEY genuinely are specific to that one panel's own content, unlike
+   this shared shell. Slides in from whichever edge the caller picks
+   (slide-from-left/slide-from-right) -- combi-cross-dataset-panel.js picks
+   dynamically per open (nearest the destination pane, its own
+   slideDirectionFor()), the others use a fixed edge. z-index below the
+   toast container (1000) so an error toast still reads on top of any of
+   these, same layering intent as everywhere else in this app -- a
+   transient interrupt always wins over a persistent one. */
+.sidebar-panel-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
@@ -1399,11 +1442,11 @@ td.has-comment {
   opacity: 0;
   transition: opacity 0.2s ease;
 }
-.cross-dataset-panel-backdrop.is-visible {
+.sidebar-panel-backdrop.is-visible {
   opacity: 1;
 }
 
-.cross-dataset-panel {
+.sidebar-panel {
   position: fixed;
   top: 0;
   bottom: 0;
@@ -1427,34 +1470,34 @@ td.has-comment {
    buttons wired up yet (that only happens inside renderPanel(), which
    only runs from a real openPanel() call) -- reported directly, not
    caught before shipping. */
-.cross-dataset-panel[hidden] {
+.sidebar-panel[hidden] {
   display: none;
 }
-.cross-dataset-panel.slide-from-right {
+.sidebar-panel.slide-from-right {
   right: 0;
   transform: translateX(100%);
 }
-.cross-dataset-panel.slide-from-left {
+.sidebar-panel.slide-from-left {
   left: 0;
   transform: translateX(-100%);
 }
-.cross-dataset-panel.is-open {
+.sidebar-panel.is-open {
   transform: translateX(0);
 }
 
-.cross-dataset-panel-header {
+.sidebar-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
 }
-.cross-dataset-panel-title {
+.sidebar-panel-title {
   font-size: 15px;
   font-weight: 600;
   margin: 0;
 }
-.cross-dataset-panel-close {
+.sidebar-panel-close {
   background: none;
   border: none;
   color: inherit;
@@ -1462,24 +1505,24 @@ td.has-comment {
   font-size: 14px;
   opacity: 0.7;
 }
-.cross-dataset-panel-close:hover {
+.sidebar-panel-close:hover {
   opacity: 1;
 }
 
-.cross-dataset-panel-body {
+.sidebar-panel-body {
   flex: 1;
   overflow-y: auto;
   padding: 12px 16px;
 }
 
-.cross-dataset-section-heading {
+.sidebar-section-heading {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   opacity: 0.7;
   margin: 16px 0 8px;
 }
-.cross-dataset-section-heading:first-child {
+.sidebar-section-heading:first-child {
   margin-top: 0;
 }
 
@@ -1556,7 +1599,7 @@ td.has-comment {
   min-width: 0;
 }
 
-.cross-dataset-panel-footer {
+.sidebar-panel-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;

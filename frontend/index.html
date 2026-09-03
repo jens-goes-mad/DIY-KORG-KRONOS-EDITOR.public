@@ -57,6 +57,16 @@
         <div class="topbar-loading-spinner"></div>
         <span class="topbar-loading-text">Loading...</span>
       </div>
+      <!-- Only ever shown when the optional private companion module is
+           actually linked into this build (app.js checks
+           `typeof window.hasPrivateModule === "function"` -- see
+           Sgx2Editor.cpp's own doc comment on that binding in the private
+           repo) -- hidden here by default so a public build, which never
+           gets that binding at all, never shows a button that would do
+           nothing if clicked. Opens the private module's own MIDI Settings
+           window (device list + dump request, 2026-08-28). -->
+      <button class="button is-small settings-button" type="button" hidden
+              title="MIDI Settings (experimental -- private build only)">⚙</button>
     </div>
   </header>
 
@@ -91,6 +101,26 @@
        Mounted at the app level, same reasoning as the two roots above. -->
   <div id="confirmDialogRoot"></div>
 
+  <!-- MIDI Settings (midi-settings-panel.js, 2026-08-28) -- private-module
+       only (see app.js's own Settings button, hidden unless
+       window.hasPrivateModule exists), mounted at the app level rather than
+       owned by either pane since it isn't tied to any pane/dataset at all
+       (unlike the Duplicates panel's own resolve-picker sidebar, which IS
+       per-pane -- see pane-program-editor.js). Originally a whole separate
+       native window (mirroring the private module's own SGX-2 editor
+       window); reconsidered per direct feedback -- a single-instance
+       utility like this fits the same generic sliding-sidebar shell
+       (createSidebarPanel(), sidebar-panel.js) the Duplicates panel's own
+       resolve-picker also uses, with far less machinery than a second
+       native window needed. -->
+  <div id="midiSettingsPanelRoot"></div>
+
+  <!-- Loaded first among the app's own scripts, before anything that might
+       call createSidebarPanel() -- see that file's own doc comment for why
+       (some callers, e.g. midi-settings-panel.js, invoke it at their own
+       top-level eval time, not lazily inside a function, so it must
+       already exist by then). -->
+  <script src="sidebar-panel.js"></script>
   <script src="datasets.js"></script>
   <script src="pane-setlist-editor.js"></script>
   <script src="pane-program-editor.js"></script>
@@ -99,6 +129,7 @@
   <script src="internals.js"></script>
   <script src="combi-cross-dataset-panel.js"></script>
   <script src="confirm-dialog.js"></script>
+  <script src="midi-settings-panel.js"></script>
   <script src="mock_bridge.js"></script>
   <script src="app.js"></script>
 </body>
