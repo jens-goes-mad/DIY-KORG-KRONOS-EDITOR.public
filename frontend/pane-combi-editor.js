@@ -16,19 +16,6 @@
 // to split out, completing the same file-per-editor direction pane-setlist-
 // editor.js/pane-program-editor.js already established.
 
-// Set during a Combi row's own dragstart, cleared on dragend -- module-level
-// (not inside createCombisPanel() below) because createCombisPanel() is
-// called once PER PANE, so a per-pane `let` here would only ever be visible
-// to dragover handlers in the SAME pane the drag started in: a drag from one
-// pane onto a row in the OTHER pane (both showing the same dataset -- cross-
-// DATASET dragging is a separate, deliberate restriction, checked via
-// datasetId below, not this) would see this as still `null` and never light
-// up `.drop-target` at all. Same fix pane-setlist-editor.js's own
-// draggedFromDatasetId already uses for Setlist rows -- see buildCombisRow's
-// own comment for the three gestures this backs (swap / move within bank /
-// move to a different bank).
-let draggedCombi = null;
-
 // Mirrors kronos::TimbreStatus's Off value (PcgFile.h: `enum class
 // TimbreStatus { Off, Internal, External, Ex2, Unknown }`, Off = 0) -- the
 // bridge sends this as a raw int now (EditorBridge stopped formatting it to
@@ -329,7 +316,7 @@ function createCombisPanel(
     const tr = document.createElement("tr");
     tr.className = "editor-row";  // reuses the shared expand-row look from pane.js/style.css
     const td = document.createElement("td");
-    td.colSpan = 4;  // Bank, Name, Set Lists, #STL -- a real <table> again
+    td.colSpan = 5;  // Bank, Name, Set Lists, #STL, menu -- a real <table> again
 
     const heading = document.createElement("div");
     heading.className = "usage-heading";
@@ -410,6 +397,36 @@ function createCombisPanel(
     return tr;
   }
 
+  // Combi table's own "Reset entry" -- clears the slot back to a blank
+  // "- Init Combi -" record (EditorBridge::resetCombi()'s own doc comment
+  // covers how the blank bytes are sourced live from the same bank, and why
+  // it can refuse for a fully-populated bank). Confirmed first
+  // (isDanger: true) since it can't be undone, same as Programs' own
+  // resetEntry() (pane-program-editor.js). Unlike the drag gestures above,
+  // a reset never repoints anything -- a Set List slot referencing this
+  // (bank, number) keeps pointing at it, just showing different content
+  // afterwards -- so this refreshes the Setlist tab too (both this pane and
+  // the opposite one, if it shows the same dataset), not just the Combis
+  // table: the Setlist panel keeps its own JS-side cache of each slot's
+  // displayed name, which a reset wouldn't otherwise invalidate.
+  async function resetEntry(c) {
+    const label = formatBankNumber({ isProgram: false, bank: c.bank, number: c.number });
+    const confirmed = await window.showConfirmDialog(
+      `Reset ${label} ("${c.name || "(empty)"}") to a blank Init Combi? This can't be undone.`,
+      { confirmLabel: "Reset", isDanger: true }
+    );
+    if (!confirmed) return;
+    const result = await window.resetCombi(getDatasetId(), c.bank, c.number);
+    if (!result.ok) {
+      showToast(`Reset failed: ${result.error}`, { isError: true });
+      return;
+    }
+    log(`[Library:Combis] Reset ${label} to a blank Init Combi.`);
+    await onNeedsFullReload();
+    await onRefreshOppositeLibrary(getDatasetId());
+    await onSetlistRefsRepointed(getDatasetId());
+  }
+
   function render() {
     const needle = getFilterText().trim().toLowerCase();
     const rows = filterByName(combis, needle)
@@ -422,20 +439,36 @@ function createCombisPanel(
     const table = document.createElement("table");
     table.className = "table is-fullwidth is-hoverable is-narrow combis-table";
     table.innerHTML =
-      colgroupHtml([1.6, 3, null, 0.9]) +
+      colgroupHtml([1.6, 3, null, 0.9, 0.8]) +
       "<thead><tr><th>Bank</th><th>Name</th><th>Set Lists</th>" +
-      "<th title=\"Set List references\">#STL</th></tr></thead><tbody></tbody>";
+      "<th title=\"Set List references\">#STL</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     for (const c of rows) {
       const tr = document.createElement("tr");
       const nameTd = document.createElement("td");
       nameTd.textContent = c.name || "(empty)";
+      // Row's own "more actions" menu (currently just Reset entry) -- a
+      // real, always-visible **column** at the far right (2026-09-04, moved
+      // out of the Name cell per direct request), not right-click-only.
+      // Right-click/Ctrl+click still opens the same menu (below) for anyone
+      // used to that, but reported directly that a button-less right-click
+      // wasn't discoverable ("no hamburger") and, separately, that
+      // Ctrl+click specifically opened SOMETHING but selecting an item did
+      // nothing -- plausibly WKWebView's own native context menu rather
+      // than this app's, since a genuine `contextmenu` DOM event isn't
+      // guaranteed to fire for every input method that traditionally means
+      // "right-click." A real button sidesteps that uncertainty entirely.
+      // pane.js's menuCell() is the ONE place this button/column exists --
+      // pane-program-editor.js's identical column calls the exact same
+      // function, not a second hand-rolled copy.
+      const rowMenuItems = [{ label: "Reset entry…", onSelect: () => resetEntry(c) }];
       tr.append(
         bankCell(false, c.bank, c.number),
         nameTd,
         badgesCell(c.setlistUsages, c),
-        refCell(String(c.setlistReferenceCount), false)
+        refCell(String(c.setlistReferenceCount), false),
+        menuCell(rowMenuItems)
       );
 
       const key = `${c.bank}-${c.number}`;
@@ -446,131 +479,141 @@ function createCombisPanel(
         else expandedCombiKeys.add(key);
         render();
       });
+      // Right-click local menu -- same shared scaffolding
+      // (pane.js's showRowContextMenu()) and same item list the menu column
+      // above uses. See resetEntry() below.
+      tr.addEventListener("contextmenu", (ev) => {
+        showRowContextMenu(ev, rowMenuItems);
+      });
 
-      // Four gestures, still the same 3-zone drop pane-setlist-editor.js's
-      // Setlist table already uses (dropZoneForEvent(), a shared top-level
-      // function in pane.js) -- "onto" just branches in two depending on
-      // what's already at the target:
+      // Same-dataset gestures, on the 3-zone drop (drag-and-drop.js's shared
+      // makeRowDraggable()/dropZoneForEvent()) the Setlist table also uses:
       //  - Drop ONTO an EMPTY Combi row (its name case-insensitively
-      //    contains "init combi" -- Korg's own literal "Init Combi", or
-      //    this app's own vacated-slot rename from moveCombiToBank(),
-      //    "- Init Combi -") -> copy (PcgFile::copyCombi()). The source is
-      //    left completely untouched -- this is how to duplicate a Combi
-      //    (e.g. keeping a shared patch that needs a few Timbre levels
-      //    adjusted differently per physical setup) without editing the
-      //    original.
+      //    contains "init combi" -- Korg's own literal "Init Combi", or this
+      //    app's own vacated-slot rename, "- Init Combi -") -> COPY it there
+      //    (PcgFile::copyCombi(), source untouched) -- the way to keep two
+      //    variations of one patch, e.g. one tuned for a band with a brass
+      //    section and one without. Deliberately NOT modifier-gated (Shift
+      //    briefly was, 2026-09-04, reported not registering at all --
+      //    confirmed even "held before starting the drag", so this app no
+      //    longer trusts ANY modifier key during a drag on this platform;
+      //    see drag-and-drop.js's shiftHeld() for what's still Shift-gated
+      //    and its own now-updated doc comment). To MOVE a used Combi INTO
+      //    an empty slot instead, drag the EMPTY slot ONTO the used one --
+      //    the swap case right below already produces exactly that (the
+      //    used Combi lands where the empty one was, an Init Combi is left
+      //    behind at the used Combi's old spot), no modifier needed.
       //  - Drop ONTO any other (occupied) Combi row -> swap (same or
-      //    different bank -- always safe, nothing is destroyed, so no bank
-      //    restriction).
+      //    different bank -- always safe, nothing is destroyed).
       //  - Drop BEFORE/AFTER a row in the SAME bank -> move within bank
       //    (shift the intervening range, PcgFile::moveCombiWithinBank()).
-      //  - Drop BEFORE/AFTER a row in a DIFFERENT bank -> move to that
-      //    bank, overwriting the target (PcgFile::moveCombiToBank()) --
-      //    there's no "shift" concept spanning two independent banks'
-      //    128-slot arrays, so before/after collapses to the same thing as
-      //    onto once a bank boundary is crossed (including the empty-slot
-      //    copy case above -- before/after never copies, only onto does).
-      // Swap/move-within-bank/move-to-bank stay same-dataset-only (a bank/
-      // number reference isn't portable across two different files' bank
-      // layouts, same reasoning as Setlist slots) -- a drag originating from
-      // a different dataset isn't even shown as a valid target during
-      // dragover for those. The empty-slot COPY case above is the one
-      // exception (2026-08-14): it's the only gesture where the destination
-      // dataset's own Set Lists can never end up with a dangling reference
-      // (the source is never touched), so it's allowed cross-dataset -- via
-      // startCombiCrossDatasetCopy() (frontend/combi-cross-dataset-panel.js)
-      // instead of calling window.copyCombi() directly, since a Combi
-      // dragged into a DIFFERENT dataset can reference Programs that don't
-      // exist there yet and need resolving first.
-      tr.draggable = true;
-      tr.addEventListener("dragstart", (ev) => {
-        draggedCombi = { datasetId: getDatasetId(), bank: c.bank, number: c.number };
-        ev.dataTransfer.setData("application/json", JSON.stringify(draggedCombi));
-        ev.dataTransfer.effectAllowed = "move";
-      });
-      tr.addEventListener("dragend", () => {
-        draggedCombi = null;
-      });
-      tr.addEventListener("dragover", (ev) => {
-        // Cross-dataset only shows as a valid target for the empty-slot
-        // COPY gesture -- see this row's own dragstart/drop comment above
-        // for why that's the one exception to "same dataset only".
-        const sameDataset = draggedCombi != null && draggedCombi.datasetId === getDatasetId();
-        const crossDatasetCopyTarget = draggedCombi != null && !sameDataset && looksLikeEmptyCombiName(c.name);
-        if (!sameDataset && !crossDatasetCopyTarget) {
-          tr.classList.remove("drop-target");
-          return;
-        }
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = "move";
-        tr.classList.add("drop-target");
-      });
-      tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
-      tr.addEventListener("drop", async (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        tr.classList.remove("drop-target");
-        const raw = ev.dataTransfer.getData("application/json");
-        if (!raw) return;
-        const source = JSON.parse(raw);
-        if (source.datasetId === getDatasetId() && source.bank === c.bank && source.number === c.number) return;  // dropped on itself
+      //  - Drop BEFORE/AFTER a row in a DIFFERENT bank -> move to that bank,
+      //    overwriting the target (PcgFile::moveCombiToBank()) -- there's no
+      //    "shift" concept spanning two independent banks' 128-slot arrays,
+      //    so before/after collapses to the same as onto once a bank
+      //    boundary is crossed.
+      // All of those are same-dataset only (a bank/number reference isn't
+      // portable across two files' bank layouts, same reasoning as Setlist
+      // slots) -- a cross-dataset drag isn't even shown as a valid target
+      // for them. The one exception (2026-08-14): dropping onto an empty
+      // slot in a DIFFERENT dataset copies (never moves -- cross-dataset
+      // move isn't supported), via startCombiCrossDatasetCopy()
+      // (frontend/combi-cross-dataset-panel.js) rather than window.copyCombi()
+      // directly, since the Combi's Timbres can reference Programs that don't
+      // exist in the destination yet and need resolving first.
+      makeRowDraggable(tr, {
+        zones: true,
+        getPayload: () => ({ datasetId: getDatasetId(), bank: c.bank, number: c.number }),
+        classify: ({ dragged, zone }) => {
+          const sameDataset = dragged.datasetId === getDatasetId();
+          const emptyTarget = looksLikeEmptyCombiName(c.name);
+          // Cross-dataset: the ONE allowed gesture is copy-into-empty (the
+          // source is never touched, so the destination's Set Lists can't
+          // end up dangling) -- forced to the "on" zone regardless of where
+          // in the row the cursor is.
+          if (!sameDataset) return emptyTarget ? { effect: "copy", zone: "on" } : null;
+          // Same dataset: onto empty = copy, onto occupied = swap,
+          // before/after = move (within-bank shift, or overwrite the target
+          // bank once a bank boundary is crossed).
+          if (zone === "on") return { effect: emptyTarget ? "copy" : "move" };
+          return { effect: "move" };
+        },
+        onDrop: async ({ source, zone }) => {
+          if (source.datasetId === getDatasetId() && source.bank === c.bank && source.number === c.number) return;  // dropped on itself
 
-        const zone = dropZoneForEvent(tr, ev);
-        const sourceLabel = formatBankNumber({ isProgram: false, bank: source.bank, number: source.number });
-        const targetLabel = formatBankNumber({ isProgram: false, bank: c.bank, number: c.number });
-        const targetLooksEmpty = looksLikeEmptyCombiName(c.name);
+          const sourceLabel = formatBankNumber({ isProgram: false, bank: source.bank, number: source.number });
+          const targetLabel = formatBankNumber({ isProgram: false, bank: c.bank, number: c.number });
+          const targetLooksEmpty = looksLikeEmptyCombiName(c.name);
 
-        if (source.datasetId !== getDatasetId()) {
-          // Only the empty-slot COPY gesture goes cross-dataset -- see this
-          // row's own dragstart/drop comment above.
-          if (zone !== "on" || !targetLooksEmpty) return;
-          await startCombiCrossDatasetCopy({
-            srcDatasetId: source.datasetId,
-            srcBank: source.bank,
-            srcNumber: source.number,
-            dstDatasetId: getDatasetId(),
-            dstBank: c.bank,
-            dstNumber: c.number,
-            dstPaneEl: panelTable.closest(".pane"),
-            sourceLabel,
-            targetLabel,
-            onApplied: async () => {
-              await onNeedsFullReload();
-              await onRefreshOppositeLibrary(getDatasetId());
-            },
-          });
-          return;
-        }
+          if (source.datasetId !== getDatasetId()) {
+            // Only the empty-slot COPY gesture goes cross-dataset -- classify
+            // already coerced zone to "on" and rejected a non-empty target,
+            // but re-check the target since a stale render is possible.
+            if (!targetLooksEmpty) return;
+            await startCombiCrossDatasetCopy({
+              srcDatasetId: source.datasetId,
+              srcBank: source.bank,
+              srcNumber: source.number,
+              dstDatasetId: getDatasetId(),
+              dstBank: c.bank,
+              dstNumber: c.number,
+              dstPaneEl: panelTable.closest(".pane"),
+              sourceLabel,
+              targetLabel,
+              onApplied: async () => {
+                await onNeedsFullReload();
+                await onRefreshOppositeLibrary(getDatasetId());
+              },
+            });
+            return;
+          }
 
-        let result, description;
-        if (zone === "on" && targetLooksEmpty) {
-          result = await window.copyCombi(getDatasetId(), source.bank, source.number, c.bank, c.number);
-          description = `Copied ${sourceLabel} -> ${targetLabel}`;
-        } else if (zone === "on") {
-          result = await window.swapCombis(getDatasetId(), source.bank, source.number, c.bank, c.number);
-          description = `Swapped ${sourceLabel} <-> ${targetLabel}`;
-        } else if (source.bank === c.bank) {
-          const toNumber = zone === "before" ? c.number : c.number + 1;
-          result = await window.moveCombiWithinBank(getDatasetId(), c.bank, source.number, toNumber);
-          description = `Moved ${sourceLabel} to position ${kronosNumber(toNumber)}`;
-        } else {
-          result = await window.moveCombiToBank(getDatasetId(), source.bank, source.number, c.bank, c.number);
-          description = `Moved ${sourceLabel} -> ${targetLabel}, overwriting it`;
-        }
+          // Every non-copy branch appends its own "-- repointed N Set List
+          // slot(s)" suffix; the copy branch deliberately doesn't -- a copy
+          // NEVER repoints anything (setlistRefsRepointed is always 0 for
+          // it, see copyCombi()'s own doc comment), so reporting it there
+          // would only ever read "repointed 0", confusing noise rather than
+          // information. Reported directly (2026-09-04): it used to be
+          // appended unconditionally, after this whole if-chain.
+          let result, description;
+          if (zone === "on" && targetLooksEmpty) {
+            result = await window.copyCombi(getDatasetId(), source.bank, source.number, c.bank, c.number);
+            description = `Copied ${sourceLabel} -> ${targetLabel}.`;
+          } else if (zone === "on") {
+            result = await window.swapCombis(getDatasetId(), source.bank, source.number, c.bank, c.number);
+            description = `Swapped ${sourceLabel} <-> ${targetLabel}`;
+            if (result.ok) description += ` -- repointed ${result.setlistRefsRepointed} Set List slot(s).`;
+          } else if (source.bank === c.bank) {
+            // window.moveCombiWithinBank() takes the moving Combi's FINAL
+            // resting slot (PcgFile::moveCombiWithinBank() shifts the whole
+            // intervening range, then drops the record at exactly
+            // `toNumber`) -- drag-and-drop.js's shared finalIndexForInsert()
+            // converts the drop zone + target position into that.
+            const toNumber = finalIndexForInsert(zone, c.number, source.number);
+            if (toNumber === source.number) return;  // adjacent drop -- no real move
+            result = await window.moveCombiWithinBank(getDatasetId(), c.bank, source.number, toNumber);
+            description = `Moved ${sourceLabel} to position ${kronosNumber(toNumber)}`;
+            if (result.ok) description += ` -- repointed ${result.setlistRefsRepointed} Set List slot(s).`;
+          } else {
+            result = await window.moveCombiToBank(getDatasetId(), source.bank, source.number, c.bank, c.number);
+            description = `Moved ${sourceLabel} -> ${targetLabel}, overwriting it`;
+            if (result.ok) description += ` -- repointed ${result.setlistRefsRepointed} Set List slot(s).`;
+          }
 
-        if (!result.ok) {
-          showToast(result.error, { isError: true });
-          return;
-        }
-        showToast(`${description} -- repointed ${result.setlistRefsRepointed} Set List slot(s).`);
-        await onNeedsFullReload();
-        await onRefreshOppositeLibrary(getDatasetId());
-        // A swap/move-within-bank/move-to-bank can repoint real Set List
-        // references (a copy never does -- setlistRefsRepointed is always 0
-        // for it, see copyCombi()'s own doc comment) -- the Setlist tab's
-        // own cached entries need refreshing too, in both this pane and the
-        // opposite one, or they'd keep showing the pre-repoint bank/number.
-        if (result.setlistRefsRepointed > 0) await onSetlistRefsRepointed(getDatasetId());
+          if (!result.ok) {
+            showToast(result.error, { isError: true });
+            return;
+          }
+          showToast(description);
+          await onNeedsFullReload();
+          await onRefreshOppositeLibrary(getDatasetId());
+          // A swap/move-within-bank/move-to-bank can repoint real Set List
+          // references (a copy never does -- setlistRefsRepointed is always 0
+          // for it, see copyCombi()'s own doc comment) -- the Setlist tab's
+          // own cached entries need refreshing too, in both this pane and the
+          // opposite one, or they'd keep showing the pre-repoint bank/number.
+          if (result.setlistRefsRepointed > 0) await onSetlistRefsRepointed(getDatasetId());
+        },
       });
 
       tbody.appendChild(tr);

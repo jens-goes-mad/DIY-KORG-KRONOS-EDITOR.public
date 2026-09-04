@@ -141,6 +141,10 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
                [&bridge](const choc::value::ValueView& args) { return bridge.getProgramBankTypes(args); });
     view.bind("copyProgram", [&bridge](const choc::value::ValueView& args) { return bridge.copyProgram(args); });
     view.bind("swapProgram", [&bridge](const choc::value::ValueView& args) { return bridge.swapProgram(args); });
+    view.bind("moveProgramWithinBank",
+               [&bridge](const choc::value::ValueView& args) { return bridge.moveProgramWithinBank(args); });
+    view.bind("moveProgramToBank",
+               [&bridge](const choc::value::ValueView& args) { return bridge.moveProgramToBank(args); });
     view.bind("resolveDuplicateProgram", [&bridge](const choc::value::ValueView& args) {
         return bridge.resolveDuplicateProgram(args);
     });
@@ -149,6 +153,7 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
         return bridge.resolveDuplicateCombis(args);
     });
     view.bind("swapCombis", [&bridge](const choc::value::ValueView& args) { return bridge.swapCombis(args); });
+    view.bind("resetCombi", [&bridge](const choc::value::ValueView& args) { return bridge.resetCombi(args); });
     view.bind("moveCombiWithinBank",
                [&bridge](const choc::value::ValueView& args) { return bridge.moveCombiWithinBank(args); });
     view.bind("moveCombiToBank",

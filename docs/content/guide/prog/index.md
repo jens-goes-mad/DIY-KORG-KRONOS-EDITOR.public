@@ -22,10 +22,14 @@ everywhere it's actually used.
 
 ## Copying a Program by drag-and-drop
 
-Drag one Program row onto another (same pane or a different pane's dataset) to copy its
-raw bytes into that slot -- unlike a [Setlist](/guide/setlist) slot, this works *across*
+Drag one Program row onto an empty slot (same pane or a different pane's dataset) to copy
+its raw bytes into that slot -- unlike a [Setlist](/guide/setlist) slot, this works *across*
 datasets too, since a Program's own bank/number isn't referenced by anything outside its
-own file the way a Setlist slot is.
+own file the way a Setlist slot is. The only thing that blocks a copy is the destination
+already holding a *different* real Program (drop onto that to [swap](#swapping-programs-by-shiftdrag)
+instead) -- copying a Program that's already byte-identical to another one elsewhere in the
+file is completely fine and creates a real, independent third copy; there's no restriction
+against duplicate content.
 
 **Copying a Program this way copies its entire raw record verbatim, including its KARMA
 settings** -- and whether every part of those settings is safe to carry over between two
@@ -39,18 +43,48 @@ valuable ground truth. This applies to copying a Program directly, or as part of
 ### Swapping Programs by Shift+drag
 
 Dropping a Program directly onto another (already-used) Program normally refuses, since the
-two would otherwise collide -- **hold Shift while dropping** to swap the two instead: both
-keep their content, just at each other's position, and every Set List slot and every Combi
-Timbre that referenced either one follows it to its new spot. Same dataset only (a swap has
-no meaning across two different files). This is the same gesture Combis already support
-(see [Combi](/guide/combi)), and it's the only way to reorder two Programs that are
-otherwise byte-identical (e.g. two untouched "Init Program" slots), since a plain copy
-would be rejected as a duplicate.
+two would otherwise collide -- **hold Shift before you start dragging** (and keep it held)
+to swap the two instead: both keep their content, just at each other's position, and every
+Set List slot and every Combi Timbre that referenced either one follows it to its new spot.
+Same dataset only (a swap has no meaning across two different files). It's the only way to
+exchange two occupied slots' positions without losing either one's content -- a plain copy
+always refuses to overwrite a slot that already holds a different Program.
+
+**This gesture is unverified and may not register reliably** -- the equivalent Shift-drag
+gesture on the Combi table turned out not to register at all (confirmed directly, tried
+before *and* during the drag, and with Option/Alt too), which is why Combi dropped Shift
+entirely in favor of an unconditional gesture. Programs' version hasn't been re-tested the
+same way yet; if it doesn't work for you either, say so.
+
+While you drag, the target row is **green** with a **"+"** cursor when the drop will
+*copy* and **blue** when Shift is held (and registers) and it will *swap*.
+
+### Reordering Programs by drag-and-drop
+
+Drop a Program row **between two rows** (or before the first / after the last) instead of
+directly onto one, and it *moves* there rather than copying or swapping -- the same
+before/after insert gesture the [Setlist](/guide/setlist) and [Combi](/guide/combi) tables
+already have, with a line along the target row's top/bottom edge showing exactly where it
+will land.
+
+- **Within the same bank**, this shifts the intervening Programs down one to make room --
+  every Set List slot and Combi Timbre that referenced any of the shifted Programs follows
+  its content to its new position, same as a swap.
+- **Into a different bank of the SAME engine type** (HD-1 or EXi), this overwrites whatever
+  Program currently occupies that exact slot -- refused if the slot being overwritten is
+  still referenced by any Set List slot or Combi Timbre (move or copy it elsewhere first).
+  The vacated source slot is refilled with that bank's own factory Init Program template
+  (the same one [Resetting a slot](#resetting-a-slot) below writes).
+- **Into a bank of a DIFFERENT engine type** isn't offered at all -- a Program's own raw
+  bytes are engine-specific, same guard the copy/swap gestures above already enforce.
+
+Same-dataset only, like the swap gesture above -- dragging between two different files'
+panes only ever copies.
 
 ## Resetting a slot
 
-Right-click a Program row for a small local menu with one action: **Reset entry**.
-Confirming it writes that bank's factory Init Program (HD-1 or EXi, whichever matches the
+Click the **⋯** button in a Program row's own last column (or right-click the row) for a small
+local menu with one action: **Reset entry**. Confirming it writes that bank's factory Init Program (HD-1 or EXi, whichever matches the
 slot) straight over it -- the same content a brand-new, never-touched slot has. This is a
 single-slot reset: unlike resolving a [duplicate](#duplicates) below, nothing else in the
 file is repointed -- any Set List slot or Combi Timbre that already referenced this exact

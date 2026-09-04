@@ -5172,6 +5172,421 @@ App/UI:
           fully removed afterward -- confirmed via a final clean rebuild with none of
           it present.
 
+  73. **FIXED (2026-09-04)**, two drag-and-drop bugs reported directly against the
+      Combis table (`pane-combi-editor.js`):
+      - **"Sometimes the Combi is inserted AFTER the drop target."** Real off-by-one
+        in the before/after "move within bank" gesture. `window.moveCombiWithinBank()`
+        (and `reorderSongEntry()` for Set List slots, same bug) takes the moving
+        record's FINAL resting index -- `PcgFile::moveCombiWithinBank()`/`reorderSong()`
+        shift the whole intervening range, then drop the record at exactly that index.
+        The frontend passed `c.number` / `c.number + 1` unadjusted, but when the source
+        sits ABOVE the target, pulling it out first slides the target (and everything
+        between) down one slot, so the raw value overshoots by one and the Combi lands
+        one past where the cursor showed. Fixed in both places by computing
+        `insertPos` (where it should land in the CURRENT numbering) then subtracting one
+        iff `source < insertPos`; added the matching "adjacent drop = no real move"
+        guard the Combi path was missing. Downward drags now land exactly where the
+        before/after line indicated. Frontend-only -- the native final-index semantics
+        were already correct. Not run in a browser (no JS runtime in this environment);
+        the index arithmetic was traced by hand against both native shift loops.
+      - **"Hard to distinguish a copy from a move mid-drag."** The Combis table's four
+        gestures (swap onto occupied / copy onto empty / move before / move after) all
+        showed the same blue `.drop-target` hover and a `dropEffect = "move"` cursor.
+        Now `dragover` computes the gesture live and shows it: `.drop-copy` (green,
+        `--copy-accent`, plus the OS "+" cursor badge via `dropEffect = "copy"` --
+        needed `effectAllowed = "copyMove"` at dragstart, same as
+        `pane-program-editor.js`) for copy-onto-empty, the existing blue for swap, and
+        a line along the row's top/bottom edge (`.drop-before`/`.drop-after`, an inset
+        `<td>` box-shadow -- a `<tr>` one doesn't paint in a `border-collapse` table,
+        same limitation `.drop-indicator`/`.multi-selected` work around) for the two
+        move gestures. All four hover classes clear together on
+        dragleave/dragend/drop. Cross-dataset drops (copy-only) now also treat the
+        whole row as the "on" zone in the `drop` handler, matching what `dragover`
+        shows.
+      - **Then, per direct follow-up ("full consistency, remove redundant code to
+        dedicated drag-and-drop.js"): extracted the shared engine.** The Set List,
+        Programs and Combis tables each hand-rolled their own
+        dragstart/dragover/dragleave/dragend/drop skeleton -- near-identical, and
+        drifted (only Combis set a copy cursor, only Set List showed an insert line,
+        only Programs rejected an engine-type mismatch on hover; the off-by-one above
+        had to be fixed twice). New `frontend/drag-and-drop.js` (a plain global
+        script, loaded before the pane editors, no module system -- like `pane.js`'s
+        shared helpers) owns `makeRowDraggable(tr, { zones, getPayload, classify,
+        onDrop })` plus `dropZoneForEvent()` (moved out of `pane.js`) and the one
+        module-level "row being dragged" variable (was three: `draggedCombi`,
+        `draggedProgram`, `draggedFromDatasetId`). Each call site keeps only what
+        genuinely differs: `getPayload()`, `classify({dragged,zone,shiftKey}) => null
+        | {effect:"copy"|"move", zone?}` (validity + the copy/move judgement the hover
+        needs, called on every dragover, must be pure), and `onDrop({source,zone,
+        shiftKey})`. `classify` may return a coerced `zone` for gestures that force one
+        (cross-dataset Combi copy is always "onto").
+      - **Consistency changes that fell out of unifying it:** the Set List "onto"
+        drop (a copy-over) now shows the green `.drop-copy` + "+" cursor like every
+        other copy (was a bare `dropEffect = "move"`); the Programs copy hover is
+        green too (was blue -- blue now means move/swap everywhere); the Set List
+        insert line moved from a floating `.drop-indicator` div (deleted, along with
+        `showDropIndicator`/`hideDropIndicator` and the `position: relative` it needed
+        on `.entries-scroll`) to the same row-edge `<td>` box-shadow the Combis table
+        uses. `.drop-copy`/`.drop-before`/`.drop-after` CSS generalised from
+        `.combis-table` to all three tables. Guide docs (setlist/prog) updated for the
+        new visual language.
+      - **Then, "swap not working" reported directly.** The `drop` handler had (since
+        forever, in every version) recomputed the drop zone with a fresh
+        `dropZoneForEvent(tr, dropEvent)`. A `drop` event's cursor coords aren't as
+        reliable as a `dragover`'s -- seen arriving as `clientY: 0` in a WebView, which
+        `dropZoneForEvent` reads as `relativeY` far below 0 => `"before"`, so EVERY
+        Combi drop silently resolved to a move/insert and the swap ("onto") gesture
+        could never fire. Fixed by having `makeRowDraggable` remember the last
+        dragover's zone + `classify` verdict and act on THOSE at drop time -- the drop
+        now does exactly what the hover just promised, and never depends on the drop
+        event's own coordinates. Confirmed with a jsc harness (JavaScriptCore is on
+        this Mac even though node isn't): loads the real `drag-and-drop.js`, simulates
+        dragstart -> dragover(valid Y) -> drop(clientY 0), and the swap now fires where
+        before the fix it became `moveCombiToBank`.
+      - **Same round, per direct choice: dropping a USED Combi onto an EMPTY slot now
+        MOVES it (Shift = copy).** Was copy-only, which meant the intuitive
+        drag-X-onto-empty-slot gesture duplicated instead of moving, and the only way
+        to actually move was the backwards drag-the-empty-slot-onto-X. Now: plain drop
+        onto an "Init Combi" slot = `swapCombis` (the target's Init Combi record lands
+        in the source slot, i.e. a move that vacates the source); hold Shift =
+        `copyCombi` (the old behaviour, kept for the "two variations of one patch"
+        workflow). Hover is blue "will move" by default, green "+" under Shift. Note
+        this makes the Shift meaning OPPOSITE to the Programs table (there, plain =
+        copy, Shift = swap) -- deliberate: a Program's bank/number is its identity and
+        heavily referenced so copy is the safe default, a Combi is only referenced by
+        Set List slots (all repointed) so move is safe and intuitive.
+      - **Then "shift+copy not working, no + cursor" reported.** Root cause: **WebKit
+        (WKWebView on macOS -- CHOC's engine there) does not populate modifier-key
+        flags on drag events** -- `dragover.shiftKey` / `drop.shiftKey` are always
+        `false`. Long-standing WebKit behaviour; means the Programs Shift+drag-swap
+        (entry 48, 2026-08-15) had also silently never worked on Mac (only on Windows /
+        WebView2 / Chromium). Fixed in `drag-and-drop.js` by tracking Shift from real
+        `document` keydown/keyup (`capture: true`, `window` blur clears a stuck hold)
+        into a module-level `shiftKeyDown`, and reading `shiftHeld(ev) = ev.shiftKey ||
+        shiftKeyDown` everywhere the engine needs it -- covers WebKit (keydown fires,
+        event flag doesn't) and Chromium (both). The UX rule is now "hold Shift BEFORE
+        you start dragging" (like Option-drag in Finder): once a drag's own modal loop
+        starts, WebKit suppresses keyboard events, so a Shift pressed mid-drag isn't
+        seen -- but one held from before the mousedown already set `shiftKeyDown`.
+        Guide docs (combi/prog) + inline comments updated to say so. jsc harness
+        (which now stubs `document`) drives Shift via a real keydown and confirms the
+        copy path + green `.drop-copy` + `dropEffect="copy"`; full matrix
+        (empty/used x empty/used x shift x edge/middle x clientY-0 drop) passes.
+  74. **BUILT (2026-09-04)**: Combi "Reset entry" -- reported directly missing ("no
+      local menu or Hamburger in opened combi"), mirroring the Programs table's own
+      right-click reset (entry 58, 2026-08-20), which Combis never got.
+      - **Why it didn't exist yet**: `resetProgram()` writes a shipped factory
+        template (`resources/Init-Program-HD1.raw`/`-EXi.raw`). No such template
+        exists for Combis -- real "Init Combi" bytes differ across the 14 banks by
+        40+ unexplained bytes (entry 34), so one resource file would be wrong for 13
+        of 14, and this project's "no guessing, ever" rule rules out fabricating one.
+      - **How it works anyway**: `moveCombiToBank()` already solves the identical
+        problem for its own vacate step by sourcing a real "Init Combi" record LIVE
+        from elsewhere in the SAME bank, patching its name to "- Init Combi -" for
+        visibility. New `PcgFile::resetCombi(bank, number)` (`PcgFile.h`/`.cpp`)
+        reuses that exact donor search (exact, case-sensitive "Init Combi" match) and
+        a new shared `patchCombiNameToVacated()` helper (factored out of
+        `moveCombiToBank()`'s own inline version, itself unchanged in behavior) to
+        COPY the donor's bytes over the target instead of relocating them. Refuses
+        (nothing written) if the bank has no other exact "Init Combi" to draw from,
+        or the slot doesn't exist. Never repoints anything -- mirrors
+        `resetProgram()`'s own "existing references keep pointing, now showing the
+        reset content" contract exactly, including discarding the
+        `repointSetlistReferences()` call's return value rather than reporting it as
+        a `setlistRefsRepointed` count (which would misleadingly read as a real
+        redirect). `EditorBridge::resetCombi()`/`main.cpp` binding follow
+        `resetProgram()`'s own `[datasetId, bank, number] -> {ok}` shape.
+      - **Frontend**: the Programs table's right-click menu scaffolding
+        (`openRowMenu()`'s DOM/dismiss plumbing, previously hand-rolled once in
+        `pane-program-editor.js`) extracted into `pane.js`'s
+        `showRowContextMenu(ev, items)` -- both Programs' and Combis' own
+        "Reset entry" now call it, `.program-row-menu` CSS renamed
+        `.row-context-menu` to match. Combis' own `resetEntry(c)`
+        (`pane-combi-editor.js`) mirrors Programs' shape (confirm dialog,
+        `isDanger: true`, no undo) but refreshes MORE than Programs' own version
+        does: `onNeedsFullReload()` + `onRefreshOppositeLibrary()` (this file's own
+        drag-gesture pattern) AND `onSetlistRefsRepointed()` (unconditionally, not
+        gated on a repoint count that doesn't exist) -- a reset changes what an
+        existing Set List reference DISPLAYS without repointing it, and the Setlist
+        tab keeps its own separate JS-side name cache that only a real refresh
+        invalidates. **Flagging, not fixing**: Programs' own `resetEntry()` only
+        calls its local `refresh()`, so a Set List slot referencing a just-reset
+        Program can show a stale name until something else refreshes that tab --
+        same gap, not touched here since it wasn't what was reported.
+      - **Verified**: new `testResetCombi()` (`tests/pcg_file_test.cpp`) against the
+        existing `buildCombiRearrangeFixture()` -- happy path (bank0's real "Init
+        Combi" donor reached bank0/1, the donor itself left untouched, an unrelated
+        slot untouched, the referencing Set List slot's `params` unchanged but its
+        cached `instrumentName` now reads "- Init Combi -"), the "no donor in this
+        bank" refusal (bank1 has only "- iNit COMBI -", which the donor search's
+        exact match deliberately doesn't accept even though `looksLikeEmptyCombiName()`
+        would), and out-of-range bank/number refusals. Full `cmake --build`
+        (`pcg_file_test` + `kronos_editor`, private submodule included) clean,
+        `pcg_file_test`: "All checks passed". Frontend not run in a browser (still no
+        JS runtime/headless setup in this environment) -- `jsc` parse-checked the
+        touched files and the diff was reviewed by hand against the Programs
+        equivalent it mirrors.
+
+  75. **FIXED (2026-09-04)**: "Combi copy not working, no plus sign appears with
+      neither key combination" -- entry 73's Shift-tracked-via-keydown fix (built
+      specifically to solve this exact gesture) turned out not to work either.
+      Directly confirmed by trying all three ways it could plausibly fail: Shift
+      held BEFORE starting the drag (the documented, supposedly-reliable rule),
+      Shift pressed mid-drag, and Option/Alt instead of Shift -- none of it
+      registered. No further root-cause available without a real device/Web
+      Inspector session (not available in this environment) -- so rather than a
+      third unverified WebKit-modifier theory, Combi's onto-an-empty-slot gesture
+      DROPPED the modifier requirement entirely: it's now an unconditional COPY
+      (`classify`/`onDrop` in `pane-combi-editor.js` no longer read `shiftKey` at
+      all for this branch). Moving a Combi INTO an empty slot instead reuses the
+      swap gesture in the OTHER direction (drag the empty slot onto the used one --
+      already modifier-free, unchanged, still works) rather than needing a second
+      new mechanism. `drag-and-drop.js`'s `shiftHeld()`/`shiftKeyDown` machinery
+      stays in place -- the Programs table's Shift+drag-swap is now its only
+      caller -- with its doc comment updated to record that this failed under
+      conditions that should have worked, so its reliability is genuinely in
+      question, not just theoretically fragile.
+      **Flagged, not fixed**: Programs' Shift+drag-swap (entry 48) almost certainly
+      has the identical failure and hasn't been re-verified or changed -- noted
+      directly in both `drag-and-drop.js`'s comment and the Programs guide page,
+      since it wasn't what was reported and (unlike Combi) has no equally-simple
+      modifier-free replacement gesture sitting right next to it. Combi guide
+      updated to the unconditional-copy wording and the direction-reversed move
+      path; STATE.md's own prior entry 73 write-up for the Shift mechanism is
+      superseded by this one for the Combi half specifically. jsc harness re-run:
+      used-over-empty now copies regardless of a simulated Shift keydown; every
+      other case (swap, before/after move, the clientY-0 robustness case)
+      unchanged. Frontend not run in a browser -- `jsc` parse-checked, and this
+      whole feature is now exactly what it originally was in entry 73's FIRST
+      version before the Shift request, so behaviourally it's a revert plus
+      updated docs, not new untested logic.
+  76. **FIXED (2026-09-04)**: "Hamburger Menu misses in opened editor, CTRL+click
+      open menu but nothing happens" -- entry 74's Combi (and the pre-existing
+      Programs) "Reset entry" menu was right-click-only, no visible affordance at
+      all. Reported directly that it wasn't discoverable, and separately that
+      Ctrl+click DID open something but selecting an item had no effect --
+      plausibly WKWebView's own native context menu rather than this app's: a
+      genuine `contextmenu` DOM event (which `showRowContextMenu()`
+      `preventDefault()`s to suppress the native one) isn't guaranteed to fire for
+      every input method that traditionally means "right-click," and this project
+      has hit a WKWebView-silently-drops-something-JS-never-sees bug in exactly
+      this shape before (entry 49, `window.confirm()`). Rather than chase a third
+      unverifiable WebKit theory in a row (see entry 75 immediately above), added
+      a real, always-visible **⋯** button beside each Program's and Combi's own
+      row name (`pane-program-editor.js`/`pane-combi-editor.js`, new shared
+      `.row-name-cell`/`.row-menu-button` CSS) that opens the exact same
+      `showRowContextMenu()` menu a click, not a right-click or a modifier,
+      sidestepping the uncertainty entirely. Same visual pattern
+      `.duplicate-group-count-cell`'s own "⋯" button (entry 68) already
+      established for "label + more-actions button" in one cell. Right-click
+      still works too (both rows' own `contextmenu` listener kept, now sharing
+      the same `rowMenuItems` array the button uses, one list instead of two
+      near-copies) for anyone whose right-click genuinely does route through the
+      DOM. Guide docs (prog/combi) updated to lead with the button. Frontend-only,
+      no backend change -- `jsc` parse-checked the touched files; the actual
+      button-vs-native-menu behavior is, like the rest of this app's UI, not
+      run in a real browser here.
+  77. **REFACTORED (2026-09-04)**, same-day follow-up to entry 76: two direct pieces
+      of feedback -- move the "⋯" button out of the Name cell into its own trailing
+      column (after `#STL` for Combis, after `#CMB` for Programs -- whichever is
+      each table's actual last column), and eliminate the duplication between the
+      two tables' row-building before it compounds further as the project grows.
+      - **New `pane.js` `menuCell(items)`** is now the ONE place the button+column
+        exist -- builds a `<td class="row-menu-cell">` holding the "⋯"
+        `showRowContextMenu()` trigger, called identically by
+        `pane-program-editor.js` and `pane-combi-editor.js` (each just builds its
+        own one-line `rowMenuItems` array locally and hands it to both
+        `menuCell()` and its row's own `contextmenu` listener -- one array, two
+        call sites, not two separately-typed-out item lists). Both tables' own
+        `colgroupHtml()`/`<thead>` gained a matching narrow trailing column+`<th>`;
+        both tables' own expand-row `colSpan` (`buildTimbreRow()`/
+        `buildUsageRow()`) bumped by one to match -- missed on the first pass,
+        caught rereading the row-loop end to end before calling this done.
+      - **Removed, not left behind**: `pane-program-editor.js`'s `openRowMenu()`
+        wrapper (now redundant -- its one line of logic, "build the Reset entry
+        item list and call showRowContextMenu()", is exactly what the row loop's
+        own `rowMenuItems` + the shared `menuCell()`/`contextmenu` listener already
+        do) and the now-unused `.row-name-cell` CSS from entry 76 (replaced by
+        `.row-menu-cell`, a plain centered cell -- text overflow/ellipsis handling
+        the flex layout needed is gone too, since Name is plain text again).
+      - **Verified**: `jsc` parse-checked all touched files, `pcg_file_test`
+        rebuilt and passes unchanged (frontend-only, no backend touched). Guide
+        docs (prog/combi) updated to say "the row's own last column" instead of
+        "beside the name." Still not run in a real browser.
+  78. **BUILT (2026-09-04)**, same-day follow-up, per direct request ("make sure
+      PROG works exactly in the same way... code duplication is not an option any
+      longer"): Programs gained the same before/after "move between rows" gesture
+      Setlist and Combi already have (previously onto-only -- copy, or Shift+swap),
+      full parity chosen over same-bank-only when asked directly. Also: the "⋯"
+      menu's own overflow-off-the-right-edge bug, fixed.
+      - **Backend, `PcgFile::moveProgramWithinBank()`/`moveProgramToBank()`** --
+        Programs' own `moveCombiWithinBank()`/`moveCombiToBank()`, extended to
+        repoint BOTH reference kinds a Program (unlike a Combi) can have: Set List
+        slots AND Combi Timbres. `moveProgramToBank()` refuses across engine types
+        (HD-1/EXi, same guard `swapPrograms()` already has -- a Program's raw bytes
+        are engine-specific) and refills the vacated source with the shipped Init
+        Program template, needing no live-donor search at all unlike Combi's own
+        version (a real factory template already exists for Programs).
+      - **New shared repoint helpers, not a third inlined copy**:
+        `findCombiTimbreReferences()`/`repointOneCombiTimbre()`/
+        `repointCombiTimbreReferences()` (`PcgFile.h`/`.cpp`) are the Combi-Timbre
+        equivalent of the existing `findSetlistReferences()`/
+        `repointOneSetlistSlot()`/`repointSetlistReferences()` trio, extracted from
+        what used to be `resolveDuplicates()`'s own inlined loop (refactored to call
+        the new helper -- behaviour-preserving, confirmed by `testResolveDuplicates()`
+        still passing unchanged) and reused by both new move methods.
+        `swapPrograms()` keeps its own hand-written BIDIRECTIONAL single pass instead
+        (calling the one-directional helper twice would hit the exact same
+        A→B-then-B→A collision `repointSetlistReferences()`'s own doc comment
+        already documents for the Set List side).
+      - **`EditorBridge::moveProgramWithinBank()`/`moveProgramToBank()`** +
+        `main.cpp` bindings mirror `swapProgram()`'s own shape (the
+        `isProgramRecordLocked()` open-editor guard included), `moveProgramToBank()`
+        also reading `Init-Program-HD1.raw`/`-EXi.raw` the same way
+        `resetProgram()`/`resolveDuplicateProgram()` already do.
+      - **Frontend, `pane-program-editor.js`**: `makeRowDraggable()` now passes
+        `zones: true` (was `false` -- Programs used to be the one onto-only table);
+        `classify()`/`onDrop()` grew the before/after branch (same-dataset only,
+        rejects a bank-type mismatch in every zone including before/after, matching
+        the backend). New `onMoveProgram()` (`app.js`) picks
+        `moveProgramWithinBank()` vs `moveProgramToBank()` by comparing
+        source/target bank, threaded through the same
+        app.js→createPane()→createLibraryPanels()→createProgramsPanel() callback
+        chain `onDropProgram`/`onSwapProgram` already use (four call sites, all
+        updated).
+      - **New shared `finalIndexForInsert(zone, targetPosition, sourcePosition)`**
+        (`drag-and-drop.js`) -- the before/after "final resting index" math
+        (entries 73/75's own bugfix) had been independently written out in TWO
+        places (Setlist's `onDropEntry` in `app.js`, Combi's `onDrop` in
+        `pane-combi-editor.js`); both refactored to call this instead of adding a
+        THIRD copy for Programs' own `onMoveProgram()`.
+      - **"⋯" menu overflow, reported directly** ("opens the hover menu to the
+        right too, so it goes out of the window"): `showRowContextMenu()`
+        (`pane.js`) used to position with a bare `left: ev.clientX` (grows
+        right/down, no viewport awareness) -- fine when the trigger was anywhere
+        inland, broke once entry 77 moved the "⋯" button into the table's own
+        rightmost column, right where the menu had the least room to grow into.
+        Now positions AFTER appending to the DOM (so its real rendered size is
+        known) and clamps both axes to stay inside the viewport with an 8px
+        margin -- opens normally near the left/top edge, opens leftward/upward
+        near the right/bottom edge.
+      - **Verified**: `cmake --build` (`pcg_file_test` + `kronos_editor`, private
+        submodule included) clean throughout. New `testProgramMove()`
+        (`tests/pcg_file_test.cpp`) against a new dedicated `buildProgramMoveFixture()`
+        (3 Program banks -- two HD-1 for same-type cross-bank, one EXi for the
+        type-mismatch refusal -- one Set-List-referenced Program and one
+        Combi-Timbre-referenced Program so the shift loop's OWN per-step repoint of
+        both kinds gets exercised, not just the moving record's): happy-path
+        within-bank shift (repoints both kinds on the SHIFTED record, not the
+        dragged one, isolating the genuinely new code), the same no-op convention
+        every other move/swap here uses, happy-path cross-bank move (repoint +
+        template refill verified), and four refusal paths (destination-referenced,
+        same-bank via the wrong method, engine-type mismatch, out-of-range).
+        `pcg_file_test`: "All checks passed" -- and confirmed the harness itself
+        isn't a silent no-op by deliberately breaking one assertion, rebuilding,
+        watching it FAIL at the right line, then restoring and rebuilding clean
+        again (a `mv`-restored file kept its pre-edit mtime, which ninja read as
+        "not newer than the last build" and skipped recompiling on first retry --
+        caught by re-checking the actual file content, not just trusting a green
+        build log; fixed with `touch`). Frontend verified with a jsc harness
+        driving the real `makeRowDraggable()`/classify()/onDrop() through all 8
+        Program-table cases (same-bank edge/middle/Shift, cross-bank same-type,
+        cross-bank different-type rejection, and all three cross-dataset variants)
+        -- every one resolved to the expected call or the expected rejection.
+        Still not run in an actual browser.
+  79. **FIXED (2026-09-04)**, same-day follow-up to #78: "PROG move still does not
+      work" + "COMBI shows the insert-position blue line, this is not existing in
+      PROG" -- both symptoms, one root cause. `style.css`'s `.drop-before`/
+      `.drop-after` rules (the before/after insert-line hover) were still scoped
+      to only `.setlist-table`/`.combis-table`, a leftover from when Programs was
+      the one onto-only table (pre-#78) -- entry 78 turned on the SAME zone/class
+      logic for Programs (confirmed correct again this round with the same jsc
+      harness from #78, unchanged, still resolving all 8 cases right) but never
+      updated the CSS selectors to match, so `.programs-table tr.drop-before`/
+      `.drop-after` painted nothing at all: right classes on the right elements,
+      no rule anywhere to render them. The "move doesn't work" report is very
+      likely the SAME bug wearing a different face -- with zero visual feedback
+      for the before/after zones (no highlight at all, unlike the "onto" zone's
+      still-working blue/green background), a user has no way to tell where that
+      target even is and no confirmation a drop there did anything, so a drag
+      that in fact worked reads as "nothing happened." Fixed by adding
+      `.programs-table` to both selectors, matching `.drop-target`/`.drop-copy`
+      just above them (which WERE already scoped to all three). Also directly
+      answered: the before/after "move" gesture and the "on" zone's Shift-toggles-
+      copy/swap are two independent, already-coexisting mechanisms, not
+      alternatives to pick between -- Shift's role on the "on" (middle) zone is
+      unchanged by any of this.
+      - **Verified**: CSS brace-balanced, `jsc` parse-checked every touched file,
+        the #78 jsc harness re-run unchanged (still all 8 cases correct -- this
+        was never a logic bug). No C++ touched this round. Still not run in an
+        actual browser, so the visual fix itself -- unlike the logic, which the
+        harness can actually execute -- rests on reading the now-matching
+        selector list, not a rendered screenshot.
+  80. **FIXED (2026-09-04)**: "COPY shows repointing messages" -- reported directly
+      once #78/#79's Combi+Program drag-and-drop was confirmed working. Found in
+      exactly one place: `pane-combi-editor.js`'s drop handler appended
+      `-- repointed N Set List slot(s).` UNCONDITIONALLY after its whole
+      copy/swap/move-within-bank/move-to-bank if-chain, including for the copy
+      branch -- where `setlistRefsRepointed` is always 0 by construction
+      (`copyCombi()`'s own doc comment: a copy never touches anything else in the
+      file), so every Combi copy toast read "Copied X -> Y -- repointed 0 Set
+      List slot(s)," true but meaningless noise. Fixed by moving the suffix into
+      each of the three genuinely-repointing branches' own `description` string
+      instead of appending it after the fact -- the copy branch's own message
+      (`Copied X -> Y.`) never mentions repointing at all now, matching
+      `onDropProgram()`'s (`app.js`) plain-copy message, which never showed this
+      in the first place (checked directly -- swept every `repointed` site in the
+      frontend; the other five are `onSwapProgram()`/`onMoveProgram()`, both
+      genuine swaps/moves that DO repoint, and the Duplicates panel's
+      resolve/consolidate messages, a different operation that legitimately
+      repoints by design -- none needed a change).
+      - **Verified**: `jsc` parse-checked the touched file. No C++/backend change
+        (frontend message text only). Still not run in a real browser.
+  81. **CHANGED (2026-09-04)**, two pieces of direct feedback:
+      - **"PROG copy does not show message 'copied' as COMBI does"**: `onDropProgram()`
+        (`app.js`) used `setStatus()` (the persistent bottom status bar -- its OWN doc
+        comment already calls this "easy to miss") for its success message, while
+        Combi's own `onDrop()` always used `showToast()` (the transient, hard-to-miss
+        popup) for every one of its outcomes. Switched Program's plain-copy message
+        to `showToast()` to match.
+      - **"Copying a PROG several times is it not possible (byte-identical) ...
+        Remove restriction"**: `PcgFile::copyProgramFrom()`'s `DuplicateExists` guard
+        -- reject a copy if a byte-identical Program already exists ANYWHERE in the
+        destination file, even when the actual destination slot is a genuinely empty
+        "Init Program" completely unrelated to wherever the duplicate lives --
+        **removed entirely**, per direct request, after confirming it was a pure
+        app-level opinion with no file-format constraint behind it (nothing about the
+        format requires Program content to be unique; a real factory backup routinely
+        has many byte-identical "Init Program" slots). `ProgramCopyError` lost the
+        enum value; `EditorBridge`'s error-message `switch` lost the case.
+        - **One real dependent found and fixed, not just deleted blind**: `swapPrograms()`
+          (entry 48, 2026-08-15) was originally built SPECIFICALLY because this guard
+          made copying meaningless between two Init Program slots -- its own doc
+          comment, `EditorBridge::swapProgram()`'s, and the frontend's
+          (`app.js`/`pane-program-editor.js`) all cited that as the reason it exists.
+          Rewrote all four to the reason that's STILL true post-removal: `copyProgramFrom()`
+          still refuses to overwrite a slot holding a genuinely DIFFERENT real Program
+          (`TargetSlotOccupied`, unchanged), so swap remains the one non-destructive way
+          to exchange two occupied, non-identical slots -- the feature itself wasn't
+          touched, only why it still matters.
+        - Also updated (comment-only, no behavior change): `applyCombiCrossDatasetCopy()`'s
+          own "skip a redundant copy" comment, which cited DuplicateExists as WHY the
+          skip was safe -- the skip itself never actually depended on that guard firing
+          (it's driven by the earlier content-match resolution, not by
+          `copyProgramFrom()`'s own rejection), so this was a stale justification, not a
+          real dependency; reworded to the actual reason (avoid a redundant no-op write).
+      - **Verified**: `cmake --build` (`pcg_file_test` + `kronos_editor`) clean.
+        `testCopyProgramFrom()`'s own former "rejected: byte-identical duplicate exists
+        elsewhere" case rewritten to assert the opposite -- a third byte-identical copy
+        now succeeds and is readable back -- confirmed the harness still catches a real
+        failure here too (deliberately broke the new assertion, rebuilt with `touch`
+        this time to sidestep the mtime gotcha entry 78 hit, watched it FAIL at the
+        right line, restored, rebuilt clean again). `pcg_file_test`: "All checks passed".
+        Guide docs (`docs/content/guide/prog/index.md`) updated: the copy section now
+        says duplicate content is fine, the swap section's own "why" rewritten to match
+        the code comments. Frontend-only pieces `jsc` parse-checked; still not run in a
+        real browser.
+
 CLEAN UP -- noted 2026-08-15:
 
   1. RESOLVED (2026-08-15): `docs/content/building/index.md` had two sections

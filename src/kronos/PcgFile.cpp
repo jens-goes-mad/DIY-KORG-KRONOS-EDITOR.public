@@ -822,6 +822,67 @@ int PcgFile::repointSetlistReferences(bool isProgram, int fromBank, int fromNumb
     return static_cast<int>(hits.size());
 }
 
+// The Combi Timbre equivalent of repointOneSetlistSlot() above -- the one
+// place that knows writeTimbreProgramRef()'s own byte shape, shared by
+// repointCombiTimbreReferences() below and (like repointOneSetlistSlot())
+// any future identity-based repoint that can't safely search-and-repoint at
+// a single point in time.
+void PcgFile::repointOneCombiTimbre(int combiBank, int combiNumber, int timbreIndex, int toNumber, int toRawCode) {
+    auto bytes = combiRecordBytes(combiBank, combiNumber);
+    if (!bytes) return;  // shouldn't happen -- callers always have a live (combiBank, combiNumber) in hand
+    writeTimbreProgramRef(bytes->data(), bytes->size(), timbreIndex, toNumber, toRawCode);
+    putCombiRecordBytes(combiBank, combiNumber, *bytes);
+}
+
+// Every Combi Timbre currently referencing Program (programBank,
+// programNumber) -- a pure search, no write. Mirrors findSetlistReferences()'s
+// own shape/reasoning: exposed separately from repointCombiTimbreReferences()
+// below so a caller (moveProgramWithinBank()) can snapshot WHO references
+// something before any writes happen, then apply the repoint later by
+// identity. `programBank` must already have a confirmedTimbreCodeForProgramBank()
+// -- callers check that themselves (same convention resolveDuplicates()/
+// swapPrograms() already use) since a caller may need to distinguish
+// "definitely no references" from "can't know" for its own skipped-count.
+std::vector<PcgFile::TimbreReference> PcgFile::findCombiTimbreReferences(int programBank, int programNumber) const {
+    std::vector<TimbreReference> hits;
+    const int rawCode = confirmedTimbreCodeForProgramBank(programBank);
+    if (rawCode < 0) return hits;
+    for (const auto& combi : combis_) {
+        for (int i = 0; i < static_cast<int>(combi.timbres.size()); ++i) {
+            const auto& t = combi.timbres[static_cast<size_t>(i)];
+            if (!t.isDefault && t.rawBankCode == rawCode && t.number == programNumber) {
+                hits.push_back({combi.bank, combi.number, i});
+            }
+        }
+    }
+    return hits;
+}
+
+// Repoints every Combi Timbre currently referencing Program (fromBank,
+// fromNumber) to (toBank, toNumber) instead -- findCombiTimbreReferences()
+// + repointOneCombiTimbre() per hit. Skips (not written, not counted in the
+// return value) any hit if `toBank` itself has no confirmedTimbreCodeForProgramBank()
+// of its own -- structurally can't happen today (every Program bank is
+// confirmed), same defensive reasoning resolveDuplicates()/swapPrograms()
+// already document at their own now-inlined-no-longer versions of this.
+// `skipped`, if non-null, receives that skipped count. ONE-DIRECTIONAL --
+// safe wherever nothing else in the same operation will later search using
+// fromNumber or toNumber as a key (see repointSetlistReferences()'s own doc
+// comment for the general rule, and swapPrograms() for the one case here
+// that still needs its own hand-written BIDIRECTIONAL single pass instead,
+// for exactly that reason).
+int PcgFile::repointCombiTimbreReferences(int fromBank, int fromNumber, int toBank, int toNumber, int* skipped) {
+    auto hits = findCombiTimbreReferences(fromBank, fromNumber);
+    if (hits.empty()) return 0;
+    const int toRawCode = confirmedTimbreCodeForProgramBank(toBank);
+    if (toRawCode < 0) {
+        if (skipped) *skipped += static_cast<int>(hits.size());
+        return 0;
+    }
+    for (const auto& hit : hits) repointOneCombiTimbre(hit.combiBank, hit.combiNumber, hit.timbreIndex, toNumber, toRawCode);
+    return static_cast<int>(hits.size());
+}
+
 PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int keepNumber,
                                                               const std::vector<std::pair<int, int>>& targets,
                                                               bool requireByteExactMatch,
@@ -882,8 +943,6 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
         }
     }
 
-    const int keepRawCode = confirmedTimbreCodeForProgramBank(keepBank);
-
     for (const auto& dup : duplicates) {
         if (requireByteExactMatch) {
             const auto& loc = programBankLocations_[static_cast<size_t>(dup.bank)];
@@ -899,42 +958,15 @@ PcgFile::ResolveDuplicatesResult PcgFile::resolveDuplicates(int keepBank, int ke
 
         result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, dup.bank, dup.number, keepBank, keepNumber);
 
-        // dupRawCode<0 means dup.bank itself has no confirmed Timbre code --
-        // structurally impossible to know whether any Combi Timbre
+        // Combi Timbre side -- repointCombiTimbreReferences() itself no-ops
+        // (0 repointed, 0 skipped) if dup.bank has no confirmed Timbre code
+        // of its own, structurally impossible to know whether anything
         // references it at all (same reasoning as combiUsagesForProgram()'s
-        // own early-return for an unconfirmed bank), so there's nothing to
-        // find, count, or repoint for this duplicate's Combi side. Nothing
-        // else here depends on Set List repointing above having already
-        // run -- Combi Timbre references are a completely separate byte
-        // range/record type, untouched by it.
-        const int dupRawCode = confirmedTimbreCodeForProgramBank(dup.bank);
-        if (dupRawCode < 0) continue;
-
-        for (const auto& combi : combis_) {
-            std::vector<int> matchingTimbres;
-            for (int i = 0; i < static_cast<int>(combi.timbres.size()); ++i) {
-                const auto& t = combi.timbres[static_cast<size_t>(i)];
-                if (!t.isDefault && t.rawBankCode == dupRawCode && t.number == dup.number) matchingTimbres.push_back(i);
-            }
-            if (matchingTimbres.empty()) continue;
-
-            // We KNOW these Timbres reference dup.bank/dup.number (dupRawCode
-            // is confirmed) but can't safely translate keepBank to its own
-            // raw code -- count them as skipped rather than writing a
-            // guessed destination code.
-            if (keepRawCode < 0) {
-                result.combiRefsSkipped += static_cast<int>(matchingTimbres.size());
-                continue;
-            }
-
-            auto bytes = combiRecordBytes(combi.bank, combi.number);
-            if (!bytes) continue;  // shouldn't happen -- this combi was just read from combis_ itself
-            for (int i : matchingTimbres) {
-                writeTimbreProgramRef(bytes->data(), bytes->size(), i, keepNumber, keepRawCode);
-                result.combiRefsRepointed++;
-            }
-            putCombiRecordBytes(combi.bank, combi.number, *bytes);
-        }
+        // own early-return for an unconfirmed bank). Nothing here depends on
+        // Set List repointing above having already run -- Combi Timbre
+        // references are a completely separate byte range/record type.
+        result.combiRefsRepointed +=
+            repointCombiTimbreReferences(dup.bank, dup.number, keepBank, keepNumber, &result.combiRefsSkipped);
     }
 
     result.ok = true;
@@ -997,6 +1029,22 @@ bool looksLikeEmptyCombiName(const std::string& name) {
     std::string lower = name;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
     return lower.find("init combi") != std::string::npos;
+}
+
+// Overwrites a Combi record's 24-byte name field (offset 4 -- see
+// docs/content/format/index.md §5) in place with "- Init Combi -", the
+// marker this app puts on a slot it has deliberately vacated (a Combi moved
+// out of it by moveCombiToBank(), or a slot reset by resetCombi()).
+// Distinct from Korg's own plain "Init Combi" so a cleared slot is
+// unmistakable; looksLikeEmptyCombiName() above matches both.
+void patchCombiNameToVacated(std::vector<uint8_t>& recordBytes) {
+    constexpr size_t kNameOffset = 4;
+    constexpr size_t kNameLength = 24;
+    static const std::string kVacatedName = "- Init Combi -";
+    for (size_t i = 0; i < kNameLength; ++i) {
+        recordBytes[kNameOffset + i] =
+            i < kVacatedName.size() ? static_cast<uint8_t>(kVacatedName[i]) : 0;
+    }
 }
 
 // Case-insensitive "does this Program's name look like an untouched/empty
@@ -1353,17 +1401,8 @@ PcgFile::CombiRearrangeResult PcgFile::moveCombiToBank(int srcBank, int srcNumbe
 
     putCombiRecordBytes(dstBank, dstNumber, *srcBytes);
 
-    // Patch the filler's own name field (offset 4, 24 bytes -- see
-    // docs/content/format/index.md §5) to "- Init Combi -" before writing
-    // it into the vacated slot, same visibility convention as the
-    // Duplicates panel's Init Program templates -- makes a vacated slot
-    // unmistakable rather than looking like Korg's own plain "Init Combi".
-    constexpr size_t kNameOffset = 4;
-    constexpr size_t kNameLength = 24;
-    static const std::string kVacatedName = "- Init Combi -";
-    for (size_t i = 0; i < kNameLength; ++i) {
-        (*fillerBytes)[kNameOffset + i] = i < kVacatedName.size() ? static_cast<uint8_t>(kVacatedName[i]) : 0;
-    }
+    // Mark the vacated slot "- Init Combi -" (see patchCombiNameToVacated()).
+    patchCombiNameToVacated(*fillerBytes);
     putCombiRecordBytes(srcBank, srcNumber, *fillerBytes);
 
     result.setlistRefsRepointed = repointSetlistReferences(false, srcBank, srcNumber, dstBank, dstNumber);
@@ -1430,6 +1469,56 @@ PcgFile::CombiRearrangeResult PcgFile::copyCombi(int srcBank, int srcNumber, int
     // comment. Nothing to repoint either: the source's own Set List
     // references still correctly point at it, and the destination had none
     // (it was empty) to carry over.
+    result.ok = true;
+    return result;
+}
+
+PcgFile::CombiRearrangeResult PcgFile::resetCombi(int bank, int number) {
+    CombiRearrangeResult result;
+
+    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size()) || number < 0 ||
+        static_cast<uint32_t>(number) >= combiBankLocations_[static_cast<size_t>(bank)].numRecords) {
+        result.error = "No such Combi";
+        return result;
+    }
+
+    // Source a real "Init Combi" record from elsewhere in this SAME bank --
+    // there is no shipped Init Combi template (real bytes differ 40+ bytes
+    // across banks, so one file would be wrong for 13 of 14 -- see
+    // moveCombiToBank()'s own doc comment and STATE.md entry 34), and this
+    // project's "no guessing, ever" rule rules out fabricating one. Same
+    // exact-match donor search moveCombiToBank() uses to vacate a slot.
+    std::optional<int> fillerNumber;
+    for (const auto& combi : combis_) {
+        if (combi.bank == bank && combi.number != number && combi.name == "Init Combi") {
+            fillerNumber = combi.number;
+            break;
+        }
+    }
+    if (!fillerNumber.has_value()) {
+        result.error = "Can't reset -- no \"Init Combi\" slot exists in this bank to source a blank record from";
+        return result;
+    }
+
+    auto fillerBytes = combiRecordBytes(bank, *fillerNumber);
+    if (!fillerBytes) {
+        result.error = "Couldn't read the filler Combi record";
+        return result;
+    }
+    patchCombiNameToVacated(*fillerBytes);
+    putCombiRecordBytes(bank, number, *fillerBytes);
+
+    // Same instrumentName-cache refresh resetProgram() needs (and discards
+    // the count from, same as here -- setlistRefsRepointed stays 0): a Set
+    // List slot referencing this exact (bank, number) caches the Combi's
+    // name on its OWN Song struct, only re-derived when the slot's record
+    // is rewritten. Repointing each such slot to the SAME (bank, number) is
+    // a no-op for what's stored but routes through putSongRecordBytes(),
+    // which re-derives the name from the freshly-written Combi. Unlike a
+    // move/swap this never actually redirects a reference -- the slot keeps
+    // pointing where it did, now showing the reset content, so reporting it
+    // as a "repoint" would be misleading.
+    repointSetlistReferences(false, bank, number, bank, number);
     result.ok = true;
     return result;
 }
@@ -1691,8 +1780,9 @@ PcgFile::CombiRearrangeResult PcgFile::applyCombiCrossDatasetCopy(const PcgFile&
     }
 
     // Pass 2: copy each genuinely new Program (skip ones that reused an
-    // existing match -- copyProgramFrom() would itself reject those as
-    // DuplicateExists, so only the fresh ones need the call at all).
+    // existing match -- the destination already holds this exact content at
+    // the chosen slot, so copying it again would just be a redundant
+    // no-op write; only the fresh ones need the call at all).
     for (const auto& rp : resolvedPrograms) {
         if (rp.alreadyPresent) continue;
         auto copyError = copyProgramFrom(src, rp.srcBank, rp.srcNumber, rp.dstBank, rp.dstNumber);
@@ -1820,25 +1910,19 @@ std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile&
     if (dstOff + dstLoc.bytesPerRecord > data_.size()) return ProgramCopyError::OutOfRange;
 
     // Target slot already holds a *different* Program -- reject rather than
-    // silently overwrite. Re-dropping the exact same Program already sitting
-    // there is caught by the DuplicateExists check below instead (it already
-    // exists in this file, namely right here), not this one.
+    // silently overwrite. A destination that's already byte-identical to
+    // the source is still caught here too (its name is real, not an empty
+    // "Init Program"/"Init EXi Program"), so this is the only occupancy
+    // guard copyProgramFrom() needs -- there used to be a second one
+    // (DuplicateExists) rejecting a byte-identical match anywhere ELSE in
+    // the file even when the destination itself was a genuinely empty
+    // slot; removed 2026-09-04, see this method's own doc comment in
+    // PcgFile.h for why.
     for (const auto& p : programs_) {
         if (p.bank == dstBank && p.number == dstNumber && !looksLikeEmptyProgramName(p.name)) return ProgramCopyError::TargetSlotOccupied;
     }
 
     const uint8_t* srcRecord = &src.data_[srcOff];
-    const uint64_t srcHash = hashProgramRecord(srcRecord, srcLoc.bytesPerRecord);
-    const bool sameFile = &src == this;
-    for (const auto& p : programs_) {
-        // For a same-dataset copy, the source's own slot trivially has this
-        // exact hash (it's the thing being copied) -- comparing against it
-        // would reject every same-dataset copy as "a duplicate of itself".
-        // Skip only that one specific slot, not its whole bank.
-        if (sameFile && p.bank == srcBank && p.number == srcNumber) continue;
-        if (p.contentHash == srcHash) return ProgramCopyError::DuplicateExists;
-    }
-
     writeIntoData(dstOff, srcRecord, dstLoc.bytesPerRecord);
     refreshProgramInfo(dstBank, dstNumber);
 
@@ -1959,6 +2043,160 @@ PcgFile::ProgramSwapResult PcgFile::swapPrograms(int bankA, int numberA, int ban
         }
         putCombiRecordBytes(combi.bank, combi.number, *bytes);
     }
+
+    result.ok = true;
+    return result;
+}
+
+PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumber, int toNumber) {
+    ProgramSwapResult result;
+
+    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) {
+        result.error = "No such Program bank";
+        return result;
+    }
+    const uint32_t count = programBankLocations_[static_cast<size_t>(bank)].numRecords;
+    if (fromNumber < 0 || static_cast<uint32_t>(fromNumber) >= count || toNumber < 0 ||
+        static_cast<uint32_t>(toNumber) >= count) {
+        result.error = "Program index out of range";
+        return result;
+    }
+    if (fromNumber == toNumber) {
+        result.ok = true;
+        return result;
+    }
+
+    auto movingBytes = programRecordBytes(bank, fromNumber);
+    if (!movingBytes) {
+        result.error = "Couldn't read the moving Program's record";
+        return result;
+    }
+
+    // Snapshot BOTH reference kinds for the MOVING record's own original
+    // position before any writes -- same identity-based reasoning
+    // moveCombiWithinBank() documents (a search-then-write for this can't
+    // be placed safely anywhere in the shift loop below, which reuses
+    // fromNumber/toNumber as its own read/write keys throughout).
+    auto movingSetlistReferrers = findSetlistReferences(/*isProgram=*/true, bank, fromNumber);
+    auto movingTimbreReferrers = findCombiTimbreReferences(bank, fromNumber);
+
+    // Same shift-the-intervening-range mechanic as moveCombiWithinBank(),
+    // repointing BOTH reference kinds per shifted step.
+    if (toNumber < fromNumber) {
+        for (int i = fromNumber; i > toNumber; --i) {
+            auto bytes = programRecordBytes(bank, i - 1);
+            if (!bytes) {
+                result.error = "Couldn't read a Program record while shifting";
+                return result;
+            }
+            putProgramRecordBytes(bank, i, *bytes);
+            result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, bank, i - 1, bank, i);
+            result.combiRefsRepointed += repointCombiTimbreReferences(bank, i - 1, bank, i, &result.combiRefsSkipped);
+        }
+    } else {
+        for (int i = fromNumber; i < toNumber; ++i) {
+            auto bytes = programRecordBytes(bank, i + 1);
+            if (!bytes) {
+                result.error = "Couldn't read a Program record while shifting";
+                return result;
+            }
+            putProgramRecordBytes(bank, i, *bytes);
+            result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, bank, i + 1, bank, i);
+            result.combiRefsRepointed += repointCombiTimbreReferences(bank, i + 1, bank, i, &result.combiRefsSkipped);
+        }
+    }
+
+    putProgramRecordBytes(bank, toNumber, *movingBytes);
+
+    // Apply the moving record's own repoints last, by the identities
+    // captured up front -- see this function's own comment above for why.
+    for (const auto& [setlistIndex, songIndex] : movingSetlistReferrers) {
+        repointOneSetlistSlot(setlistIndex, songIndex, bank, toNumber);
+        result.setlistRefsRepointed++;
+    }
+    // movingTimbreReferrers is only ever non-empty when `bank` itself has a
+    // confirmed raw Timbre code (findCombiTimbreReferences() checked that to
+    // find them in the first place), and toBank IS bank here (a same-bank
+    // move) -- so confirmedTimbreCodeForProgramBank(bank) is guaranteed
+    // non-negative whenever this loop actually runs.
+    const int ownRawCode = confirmedTimbreCodeForProgramBank(bank);
+    for (const auto& ref : movingTimbreReferrers) {
+        repointOneCombiTimbre(ref.combiBank, ref.combiNumber, ref.timbreIndex, toNumber, ownRawCode);
+        result.combiRefsRepointed++;
+    }
+
+    result.ok = true;
+    return result;
+}
+
+PcgFile::ProgramSwapResult PcgFile::moveProgramToBank(int srcBank, int srcNumber, int dstBank, int dstNumber,
+                                                        const std::vector<uint8_t>& hd1InitBytes,
+                                                        const std::vector<uint8_t>& exiInitBytes) {
+    ProgramSwapResult result;
+
+    if (srcBank < 0 || srcBank >= static_cast<int>(programBankLocations_.size()) || srcNumber < 0 ||
+        static_cast<uint32_t>(srcNumber) >= programBankLocations_[static_cast<size_t>(srcBank)].numRecords) {
+        result.error = "No such source Program";
+        return result;
+    }
+    if (dstBank < 0 || dstBank >= static_cast<int>(programBankLocations_.size()) || dstNumber < 0 ||
+        static_cast<uint32_t>(dstNumber) >= programBankLocations_[static_cast<size_t>(dstBank)].numRecords) {
+        result.error = "No such destination Program";
+        return result;
+    }
+    if (srcBank == dstBank) {
+        result.error = "Use moveProgramWithinBank() for a same-bank move";
+        return result;
+    }
+
+    const auto& srcLoc = programBankLocations_[static_cast<size_t>(srcBank)];
+    const auto& dstLoc = programBankLocations_[static_cast<size_t>(dstBank)];
+    if (srcLoc.bankType != dstLoc.bankType) {
+        result.error = "Can't move: the two banks are different engine types (HD-1/EXi) -- "
+                        "a Program can only be loaded into a bank of the matching type.";
+        return result;
+    }
+    if (srcLoc.bytesPerRecord != dstLoc.bytesPerRecord) {
+        result.error = "Can't move: the two banks don't share the same record size.";
+        return result;
+    }
+
+    // Refuse rather than silently orphan/misdirect whoever referenced the
+    // slot about to be overwritten -- same reasoning as moveCombiToBank()'s
+    // own destination-referenced refusal, checked for BOTH reference kinds
+    // a Program (unlike a Combi) can have.
+    if (!findSetlistReferences(/*isProgram=*/true, dstBank, dstNumber).empty()) {
+        result.error = "Can't overwrite -- the destination Program is still referenced by at least one Set List slot";
+        return result;
+    }
+    if (!findCombiTimbreReferences(dstBank, dstNumber).empty()) {
+        result.error = "Can't overwrite -- the destination Program is still referenced by at least one Combi Timbre";
+        return result;
+    }
+
+    const auto& templateBytes = srcLoc.bankType == ProgramBankType::Hd1 ? hd1InitBytes : exiInitBytes;
+    if (templateBytes.size() != srcLoc.bytesPerRecord) {
+        result.error = "Init Program template size (" + std::to_string(templateBytes.size()) +
+                        " bytes) doesn't match bank " + std::to_string(srcBank) + "'s own record size (" +
+                        std::to_string(srcLoc.bytesPerRecord) + " bytes)";
+        return result;
+    }
+
+    auto srcBytes = programRecordBytes(srcBank, srcNumber);
+    if (!srcBytes) {
+        result.error = "Couldn't read the source Program record";
+        return result;
+    }
+
+    putProgramRecordBytes(dstBank, dstNumber, *srcBytes);
+    // Vacated source refilled with the real factory template, same as
+    // resetProgram() -- unlike moveCombiToBank(), no live-donor search
+    // needed at all (see this method's own doc comment).
+    putProgramRecordBytes(srcBank, srcNumber, templateBytes);
+
+    result.setlistRefsRepointed = repointSetlistReferences(/*isProgram=*/true, srcBank, srcNumber, dstBank, dstNumber);
+    result.combiRefsRepointed =
+        repointCombiTimbreReferences(srcBank, srcNumber, dstBank, dstNumber, &result.combiRefsSkipped);
 
     result.ok = true;
     return result;

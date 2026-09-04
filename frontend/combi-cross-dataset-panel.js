@@ -19,7 +19,7 @@
 // app.js's onDropProgram()/onCopySetlist(). pane-combi-editor.js's drop
 // handler calls startCombiCrossDatasetCopy() below as a plain shared
 // top-level function (same cross-file access pattern this app already uses
-// for dropZoneForEvent()/formatBankNumber()/etc.) -- pane-combi-editor.js
+// for makeRowDraggable()/formatBankNumber()/etc.) -- pane-combi-editor.js
 // loads before this file in index.html, but that only matters at CALL time,
 // long after every script has finished loading, so the load order is fine.
 //

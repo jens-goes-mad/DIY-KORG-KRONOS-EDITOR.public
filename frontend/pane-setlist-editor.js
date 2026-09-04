@@ -6,10 +6,11 @@
 // shared Programs/Combis/Duplicates tab coordinator). Split out of pane.js
 // itself (2026-08-14) so pane.js stays a thin shell plus the handful of
 // utilities every category renderer shares (bank name tables,
-// formatBankNumber()/kronosNumber()/dropZoneForEvent()/colgroupHtml()/
-// NO_DATASET_MESSAGE, still in pane.js) -- pane-program-editor.js/
-// pane-combi-editor.js followed the same direction the same day, each now
-// its own file too.
+// formatBankNumber()/kronosNumber()/colgroupHtml()/NO_DATASET_MESSAGE, still
+// in pane.js) -- pane-program-editor.js/pane-combi-editor.js followed the
+// same direction the same day, each now its own file too. The row
+// drag-and-drop wiring these three share lives in drag-and-drop.js
+// (makeRowDraggable()).
 
 // Confirmed fixed count, real hardware and file format alike (docs/content/format/index.md
 // §3.2/§4.2) -- every Set List always has exactly this many song slots, never
@@ -96,18 +97,6 @@ function setlistColorHex(color) {
 function setlistColorName(color) {
   return SETLIST_COLOR_NAMES[color - 1] || `Color ${color}`;
 }
-
-// Shared across every pane's Setlist rows during a same-page row drag --
-// lets a row being dragged OVER (not just dropped on) know which dataset
-// the drag actually originated from, so a cross-dataset drop can be shown
-// as rejected during hover, not just after release. HTML5's DataTransfer
-// payload isn't readable during dragover for security reasons, but since
-// this is a same-page drag (not a file dragged in from Finder/Explorer), a
-// plain shared variable works fine as a side channel. The actual block
-// (app.js's onDropEntry) doesn't depend on this -- it's purely a visual
-// hint, see that function's own doc comment for why cross-dataset Setlist
-// copies are rejected at all.
-let draggedFromDatasetId = null;
 
 // Lazily loads the four pure-JS SBK1/SDB1 record codecs (frontend/
 // components/kronos/setlist-editor-{comment-and-font,color,volume,name}.js
@@ -205,7 +194,6 @@ function createSetlistPanel(
         </thead>
         <tbody></tbody>
       </table>
-      <div class="drop-indicator" hidden></div>
     </div>
   `;
 
@@ -216,29 +204,6 @@ function createSetlistPanel(
   const sortAscButton = container.querySelector(".sort-asc-button");
   const sortDescButton = container.querySelector(".sort-desc-button");
   const tbody = container.querySelector("tbody");
-  const dropIndicator = container.querySelector(".drop-indicator");
-
-  // The "insert before/after this row" drag gesture (dropZoneForEvent()
-  // below) originally showed a `box-shadow` on the target `<tr>` itself --
-  // it never actually rendered. Bulma's `.table` sets `border-collapse:
-  // collapse`, and collapsed table rows don't paint a box-shadow at all in
-  // any current browser (a well-known table-rendering limitation, not a
-  // specificity/z-index bug -- the "on" gesture's `.drop-target` class
-  // works fine because it uses `background`/`outline`, neither of which has
-  // this limitation). Rather than fight `<tr>` styling further, this is one
-  // floating `<div>` per pane, absolutely positioned against
-  // `.entries-scroll` (`position: relative`, see style.css) and moved to
-  // straddle the boundary above/below whichever row is currently the
-  // insert target -- a real "this is where it lands" line, unaffected by
-  // table layout quirks, and it naturally scrolls with the table since it's
-  // a child of the same scrolling element rather than the table itself.
-  function showDropIndicator(tr, zone) {
-    dropIndicator.style.top = `${zone === "before" ? tr.offsetTop : tr.offsetTop + tr.offsetHeight}px`;
-    dropIndicator.hidden = false;
-  }
-  function hideDropIndicator() {
-    dropIndicator.hidden = true;
-  }
 
   let setlists = [];        // [{index, name}], as returned by listSetlists()
   let currentSetlistIndex = -1;
@@ -844,7 +809,6 @@ function createSetlistPanel(
     tbody.innerHTML = "";
     for (const entry of visible) {
       const tr = document.createElement("tr");
-      tr.draggable = true;
       tr.dataset.index = String(entry.index);
       // Bulma's own `tr.is-selected` highlight (real Bulma table state, not
       // a hand-rolled class) marks whether this row's editor panel is open
@@ -868,53 +832,28 @@ function createSetlistPanel(
         openSection(entry, "comment");
       });
 
-      tr.addEventListener("dragstart", (ev) => {
-        draggedFromDatasetId = getDatasetId();
-        ev.dataTransfer.setData(
-          "application/json",
-          JSON.stringify({ datasetId: getDatasetId(), setlistIndex: currentSetlistIndex, index: entry.index })
-        );
-        ev.dataTransfer.effectAllowed = "copyMove";
-      });
-      tr.addEventListener("dragend", () => {
-        draggedFromDatasetId = null;
-        hideDropIndicator();
-      });
-      tr.addEventListener("dragover", (ev) => {
-        // Cross-dataset Setlist copies are rejected outright (see app.js's
-        // onDropEntry) -- don't even show this row as a valid drop target,
-        // and don't preventDefault() so the browser's own "not allowed"
-        // cursor takes over and no `drop` event fires here at all.
-        if (draggedFromDatasetId != null && draggedFromDatasetId !== getDatasetId()) {
-          tr.classList.remove("drop-target");
-          hideDropIndicator();
-          return;
-        }
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = "move";
-        const zone = dropZoneForEvent(tr, ev);
-        tr.classList.toggle("drop-target", zone === "on");
-        if (zone === "on") hideDropIndicator();
-        else showDropIndicator(tr, zone);
-      });
-      tr.addEventListener("dragleave", () => {
-        tr.classList.remove("drop-target");
-        hideDropIndicator();
-      });
-      tr.addEventListener("drop", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();  // don't also trigger the pane's file-drop handler
-        const zone = dropZoneForEvent(tr, ev);
-        tr.classList.remove("drop-target");
-        hideDropIndicator();
-        const raw = ev.dataTransfer.getData("application/json");
-        if (!raw) return;
-        onDropEntry(JSON.parse(raw), {
-          datasetId: getDatasetId(),
-          setlistIndex: currentSetlistIndex,
-          index: entry.index,
-          zone,
-        });
+      // Drop ONTO a row copies that slot over this one; drop on the top/
+      // bottom edge inserts (a reorder within this Set List, or a copy in
+      // from a different Set List) -- app.js's onDropEntry picks which.
+      // Cross-DATASET Setlist drops are rejected outright (a slot's
+      // bank/number references aren't portable across two files' layouts --
+      // see onDropEntry's own doc comment); classify returns null for them
+      // so the row never lights up as a target.
+      makeRowDraggable(tr, {
+        zones: true,
+        getPayload: () => ({ datasetId: getDatasetId(), setlistIndex: currentSetlistIndex, index: entry.index }),
+        classify: ({ dragged, zone }) => {
+          if (dragged.datasetId !== getDatasetId()) return null;
+          const reorder = zone !== "on" && dragged.setlistIndex === currentSetlistIndex;
+          return { effect: reorder ? "move" : "copy" };
+        },
+        onDrop: ({ source, zone }) =>
+          onDropEntry(source, {
+            datasetId: getDatasetId(),
+            setlistIndex: currentSetlistIndex,
+            index: entry.index,
+            zone,
+          }),
       });
 
       const idxTd = document.createElement("td");

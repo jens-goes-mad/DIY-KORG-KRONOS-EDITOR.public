@@ -32,17 +32,8 @@
 // getter rather than this panel's own state.
 function createProgramsPanel(
   { panelTable, bankFilterRow, selectControlRow },
-  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
+  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
 ) {
-  // Set during a Programs row's own dragstart, cleared on dragend -- lets a
-  // row being dragged OVER (not just dropped on) show immediate reject
-  // feedback if the two banks' engine types don't match, same technique as
-  // pane-setlist-editor.js's draggedFromDatasetId (HTML5 DataTransfer
-  // payloads aren't readable during dragover, so a plain shared variable
-  // stands in). The actual copy still goes through EditorBridge::
-  // copyProgram()'s own validation regardless -- this is only a hover hint.
-  let draggedProgram = null;
-
   let programs = [];
   let expandedProgramKey = null;  // `${bank}-${number}` of the one expanded usage row, if any
   // Bank-filter state -- `present` is which bank indices actually have
@@ -85,70 +76,17 @@ function createProgramsPanel(
     if (result && result.ok === false) showToast(result.error, { isError: true });
   }
 
-  // A Program row's right-click "local menu" -- currently just "Reset
-  // entry". Chosen over a per-bank-header button (2026-08-20 discussion):
-  // the bank filter buttons already make it unclear which banks are even
-  // showing, and a bank-level action would only make that worse, whereas a
-  // per-row menu sits on the exact slot it affects regardless of filter
-  // state. Plain DOM, not lit-html (nothing else in this file uses it) --
-  // one Bulma dropdown-content positioned at the click point, mounted on
-  // document.body (outlives this row's own re-renders) and torn down on the
-  // next click/Escape/scroll, same dismiss model a native context menu has.
-  let rowMenuEl = null;
-  function closeRowMenu() {
-    if (!rowMenuEl) return;
-    rowMenuEl.remove();
-    rowMenuEl = null;
-    document.removeEventListener("click", closeRowMenu);
-    document.removeEventListener("keydown", onRowMenuKeydown);
-    document.removeEventListener("scroll", closeRowMenu, true);
-  }
-  function onRowMenuKeydown(ev) {
-    if (ev.key === "Escape") closeRowMenu();
-  }
-  function openRowMenu(ev, p) {
-    ev.preventDefault();
-    closeRowMenu();
-    rowMenuEl = document.createElement("div");
-    rowMenuEl.className = "dropdown-menu program-row-menu";
-    // Bulma's real .dropdown-menu rule is `display: none; position: absolute;
-    // top: 100%; ...` by default -- it only becomes visible as a DESCENDANT
-    // of `.dropdown.is-active`/`.dropdown.is-hoverable:hover` (see
-    // vendor/bulma.min.css). This menu isn't wrapped in that structure (it's
-    // positioned freely at the click point, not anchored under a trigger
-    // button), so `display`/`position` must be set inline here to override
-    // the stylesheet -- found by right-clicking with the Web Inspector
-    // attached: the event fired and the element existed in the DOM, just
-    // invisible. `dropdown-menu`/`dropdown-content`/`dropdown-item` are kept
-    // purely for Bulma's box/padding/hover styling, not its active-state
-    // machinery.
-    rowMenuEl.style.display = "block";
-    rowMenuEl.style.position = "fixed";
-    rowMenuEl.style.left = `${ev.clientX}px`;
-    rowMenuEl.style.top = `${ev.clientY}px`;
-    rowMenuEl.style.zIndex = "1000";
-    const content = document.createElement("div");
-    content.className = "dropdown-content";
-    const resetItem = document.createElement("a");
-    resetItem.className = "dropdown-item";
-    resetItem.href = "#";
-    resetItem.textContent = "Reset entry…";
-    resetItem.addEventListener("click", (clickEv) => {
-      clickEv.preventDefault();
-      closeRowMenu();
-      resetEntry(p);
-    });
-    content.appendChild(resetItem);
-    rowMenuEl.appendChild(content);
-    document.body.appendChild(rowMenuEl);
-    // Deferred so this SAME contextmenu event's own bubble-up doesn't
-    // immediately trigger the outside-click listener it just registered.
-    setTimeout(() => {
-      document.addEventListener("click", closeRowMenu);
-      document.addEventListener("keydown", onRowMenuKeydown);
-      document.addEventListener("scroll", closeRowMenu, true);
-    }, 0);
-  }
+  // A Program row's "more actions" menu -- currently just "Reset entry",
+  // reachable via the row's own menuCell() button (below) or a right-click
+  // anywhere on the row. Chosen over a per-bank-header button (2026-08-20
+  // discussion): the bank filter buttons already make it unclear which
+  // banks are even showing, and a bank-level action would only make that
+  // worse, whereas a per-row menu sits on the exact slot it affects
+  // regardless of filter state. Both the menu's scaffolding
+  // (pane.js's showRowContextMenu()) and the button/column that opens it
+  // (pane.js's menuCell()) are shared with pane-combi-editor.js's own
+  // "Reset entry" -- see the row loop below for where the item list itself
+  // (just `resetEntry` today) is built once and handed to both.
 
   // Writes this slot's bank-matching Init Program template over it (see
   // EditorBridge::resetProgram()'s own doc comment) -- unlike Duplicates'
@@ -200,7 +138,7 @@ function createProgramsPanel(
     const tr = document.createElement("tr");
     tr.className = "editor-row";  // reuses the shared expand-row look from pane.js/style.css
     const td = document.createElement("td");
-    td.colSpan = 5;  // Bank, Name, Type, #STL, #CMB -- a real <table> again
+    td.colSpan = 6;  // Bank, Name, Type, #STL, #CMB, menu -- a real <table> again
 
     const box = document.createElement("div");
     box.textContent = "Loading usage...";
@@ -323,11 +261,11 @@ function createProgramsPanel(
       // per direct request 2026-08-16 -- Type now sometimes holds a button
       // (the SGX-2 open-editor case below), which needs more room than the
       // bank column, whose "I-A 042"-style labels never do.
-      colgroupHtml([1.82, null, 1.95, 1.3, 1.3]) +
+      colgroupHtml([1.82, null, 1.95, 1.3, 1.3, 0.8]) +
       "<thead><tr><th>Bank</th><th>Name</th><th " +
       "title=\"HD-1 or EXi -- not yet cross-checked against a real backup, see docs/external/README.md\">Type</th>" +
       "<th title=\"Set List references\">#STL</th>" +
-      "<th title=\"Combi references\">#CMB</th></tr></thead><tbody></tbody>";
+      "<th title=\"Combi references\">#CMB</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     for (const p of rows) {
@@ -366,6 +304,21 @@ function createProgramsPanel(
               ? programBankTypeName(p.bankType)
               : "";
       }
+      // Row's own "more actions" menu (currently just Reset entry) -- a
+      // real, always-visible column at the far right (2026-09-04, moved out
+      // of the Name cell per direct request), not right-click-only.
+      // Right-click/Ctrl+click still opens the same menu (below) for anyone
+      // used to that, but reported directly that a button-less right-click
+      // wasn't discoverable ("no hamburger") and, separately, that
+      // Ctrl+click specifically opened SOMETHING but selecting an item did
+      // nothing -- plausibly WKWebView's own native context menu rather
+      // than this app's, since a genuine `contextmenu` DOM event isn't
+      // guaranteed to fire for every input method that traditionally means
+      // "right-click." A real button sidesteps that uncertainty entirely.
+      // pane.js's menuCell() is the ONE place this button/column exists --
+      // pane-combi-editor.js's identical column calls the exact same
+      // function, not a second hand-rolled copy.
+      const rowMenuItems = [{ label: "Reset entry…", onSelect: () => resetEntry(p) }];
       tr.append(
         bankCell(true, p.bank, p.number),
         nameTd,
@@ -373,7 +326,8 @@ function createProgramsPanel(
         refCell(String(p.setlistReferenceCount), false),
         p.combiReferenceCountAvailable
           ? refCell(String(p.combiReferenceCount), false)
-          : refCell("n/a", true)
+          : refCell("n/a", true),
+        menuCell(rowMenuItems)
       );
 
       const key = `${p.bank}-${p.number}`;
@@ -384,57 +338,61 @@ function createProgramsPanel(
         expandedProgramKey = expandedProgramKey === key ? null : key;
         render();
       });
-      tr.addEventListener("contextmenu", (ev) => openRowMenu(ev, p));
+      tr.addEventListener("contextmenu", (ev) => showRowContextMenu(ev, rowMenuItems));
 
-      // Drag this Program onto another Program row (same pane or a
-      // different pane's dataset) to COPY its raw bytes into that slot --
-      // see onDropProgram in app.js. Hold Shift while dropping to SWAP the
-      // two Programs' content instead (same dataset only) -- see
-      // onSwapProgram in app.js for why this exists (copyProgram()'s own
-      // DuplicateExists guard makes a plain copy meaningless between two
-      // slots that are both genuinely empty "Init Program" -- every one is
-      // byte-identical to every other one, so it always trips that guard
-      // even though nothing's actually wrong; a swap sidesteps it
-      // entirely). `effectAllowed = "copyMove"` (not just "copy") is what
-      // lets dragover below actually switch the cursor to a "move" hint
-      // when Shift is held -- effectAllowed set at dragstart caps which
-      // dropEffect values the browser will honor later. dragstart's
-      // payload never mutates the source either way -- only drop() (on the
-      // TARGET row) calls into the bridge.
-      tr.draggable = true;
-      tr.addEventListener("dragstart", (ev) => {
-        draggedProgram = { datasetId: getDatasetId(), bank: p.bank, number: p.number, bankType: p.bankType };
-        ev.dataTransfer.setData("application/json", JSON.stringify(draggedProgram));
-        ev.dataTransfer.effectAllowed = "copyMove";
-      });
-      tr.addEventListener("dragend", () => {
-        draggedProgram = null;
-      });
-      tr.addEventListener("dragover", (ev) => {
-        // Reject up front (no preventDefault -- the browser's own "not
-        // allowed" cursor takes over, no `drop` fires here at all) if the
-        // dragged Program's engine type doesn't match this row's own bank.
-        // EditorBridge::copyProgram()/swapProgram() enforce this
-        // regardless; this is just immediate hover feedback instead of
-        // only after the drop.
-        if (draggedProgram != null && draggedProgram.bankType !== p.bankType) {
-          tr.classList.remove("drop-target");
-          return;
-        }
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = ev.shiftKey ? "move" : "copy";
-        tr.classList.add("drop-target");
-      });
-      tr.addEventListener("dragleave", () => tr.classList.remove("drop-target"));
-      tr.addEventListener("drop", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        tr.classList.remove("drop-target");
-        const raw = ev.dataTransfer.getData("application/json");
-        if (!raw) return;
-        const target = { datasetId: getDatasetId(), bank: p.bank, number: p.number };
-        if (ev.shiftKey) onSwapProgram(JSON.parse(raw), target);
-        else onDropProgram(JSON.parse(raw), target);
+      // Same drag-and-drop engine and 3-zone drop (drag-and-drop.js's shared
+      // makeRowDraggable()/dropZoneForEvent()) the Setlist and Combi tables
+      // use -- only what happens in classify()/onDrop() differs per table:
+      //  - Drop ONTO another Program row (same pane or a different pane's
+      //    dataset) to COPY its raw bytes into that slot -- see
+      //    onDropProgram in app.js. Hold Shift BEFORE starting the drag to
+      //    SWAP the two Programs' content instead (same dataset only; Shift
+      //    is tracked from keydown, not the drag event -- WKWebView never
+      //    carries it on a drag event, see drag-and-drop.js's shiftHeld())
+      //    -- see onSwapProgram in app.js for why this still matters even
+      //    though a plain copy no longer refuses a byte-identical match
+      //    elsewhere in the file: it's still the only non-destructive way
+      //    to exchange two occupied slots holding genuinely DIFFERENT
+      //    content).
+      //  - Drop BEFORE/AFTER a row in the SAME bank -> move within bank
+      //    (shift the intervening range, PcgFile::moveProgramWithinBank()),
+      //    same mechanic as Combi's own moveCombiWithinBank() -- see
+      //    onMoveProgram in app.js.
+      //  - Drop BEFORE/AFTER a row in a DIFFERENT bank -> move to that
+      //    bank, overwriting the target (PcgFile::moveProgramToBank()) --
+      //    same "no shift concept spans two banks" reasoning as Combi's own
+      //    moveCombiToBank(), so before/after collapses to the same as
+      //    onto once a bank boundary is crossed.
+      // classify() rejects a drop whose engine type doesn't match this
+      // row's bank in EVERY zone (EditorBridge::copyProgram()/
+      // swapProgram()/moveProgramToBank() all enforce that regardless, this
+      // is just immediate hover feedback), and rejects the before/after
+      // move and the Shift swap outright for a cross-dataset drag -- unlike
+      // the plain copy, neither has a cross-dataset meaning (a bank/number
+      // reference isn't portable across two files' bank layouts, same
+      // reasoning as Setlist slots and Combi's own move/swap).
+      makeRowDraggable(tr, {
+        zones: true,
+        getPayload: () => ({ datasetId: getDatasetId(), bank: p.bank, number: p.number, bankType: p.bankType }),
+        classify: ({ dragged, zone, shiftKey }) => {
+          if (dragged.bankType !== p.bankType) return null;
+          const sameDataset = dragged.datasetId === getDatasetId();
+          if (zone === "on") {
+            if (shiftKey && !sameDataset) return null;  // swap is same-dataset only
+            return { effect: shiftKey ? "move" : "copy" };
+          }
+          if (!sameDataset) return null;  // before/after move is same-dataset only
+          return { effect: "move" };
+        },
+        onDrop: ({ source, zone, shiftKey }) => {
+          const target = { datasetId: getDatasetId(), bank: p.bank, number: p.number };
+          if (zone === "on") {
+            if (shiftKey) onSwapProgram(source, target);
+            else onDropProgram(source, target);
+            return;
+          }
+          onMoveProgram(source, { ...target, zone });
+        },
       });
 
       tbody.appendChild(tr);

@@ -83,7 +83,7 @@ const panes = {};
 // This is the CMB/PRG physical-bank-position problem from the
 // explore/sqlite-patch-datastore branch (see STATE.md's "EXPLORATION"
 // section) -- revisit once that's solved, not before.
-// `target.zone` (pane.js's dropZoneForEvent()) is one of "on" (dropped
+// `target.zone` (drag-and-drop.js's dropZoneForEvent()) is one of "on" (dropped
 // mid-row -- copy over), "before"/"after" (dropped near a row's top/bottom
 // edge -- insert, shifting the intervening range). Copy-over is a direct
 // 1:1 slot overwrite -- safe by construction whether source and target are
@@ -135,9 +135,13 @@ async function onDropEntry(source, target) {
   } else if (sameList) {
     // Insert: relocate source to just before/after target, shifting the
     // intervening range -- one native call (EditorBridge::reorderSongEntry),
-    // not one bridge round-trip per shifted slot.
-    let toIndex = target.zone === "before" ? target.index : target.index + 1;
-    toIndex = Math.min(toIndex, SETLIST_SONG_COUNT - 1);
+    // not one bridge round-trip per shifted slot. reorderSongEntry() takes
+    // the slot's FINAL resting index -- drag-and-drop.js's shared
+    // finalIndexForInsert() converts the drop zone + target position into
+    // that (see its own doc comment for why the raw target position isn't
+    // enough on its own).
+    let toIndex = finalIndexForInsert(target.zone, target.index, source.index);
+    toIndex = Math.max(0, Math.min(toIndex, SETLIST_SONG_COUNT - 1));
     if (toIndex === source.index) return;  // no real move
     result = await window.reorderSongEntry(target.datasetId, target.setlistIndex, source.index, toIndex);
     if (!result.ok) {
@@ -174,9 +178,11 @@ async function onDropEntry(source, target) {
 // reference risk to solve first -- see STATE.md's EXPLORATION section for
 // why that distinction matters). The source is never touched -- only the
 // destination's bridge call (EditorBridge::copyProgram(), which enforces
-// matching engine type, an empty target slot, and no existing byte-
-// identical duplicate in the destination dataset -- see its own doc
-// comment) can reject the whole thing.
+// matching engine type and an empty target slot -- see its own doc comment)
+// can reject the whole thing. A byte-identical Program existing elsewhere in
+// the destination dataset is NOT a rejection reason (2026-09-04, was one
+// until reported directly as an unexplained restriction -- see
+// PcgFile::copyProgramFrom()'s own doc comment).
 async function onDropProgram(source, target) {
   if (source.datasetId === target.datasetId && source.bank === target.bank && source.number === target.number) return;
 
@@ -188,7 +194,12 @@ async function onDropProgram(source, target) {
     showToast(`Copy failed: ${result.error}`, { isError: true });
     return;
   }
-  setStatus(
+  // showToast, not setStatus -- reported directly (2026-09-04) that a
+  // Program copy's own success message was easy to miss compared to
+  // Combi's (pane-combi-editor.js's onDrop already uses showToast for
+  // every one of its own outcomes). setStatus's own doc comment already
+  // admits the same thing about itself.
+  showToast(
     `Copied ${formatBankNumber({ isProgram: true, bank: source.bank, number: source.number })} -> ` +
       `${formatBankNumber({ isProgram: true, bank: target.bank, number: target.number })}.`
   );
@@ -204,14 +215,16 @@ async function onDropProgram(source, target) {
 // Shift+drag a Program row onto another SWAPS their entire content instead
 // of copying (pane-program-editor.js's own dragover/drop handlers pick
 // this vs. onDropProgram above based on ev.shiftKey at drop time, with a
-// "move" vs. "copy" cursor hint during the drag itself) -- per direct
-// request: copyProgram()'s own DuplicateExists guard makes a plain copy
-// meaningless between two slots that are BOTH genuinely empty ("Init
-// Program" -- every one is byte-identical to every other one, so copying
-// one onto another always trips it, even though nothing is actually
-// wrong), and a swap sidesteps that scenario entirely since it never
-// creates a new copy of anything -- see EditorBridge::swapProgram()'s own
-// doc comment. Same-dataset only (unlike onDropProgram's copy, which
+// "move" vs. "copy" cursor hint during the drag itself). Originally built
+// per direct request because copyProgram()'s own DuplicateExists guard made
+// a plain copy meaningless between two slots that were BOTH genuinely empty
+// ("Init Program" -- every one is byte-identical to every other one, so
+// copying one onto another always tripped it) -- that guard is gone now
+// (2026-09-04, see PcgFile::copyProgramFrom()'s own doc comment), so a swap
+// stays the only way to handle the case it's STILL needed for: exchanging
+// two occupied slots holding genuinely DIFFERENT content without losing
+// either one's own position -- see EditorBridge::swapProgram()'s own doc
+// comment. Same-dataset only (unlike onDropProgram's copy, which
 // works across datasets too) -- PcgFile::swapPrograms() itself refuses a
 // cross-dataset call, checked here first for a clearer message than
 // letting the bridge round-trip just to reject it.
@@ -239,6 +252,53 @@ async function onSwapProgram(source, target) {
   // onDropProgram/onCopySetlist already use. A swap can repoint Set List
   // slots too (unlike a copy), so the Setlist tab needs refreshing as well
   // when that happened, not just the Library tables.
+  for (const pane of Object.values(panes)) {
+    if (pane.getCurrentDatasetId() === target.datasetId) {
+      await pane.refreshLibrary();
+      if (result.setlistRefsRepointed > 0) await pane.refreshEntries();
+    }
+  }
+}
+
+// Drop a Program row BEFORE/AFTER another one (pane-program-editor.js's own
+// makeRowDraggable() classify() rejects this gesture outright for a
+// cross-dataset or engine-type-mismatched drag, so `target` is always the
+// same dataset and engine type as `source` by the time this runs) -- same
+// bank shifts the intervening range (PcgFile::moveProgramWithinBank()), a
+// different bank overwrites the target and refills the vacated source with
+// the shipped Init Program template (PcgFile::moveProgramToBank()) --
+// there's no "shift" concept spanning two independent banks' arrays, so
+// before/after collapses to the same as landing directly on the target once
+// a bank boundary is crossed, same reasoning Combi's own move-to-bank uses
+// (pane-combi-editor.js). `target.zone`/`target.number` come straight from
+// makeRowDraggable()'s own onDrop() callback.
+async function onMoveProgram(source, target) {
+  const sourceLabel = formatBankNumber({ isProgram: true, bank: source.bank, number: source.number });
+  let result, description;
+
+  if (source.bank === target.bank) {
+    const toNumber = finalIndexForInsert(target.zone, target.number, source.number);
+    if (toNumber === source.number) return;  // adjacent drop -- no real move
+    result = await window.moveProgramWithinBank(target.datasetId, target.bank, source.number, toNumber);
+    description = `Moved ${sourceLabel} to position ${kronosNumber(toNumber)}`;
+  } else {
+    const targetLabel = formatBankNumber({ isProgram: true, bank: target.bank, number: target.number });
+    result = await window.moveProgramToBank(target.datasetId, source.bank, source.number, target.bank, target.number);
+    description = `Moved ${sourceLabel} -> ${targetLabel}, overwriting it`;
+  }
+
+  if (!result.ok) {
+    showToast(`Move failed: ${result.error}`, { isError: true });
+    return;
+  }
+  showToast(
+    `${description} -- repointed ${result.setlistRefsRepointed} Set List slot(s), ${result.combiRefsRepointed} Combi Timbre(s)` +
+      (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
+  );
+
+  // Same "which panes need refreshing" pattern onSwapProgram above uses --
+  // a move can repoint Set List slots too, so the Setlist tab needs
+  // refreshing as well when that happened, not just the Library tables.
   for (const pane of Object.values(panes)) {
     if (pane.getCurrentDatasetId() === target.datasetId) {
       await pane.refreshLibrary();
@@ -279,6 +339,7 @@ document.querySelectorAll(".pane").forEach((root) => {
     onDropEntry,
     onDropProgram,
     onSwapProgram,
+    onMoveProgram,
     onCopySetlist,
     // Lazy on purpose -- at THIS point in the forEach loop, the opposite
     // pane may not exist in `panes` yet (both panes are created in the same

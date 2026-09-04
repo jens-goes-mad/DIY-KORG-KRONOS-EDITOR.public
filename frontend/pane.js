@@ -11,12 +11,12 @@
 // app.js ("A" and "B") so Setlist slots can be dragged between them.
 //
 // This file also holds the utilities every category renderer shares -- bank
-// name tables, formatBankNumber()/kronosNumber()/dropZoneForEvent()/
+// name tables, formatBankNumber()/kronosNumber()/
 // colgroupHtml()/NO_DATASET_MESSAGE, and (2026-08-14, moved here when
 // Programs/Duplicates split off what was then library.js)
 // renderBankFilterRow()/createSelectControlRow()/scrollRowBelowHeader()/
-// filterByName()/bankCell()/refCell(), needed by both pane-program-editor.js
-// and pane-combi-editor.js. Setlist-editor-only pieces (Set List slot Color
+// filterByName()/bankCell()/refCell()/menuCell()/showRowContextMenu(), needed
+// by both pane-program-editor.js and pane-combi-editor.js. Setlist-editor-only pieces (Set List slot Color
 // palette, the raw-record codec loader, createSetlistPanel() itself) moved
 // out to pane-setlist-editor.js the same day pane.js itself first split off
 // createPane() from this file's old, much larger everything-in-one-file
@@ -61,21 +61,6 @@ const PROGRAM_BANK_NAMES = [
 // COMBI_BANK_NAMES/PROGRAM_BANK_NAMES above.
 function abbreviateBankName(name) {
   return name.replace(/^INT-/, "I-").replace(/^USER-/, "U-");
-}
-
-// Which of the three drag-and-drop gestures a Setlist row's dragover/drop
-// applies, based on where within the row's own height the cursor currently
-// is -- top 30% = "insert before this row", bottom 30% = "insert after this
-// row", middle 40% = "copy over this row" (see app.js's onDropEntry and
-// STATE.md's RFC for what each does). Recomputed on every dragover, not
-// just once, since the cursor can move between zones while still hovering
-// the same row.
-function dropZoneForEvent(tr, ev) {
-  const rect = tr.getBoundingClientRect();
-  const relativeY = (ev.clientY - rect.top) / rect.height;
-  if (relativeY < 0.3) return "before";
-  if (relativeY > 0.7) return "after";
-  return "on";
 }
 
 function kronosNumber(n) {
@@ -219,6 +204,93 @@ function scrollRowBelowHeader(row) {
   scrollBox.scrollTo({ top: scrollBox.scrollTop + currentOffset - desiredOffset, behavior: "smooth" });
 }
 
+// A small "local menu" for a table row -- one Bulma dropdown-content
+// positioned at the click point, mounted on document.body (outlives the
+// row's own re-renders) and torn down on the next click/Escape/scroll, same
+// dismiss model a native context menu has. Shared by the Programs and
+// Combis tables' own "Reset entry" actions -- originally hand-rolled once in
+// pane-program-editor.js as a right-click-only openRowMenu(), extracted
+// here once Combis needed the identical scaffolding (2026-09-04), then
+// called from menuCell()'s own button click too once right-click/Ctrl+click
+// alone turned out not to be reliably discoverable (same day -- see
+// menuCell()'s own comment).
+//
+//   ev     the triggering event (contextmenu OR a plain button click both
+//          work -- preventDefault()ed here, harmless either way)
+//   items  [{ label, onSelect }], one per menu entry, in order
+//
+// Module-level `rowContextMenuEl` -- only one such menu is ever open at a
+// time; opening a second closes the first, same as a real context menu.
+let rowContextMenuEl = null;
+function closeRowContextMenu() {
+  if (!rowContextMenuEl) return;
+  rowContextMenuEl.remove();
+  rowContextMenuEl = null;
+  document.removeEventListener("click", closeRowContextMenu);
+  document.removeEventListener("keydown", onRowContextMenuKeydown);
+  document.removeEventListener("scroll", closeRowContextMenu, true);
+}
+function onRowContextMenuKeydown(ev) {
+  if (ev.key === "Escape") closeRowContextMenu();
+}
+function showRowContextMenu(ev, items) {
+  ev.preventDefault();
+  closeRowContextMenu();
+  rowContextMenuEl = document.createElement("div");
+  rowContextMenuEl.className = "dropdown-menu row-context-menu";
+  // Bulma's real .dropdown-menu rule is `display: none; position: absolute;
+  // top: 100%; ...` by default -- it only becomes visible as a DESCENDANT
+  // of `.dropdown.is-active`/`.dropdown.is-hoverable:hover` (see
+  // vendor/bulma.min.css). This menu isn't wrapped in that structure (it's
+  // positioned freely at the click point, not anchored under a trigger
+  // button), so `display`/`position` must be set inline here to override
+  // the stylesheet -- found by right-clicking with the Web Inspector
+  // attached: the event fired and the element existed in the DOM, just
+  // invisible. `dropdown-menu`/`dropdown-content`/`dropdown-item` are kept
+  // purely for Bulma's box/padding/hover styling, not its active-state
+  // machinery.
+  rowContextMenuEl.style.display = "block";
+  rowContextMenuEl.style.position = "fixed";
+  rowContextMenuEl.style.zIndex = "1000";
+  const content = document.createElement("div");
+  content.className = "dropdown-content";
+  for (const { label, onSelect } of items) {
+    const item = document.createElement("a");
+    item.className = "dropdown-item";
+    item.href = "#";
+    item.textContent = label;
+    item.addEventListener("click", (clickEv) => {
+      clickEv.preventDefault();
+      closeRowContextMenu();
+      onSelect();
+    });
+    content.appendChild(item);
+  }
+  rowContextMenuEl.appendChild(content);
+  document.body.appendChild(rowContextMenuEl);
+  // Positioned AFTER appending, so its real rendered size is known --
+  // `left: ev.clientX` alone (the original approach) grows the menu
+  // rightward/downward from the click point with no regard for the
+  // viewport edge, which reliably ran off the right side of the window once
+  // the "⋯" trigger moved into the table's own rightmost column (reported
+  // directly). Clamp so the whole menu stays inside the viewport instead --
+  // opens normally near the left edge, opens leftward/upward near the
+  // right/bottom edge.
+  const margin = 8;
+  const rect = rowContextMenuEl.getBoundingClientRect();
+  const left = Math.max(margin, Math.min(ev.clientX, window.innerWidth - rect.width - margin));
+  const top = Math.max(margin, Math.min(ev.clientY, window.innerHeight - rect.height - margin));
+  rowContextMenuEl.style.left = `${left}px`;
+  rowContextMenuEl.style.top = `${top}px`;
+  // Deferred so this SAME contextmenu event's own bubble-up doesn't
+  // immediately trigger the outside-click listener it just registered.
+  setTimeout(() => {
+    document.addEventListener("click", closeRowContextMenu);
+    document.addEventListener("keydown", onRowContextMenuKeydown);
+    document.addEventListener("scroll", closeRowContextMenu, true);
+  }, 0);
+}
+
 // Draws one category's bank-filter button row: one toggle per bank name,
 // enabled only if that bank actually has entries in the current dataset
 // (`present`), pressed (Bulma's `is-link` -- there's no dedicated "toggle
@@ -321,6 +393,32 @@ function refCell(text, unavailable) {
   return td;
 }
 
+// A row's own "more actions" menu -- a small "⋯" button in its own trailing
+// column (always the table's LAST column, per direct request -- keeps it in
+// a fixed spot regardless of how wide the Name column's own content runs),
+// opening showRowContextMenu() with the given items. Shared by Programs'
+// and Combis' own row-building (`pane-program-editor.js`/`pane-combi-
+// editor.js` both call this the same way with their own action list --
+// today just "Reset entry…" each, but this is the one place a THIRD table
+// or a second action gets added, not a second hand-rolled copy of the
+// button/column). `items` is `showRowContextMenu()`'s own `[{label,
+// onSelect}]` shape, passed straight through.
+function menuCell(items) {
+  const td = document.createElement("td");
+  td.className = "row-menu-cell";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "button is-small row-menu-button";
+  btn.title = "More actions";
+  btn.textContent = "⋯";  // horizontal ellipsis, same affordance the Duplicates panel already uses
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();  // don't also trigger the row's own click (expand/collapse)
+    showRowContextMenu(ev, items);
+  });
+  td.appendChild(btn);
+  return td;
+}
+
 // The shared Programs/Combis/Duplicates tab coordinator -- owns the ONE
 // filter input and bank-filter/select-control button rows all three
 // categories show/hide into (typing in the filter keeps filtering whichever
@@ -347,6 +445,7 @@ function createLibraryPanels(
     getProgramBankType,
     onDropProgram,
     onSwapProgram,
+    onMoveProgram,
     onJumpToInstrument,
     onJumpToSetlist,
     onRefreshOppositeLibrary,
@@ -410,7 +509,7 @@ function createLibraryPanels(
 
   const programsPanel = createProgramsPanel(
     { panelTable: panelTables.programs, bankFilterRow: bankFilterRows.programs, selectControlRow: selectControlRows.programs },
-    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
+    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
   );
 
   const duplicatesPanel = createDuplicatesPanel(
@@ -544,7 +643,7 @@ function createLibraryPanels(
   };
 }
 
-function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, onCopySetlist, getOpposite, log, showToast }) {
+function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, onMoveProgram, onCopySetlist, getOpposite, log, showToast }) {
   root.innerHTML = `
     <div class="pane-header">
       <div class="pane-header-row dataset-select-row">
@@ -899,6 +998,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, o
     getProgramBankType,
     onDropProgram,
     onSwapProgram,
+    onMoveProgram,
     onJumpToInstrument: jumpToInstrument,
     onJumpToSetlist: jumpToSetlistEntry,
     onRefreshOppositeLibrary: refreshOppositeLibrary,

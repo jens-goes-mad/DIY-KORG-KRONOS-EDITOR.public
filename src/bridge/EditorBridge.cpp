@@ -874,8 +874,6 @@ std::string programCopyErrorMessage(kronos::PcgFile::ProgramCopyError error) {
             return "Can't copy: source or destination bank/number is out of range.";
         case kronos::PcgFile::ProgramCopyError::TargetSlotOccupied:
             return "Can't copy: the destination slot already holds a different Program.";
-        case kronos::PcgFile::ProgramCopyError::DuplicateExists:
-            return "Can't copy: a byte-identical Program already exists in the destination dataset.";
         default:
             return "Can't copy: unknown error.";
     }
@@ -932,6 +930,61 @@ choc::value::Value EditorBridge::swapProgram(const choc::value::ValueView& args)
     }
 
     auto result = file->swapPrograms(bankA, numberA, bankB, numberB);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    value.setMember("combiRefsRepointed", result.combiRefsRepointed);
+    value.setMember("combiRefsSkipped", result.combiRefsSkipped);
+    return value;
+}
+
+choc::value::Value EditorBridge::moveProgramWithinBank(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int fromNumber = intArg(args, 2);
+    const int toNumber = intArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    // Same reasoning as swapProgram() above -- every record in the shifted
+    // range gets its bytes rewritten, not just the one dragged.
+    if (isProgramRecordLocked(datasetId, bank, fromNumber) || isProgramRecordLocked(datasetId, bank, toNumber)) {
+        return makeError("Can't move: one of these Programs is open in an editor.");
+    }
+
+    auto result = file->moveProgramWithinBank(bank, fromNumber, toNumber);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    value.setMember("combiRefsRepointed", result.combiRefsRepointed);
+    value.setMember("combiRefsSkipped", result.combiRefsSkipped);
+    return value;
+}
+
+choc::value::Value EditorBridge::moveProgramToBank(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int srcBank = intArg(args, 1);
+    const int srcNumber = intArg(args, 2);
+    const int dstBank = intArg(args, 3);
+    const int dstNumber = intArg(args, 4);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (isProgramRecordLocked(datasetId, srcBank, srcNumber) || isProgramRecordLocked(datasetId, dstBank, dstNumber)) {
+        return makeError("Can't move: one of these Programs is open in an editor.");
+    }
+
+    const auto hd1Bytes = readResourceFile("Init-Program-HD1.raw");
+    const auto exiBytes = readResourceFile("Init-Program-EXi.raw");
+    if (hd1Bytes.empty() || exiBytes.empty()) {
+        return makeError("Couldn't read the Init Program template files from " + std::string(EDITOR_RESOURCES_DIR));
+    }
+
+    auto result = file->moveProgramToBank(srcBank, srcNumber, dstBank, dstNumber, hd1Bytes, exiBytes);
     if (!result.ok) return makeError(result.error);
 
     auto value = makeOk();
@@ -1014,6 +1067,20 @@ choc::value::Value EditorBridge::resetProgram(const choc::value::ValueView& args
     }
 
     auto result = file->resetProgram(bank, number, hd1Bytes, exiBytes);
+    if (!result.ok) return makeError(result.error);
+
+    return makeOk();
+}
+
+choc::value::Value EditorBridge::resetCombi(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+    const int number = intArg(args, 2);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    auto result = file->resetCombi(bank, number);
     if (!result.ok) return makeError(result.error);
 
     return makeOk();

@@ -310,7 +310,19 @@ public:
     // Why a copy can be rejected -- see copyProgramFrom()'s own doc comment.
     // Kept as a plain enum (not an exception) so EditorBridge can map each
     // reason to a specific user-facing message without a try/catch.
-    enum class ProgramCopyError { BankTypeMismatch, RecordSizeMismatch, OutOfRange, TargetSlotOccupied, DuplicateExists };
+    //
+    // Used to also have DuplicateExists (a byte-identical Program already
+    // existing anywhere in the file) -- removed 2026-09-04, reported
+    // directly as an unwanted, unexplained restriction: nothing in the file
+    // format requires Program content to be unique (a real Kronos backup
+    // routinely has many byte-identical "Init Program" slots straight from
+    // the factory), this was purely an app-level opinion with no format
+    // constraint behind it, and it made copying a Program onto another
+    // already-identical one (the common "duplicate this Program a few
+    // times" case) fail for a reason no one could explain. See
+    // swapPrograms()'s own doc comment for why Shift+drag-swap still exists
+    // even though this specific motivation for it is gone.
+    enum class ProgramCopyError { BankTypeMismatch, RecordSizeMismatch, OutOfRange, TargetSlotOccupied };
 
     // Copies one Program record's raw bytes from `src` (pass *this for a
     // same-dataset copy -- src and dst never alias, since distinct
@@ -344,10 +356,9 @@ public:
     //    real untouched slot's name is Korg's own factory
     //    "Init Program"/"Init EXi Program", not a blank string) -- a
     //    different real Program already lives there. Re-dropping the exact
-    //    same Program already at that slot is caught by DuplicateExists
-    //    instead, not this.
-    //  - DuplicateExists: a byte-identical Program (matching contentHash)
-    //    already exists anywhere in this file.
+    //    same Program already at that slot is fine (a byte-for-byte no-op
+    //    write) -- see this method's own doc comment on why a duplicate
+    //    content match is no longer rejected at all, here or anywhere else.
     std::optional<ProgramCopyError> copyProgramFrom(const PcgFile& src, int srcBank, int srcNumber,
                                                       int dstBank, int dstNumber);
 
@@ -363,17 +374,19 @@ public:
     // swapCombis()'s own doc comment for why cross-dataset stays out of
     // scope for a swap specifically) and repoints every Set List slot AND
     // Combi Timbre reference pointing at EITHER one so it follows its
-    // content to the new position -- unlike copyProgramFrom(), never
-    // rejected for an "already exists" byte-identical match anywhere else
-    // in the file (a swap never creates a new copy of anything, it just
-    // exchanges two positions' existing content, so that check doesn't
-    // apply). Built specifically because copyProgramFrom()'s
-    // DuplicateExists check makes a plain drag-and-drop copy meaningless
-    // between two slots that both happen to be genuinely empty ("Init
-    // Program") -- every Init Program is byte-identical to every other one
-    // in the same bank type, so copying one onto another always trips
-    // DuplicateExists, even though nothing is actually wrong. A swap
-    // sidesteps that scenario entirely by construction.
+    // content to the new position. Originally built (2026-08-15) because
+    // copyProgramFrom() used to reject any byte-identical match anywhere in
+    // the file (DuplicateExists), which made a plain drag-and-drop copy
+    // meaningless between two Init Program slots specifically -- that
+    // restriction is gone now (2026-09-04, see copyProgramFrom()'s own doc
+    // comment), so swapping is no longer the only way to handle THAT one
+    // case. Still the only NON-destructive way to exchange two occupied
+    // slots holding genuinely DIFFERENT content, though: copyProgramFrom()
+    // still refuses to overwrite a slot that already holds a different real
+    // Program (TargetSlotOccupied), and moveProgramToBank() below
+    // overwrites its destination rather than exchanging with it -- a swap
+    // is still the one operation where nothing at either position is ever
+    // lost.
     //
     // Rejects (ok=false, nothing written) if either position doesn't
     // exist, or the two banks are different engine types (HD-1/EXi) or
@@ -389,6 +402,39 @@ public:
     // are confirmed as of STATE.md's most recent Combi-Timbre entries), kept
     // for the same defensive reason resolveDuplicates() keeps it.
     ProgramSwapResult swapPrograms(int bankA, int numberA, int bankB, int numberB);
+
+    // Moves a Program to a new position within its OWN bank, shifting the
+    // intervening range by one to make room -- same mechanic as
+    // moveCombiWithinBank(), extended to repoint BOTH reference kinds a
+    // Program (unlike a Combi) can have: Set List slots via
+    // repointSetlistReferences() AND Combi Timbres via
+    // repointCombiTimbreReferences(). Every record that SHIFTS (not just
+    // the one dragged) gets both kinds of its own referrers repointed to
+    // follow it to its own new position. Returns ok=false with `error` set
+    // if the bank or either index is out of range.
+    ProgramSwapResult moveProgramWithinBank(int bank, int fromNumber, int toNumber);
+
+    // Moves a Program into a specific slot in a DIFFERENT bank, overwriting
+    // whatever was there, and repoints every Set List slot and Combi Timbre
+    // that referenced the source to follow it to its new position.
+    //
+    // Refuses (ok=false, nothing written) if the two banks are different
+    // engine types (HD-1/EXi) or record sizes -- same guards swapPrograms()
+    // already has, since a Program's own raw bytes are engine-specific. Also
+    // refuses if the destination currently has ANY reference of either kind
+    // -- same reasoning as moveCombiToBank()'s own destination-referenced
+    // refusal, checked for both Set List slots and Combi Timbres here since
+    // a Program (unlike a Combi) can be referenced by both.
+    //
+    // The vacated source slot is filled with the bank-matching Init Program
+    // template (`hd1InitBytes`/`exiInitBytes`, the same two files
+    // resetProgram()/resolveDuplicates() already read) -- unlike Combi
+    // (moveCombiToBank()'s own doc comment explains why), a real shipped
+    // factory template exists for Programs, so this needs no live-donor
+    // search at all.
+    ProgramSwapResult moveProgramToBank(int srcBank, int srcNumber, int dstBank, int dstNumber,
+                                         const std::vector<uint8_t>& hd1InitBytes,
+                                         const std::vector<uint8_t>& exiInitBytes);
 
     // Every Program-type Set List slot that directly references this
     // bank/number. Does NOT include usage from inside a Combi's Timbres --
@@ -765,6 +811,23 @@ public:
     // being referenced by a real Set List slot is not expected in practice.
     CombiRearrangeResult copyCombi(int srcBank, int srcNumber, int dstBank, int dstNumber);
 
+    // Clears one Combi slot back to a blank "Init Combi" record -- the
+    // Combi equivalent of resetProgram(), reached from the Combi table's
+    // own right-click "Reset entry" menu. Like resetProgram() it does NOT
+    // repoint anything: a Set List slot referencing this (bank, number)
+    // keeps pointing at it and simply shows the reset content afterwards
+    // (an internal cache refresh only -- `setlistRefsRepointed` in the
+    // result stays 0, same as resetProgram() discards its own). The blank
+    // record's bytes are sourced live from
+    // another slot in the SAME bank currently named exactly "Init Combi"
+    // (same donor search as moveCombiToBank()'s vacate step -- there is no
+    // shipped Init Combi template, real bytes differ per bank; see that
+    // method's doc comment), with the name field patched to "- Init Combi -"
+    // so a deliberately-cleared slot is visually distinct. Refuses
+    // (ok=false, nothing written) if (bank, number) doesn't exist or that
+    // bank has no OTHER "Init Combi" slot to copy from.
+    CombiRearrangeResult resetCombi(int bank, int number);
+
     // One active (non-default), resolvable Timbre of a Combi being analyzed for a
     // cross-dataset copy -- "resolvable" means its rawBankCode translates to a
     // confirmed PBK1 file-order bank index (see programBankForConfirmedTimbreCode()
@@ -1015,6 +1078,38 @@ private:
     // in this file where it ISN'T safe and the two pieces are used
     // separately instead. Returns how many slots were repointed.
     int repointSetlistReferences(bool isProgram, int fromBank, int fromNumber, int toBank, int toNumber);
+
+    // Identifies one Combi Timbre slot -- the Combi Timbre equivalent of the
+    // (setlistIndex, songIndex) pair findSetlistReferences() returns below,
+    // for the same snapshot-then-repoint-by-identity reasoning.
+    struct TimbreReference {
+        int combiBank;
+        int combiNumber;
+        int timbreIndex;
+    };
+
+    // Patches ONE already-identified Combi Timbre to reference (toNumber,
+    // toRawCode) instead -- the Combi-Timbre equivalent of
+    // repointOneSetlistSlot() above.
+    void repointOneCombiTimbre(int combiBank, int combiNumber, int timbreIndex, int toNumber, int toRawCode);
+
+    // Every Combi Timbre currently referencing Program (programBank,
+    // programNumber) -- a pure search, no write. Mirrors
+    // findSetlistReferences()'s own shape/reasoning.
+    std::vector<TimbreReference> findCombiTimbreReferences(int programBank, int programNumber) const;
+
+    // Repoints every Combi Timbre currently referencing Program (fromBank,
+    // fromNumber) to (toBank, toNumber) instead -- the Combi-Timbre
+    // equivalent of repointSetlistReferences() above, extracted
+    // (2026-09-04) from what used to be resolveDuplicates()'s own inlined
+    // copy of this exact loop -- swapPrograms() keeps its own hand-written
+    // BIDIRECTIONAL single pass instead (see repointSetlistReferences()'s
+    // own doc comment for why a swap can't just call this twice). Skips
+    // (not written, not counted in the return value) any hit if `toBank`
+    // has no confirmedTimbreCodeForProgramBank() of its own; `skipped`, if
+    // non-null, receives that skipped count. Returns how many Timbres were
+    // repointed.
+    int repointCombiTimbreReferences(int fromBank, int fromNumber, int toBank, int toNumber, int* skipped = nullptr);
 
     // The Set List instrument-name cross-reference (§5 in docs/content/
     // format/index.md), resolved on demand from programs_/combis_ rather

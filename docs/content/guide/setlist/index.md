@@ -47,13 +47,18 @@ Drag any Setlist row within its own Set List, or onto the same Set List shown in
   is left completely unchanged. This works between two *different* Set Lists too (same
   dataset), not just within one.
 - **Drop it between two rows** (or before the first / after the last) to *insert* it there
-  instead -- every slot in between shifts down one to make room. A thin floating line
-  follows your cursor while dragging so you can see exactly where the insert will land
-  before you let go. Unlike copy-over above, insert only works **within the same Set
+  instead -- every slot in between shifts down one to make room. A line appears along the
+  top or bottom edge of the row you're hovering to show exactly where the insert will
+  land. Unlike copy-over above, insert only works **within the same Set
   List** -- inserting into a *different*, already-full 128-slot Set List would have to
   evict something at its far end to make room, a real data-loss question not tackled yet,
   so that specific case still uses an older, in-memory-only path that isn't part of what
   Save As writes out.
+
+While you drag, the feedback tells you what a drop right now would do: a **green** row
+with a **"+"** cursor means it will *copy*, a **blue** row means it will *move* the slot
+into that position, and the edge line means *insert*. It's the same visual language in
+the Programs and Combis tables.
 
 Both of these write real bytes into the loaded file's own in-memory data immediately --
 there's no separate "commit" step, for every case except the cross-Set-List insert noted

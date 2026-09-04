@@ -575,11 +575,13 @@ void testPcgFileEndToEnd() {
     CHECK(!pcg.decodeProgram(1, 99).has_value());  // out-of-range number
 
     // copyProgramFrom(): same-dataset copy (pcg passed as both src and dst,
-    // exactly the documented "pass *this" case) exercising a real write plus
-    // every rejection guard. Bank 0 (Hd1) records 3/4 were left empty
-    // specifically for this. Order matters below -- each subtest targets a
-    // slot untouched by the previous ones, so earlier writes don't change
-    // later expectations.
+    // exactly the documented "pass *this" case) exercising two real writes
+    // (including a THIRD byte-identical copy of the same content, allowed
+    // on purpose -- see its own comment below) plus every remaining
+    // rejection guard. Bank 0 (Hd1) records 3/4 were left empty specifically
+    // for this. Order matters below -- each subtest targets a slot untouched
+    // by the previous ones, so earlier writes don't change later
+    // expectations.
     {
         // Successful copy: "Unique Program" (bank0/number2) into the empty
         // bank0/number3.
@@ -621,15 +623,19 @@ void testPcgFileEndToEnd() {
             CHECK_EQ(stillOriginal->name, std::string("Test Program A"), "rejected occupied-slot copy leaves the destination untouched");
         }
 
-        // Rejected: byte-identical Program already exists elsewhere in the
-        // file ("Test Program A" already lives at bank0/number0 and number1).
+        // Allowed (2026-09-04, reported directly as an unwanted restriction):
+        // copying a Program that's already byte-identical to another one
+        // elsewhere in the file ("Test Program A" already lives at
+        // bank0/number0 and number1) into a third, empty slot. Used to be
+        // rejected (DuplicateExists) -- nothing in the file format requires
+        // Program content to be unique, so this is now a plain successful
+        // copy like any other.
         auto duplicate = pcg.copyProgramFrom(pcg, 0, 0, 0, 4);
-        CHECK(duplicate.has_value());
-        if (duplicate) CHECK(*duplicate == kronos::PcgFile::ProgramCopyError::DuplicateExists);
-        auto stillEmpty = pcg.decodeProgram(0, 4);
-        CHECK(stillEmpty.has_value());
-        if (stillEmpty) {
-            CHECK_EQ(stillEmpty->name, std::string(), "rejected duplicate copy leaves the empty destination untouched");
+        CHECK(!duplicate.has_value());  // nullopt == success
+        auto thirdCopy = pcg.decodeProgram(0, 4);
+        CHECK(thirdCopy.has_value());
+        if (thirdCopy) {
+            CHECK_EQ(thirdCopy->name, std::string("Test Program A"), "a third byte-identical copy is allowed to exist");
         }
 
         // Rejected: out-of-range bank/number on either side.
@@ -1532,12 +1538,15 @@ void testResetProgram() {
     }
 }
 
-// swapPrograms() (2026-08-15) -- built so a plain drag-and-drop copy
-// between two slots that are BOTH genuinely empty ("Init Program") doesn't
-// have to fight copyProgramFrom()'s own DuplicateExists guard (every Init
-// Program is byte-identical to every other one, so copying one onto
-// another always trips it). One fresh PcgFile per block, same isolation
-// reasoning as testResolveDuplicates() above.
+// swapPrograms() (2026-08-15) -- originally built so a plain drag-and-drop
+// copy between two slots that are BOTH genuinely empty ("Init Program")
+// didn't have to fight copyProgramFrom()'s own DuplicateExists guard (every
+// Init Program is byte-identical to every other one, so copying one onto
+// another always tripped it). That guard is gone now (2026-09-04, see
+// copyProgramFrom()'s own doc comment) -- swapPrograms() stays for the case
+// it's still the only non-destructive option for: exchanging two occupied
+// slots holding genuinely DIFFERENT content. One fresh PcgFile per block,
+// same isolation reasoning as testResolveDuplicates() above.
 void testProgramSwap() {
     // --- Happy path: bank0/number0 ("Test Program A") <-> bank0/number2
     // ("Unique Program"), each referenced by a DIFFERENT kind of pointer
@@ -1635,6 +1644,216 @@ void testProgramSwap() {
         CHECK(pcg.loadFromMemory(buildSyntheticPcgFile(), error));
         auto result = pcg.swapPrograms(0, 0, 99, 0);
         CHECK(!result.ok);
+    }
+}
+
+// Dedicated fixture for testProgramMove() -- moveProgramWithinBank()/
+// moveProgramToBank() are Programs' own equivalent of
+// buildCombiRearrangeFixture() below, extended to repoint BOTH reference
+// kinds a Program (unlike a Combi) can have. Bank 0 (HD-1, PBK1): "Program
+// 0" (never referenced, just filler), "Program A" (number 1, referenced by
+// a Set List slot), "Program B" (number 2, referenced by a Combi Timbre),
+// "Program C"/"Program D" (numbers 3/4, unreferenced -- room for a
+// downward shift to land past every referenced slot). Bank 1 (HD-1, PBK1,
+// SAME type as bank 0): "Other Bank Program" (referenced by a second Set
+// List slot) and "Empty Target" (unreferenced) -- a same-type destination
+// bank for moveProgramToBank(). Bank 2 (EXi, MBK1, DIFFERENT type): one
+// Program, purely to exercise moveProgramToBank()'s engine-type refusal.
+std::vector<uint8_t> buildProgramMoveFixture() {
+    constexpr uint32_t kSongsPerSetlist = 128;
+    constexpr size_t kRecordSize = 28;
+    constexpr size_t kSbkHeaderSize = 40;
+    constexpr size_t kSbkRecordSize = 542;
+    constexpr size_t kBankRecordSize = 32;
+    const size_t kCombiRecordSize = kTimbreBaseOffset + kTimbreStride * 16;
+
+    std::vector<uint8_t> sdb1;
+    pushU32BE(sdb1, 1);
+    pushU32BE(sdb1, (kSongsPerSetlist + 1) * kRecordSize);
+    pushNameRecord(sdb1, "Test Setlist", kRecordSize);
+    pushNameRecord(sdb1, "Song A", kRecordSize);
+    pushNameRecord(sdb1, "Song B", kRecordSize);
+    for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sdb1, kRecordSize);
+
+    std::vector<uint8_t> sbk1;
+    pushU32BE(sbk1, 1);
+    pushU32BE(sbk1, static_cast<uint32_t>(kSbkHeaderSize + kSongsPerSetlist * kSbkRecordSize));
+    pushZeros(sbk1, kSbkHeaderSize);
+    auto songA = makeSbkSongRecord(/*isProgram=*/true, /*bank=*/0, /*number=*/1, 1, 0, 100, 0, 0, 0, "");
+    auto songB = makeSbkSongRecord(/*isProgram=*/true, /*bank=*/1, /*number=*/0, 1, 0, 100, 0, 0, 0, "");
+    sbk1.insert(sbk1.end(), songA.begin(), songA.end());
+    sbk1.insert(sbk1.end(), songB.begin(), songB.end());
+    for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
+
+    std::vector<uint8_t> pbk1BankA;
+    pushU32BE(pbk1BankA, 5);
+    pushU32BE(pbk1BankA, static_cast<uint32_t>(kBankRecordSize));
+    pushNameRecord(pbk1BankA, "Program 0", kBankRecordSize);
+    pushNameRecord(pbk1BankA, "Program A", kBankRecordSize);
+    pushNameRecord(pbk1BankA, "Program B", kBankRecordSize);
+    pushNameRecord(pbk1BankA, "Program C", kBankRecordSize);
+    pushNameRecord(pbk1BankA, "Program D", kBankRecordSize);
+
+    std::vector<uint8_t> pbk1BankB;
+    pushU32BE(pbk1BankB, 2);
+    pushU32BE(pbk1BankB, static_cast<uint32_t>(kBankRecordSize));
+    pushNameRecord(pbk1BankB, "Other Bank Program", kBankRecordSize);
+    pushNameRecord(pbk1BankB, "Empty Target", kBankRecordSize);
+
+    std::vector<uint8_t> mbk1BankC;  // EXi -- deliberately a different engine type from bank 0/1
+    pushU32BE(mbk1BankC, 1);
+    pushU32BE(mbk1BankC, static_cast<uint32_t>(kBankRecordSize));
+    pushNameRecord(mbk1BankC, "EXi Program", kBankRecordSize);
+
+    // Combi Timbre 2 -> bank0/number2 ("Program B"), confirmed raw code 0
+    // (INT-A) -- exercises the shift loop's OWN Combi-Timbre repoint below
+    // (not just the moving record's), the genuinely new code this fixture
+    // exists to cover (moveCombiWithinBank()'s own Set-List-only shift is
+    // already covered by buildCombiRearrangeFixture()).
+    std::vector<uint8_t> cbk1BankA;
+    pushU32BE(cbk1BankA, 1);
+    pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));
+    auto combi0 = makeCbkCombiRecord("Test Combi", kCombiRecordSize);
+    kronos::writeTimbreProgramRef(combi0.data(), combi0.size(), /*timbreIndex=*/2, /*number=*/2, /*rawBankCode=*/0);
+    size_t statusOff = kronos::timbreByteOffset(2) + 2;
+    combi0[statusOff] = static_cast<uint8_t>(1 << 5);  // Internal, not the all-zero Off default
+    cbk1BankA.insert(cbk1BankA.end(), combi0.begin(), combi0.end());
+
+    std::vector<uint8_t> sls1Content;
+    appendChunk(sls1Content, "SDB1", sdb1);
+    appendChunk(sls1Content, "SBK1", sbk1);
+
+    std::vector<uint8_t> prg1Content;
+    appendChunk(prg1Content, "PBK1", pbk1BankA);
+    appendChunk(prg1Content, "PBK1", pbk1BankB);
+    appendChunk(prg1Content, "MBK1", mbk1BankC);
+
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1BankA);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "SLS1", sls1Content);
+    appendChunk(pcg1Content, "PRG1", prg1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testProgramMove() {
+    // --- moveProgramWithinBank(): shift bank0's Program D (number 4) to
+    // number 1, shifting A/B/C up by one -- Program D itself is
+    // unreferenced, so BOTH repoints below come from the shift loop's own
+    // per-step calls, not the moving record's snapshotted referrers -------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildProgramMoveFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.moveProgramWithinBank(0, 4, 1);
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  moveProgramWithinBank() error: %s\n", result.error.c_str());
+        CHECK_EQ(result.setlistRefsRepointed, 1, "Song A followed Program A, shifted out of the way");
+        CHECK_EQ(result.combiRefsRepointed, 1, "Combi Timbre 2 followed Program B, shifted out of the way");
+        CHECK_EQ(result.combiRefsSkipped, 0, "bank 0's raw Timbre code (INT-A=0) is confirmed");
+
+        auto n1 = pcg.decodeProgram(0, 1);
+        auto n2 = pcg.decodeProgram(0, 2);
+        auto n3 = pcg.decodeProgram(0, 3);
+        auto n4 = pcg.decodeProgram(0, 4);
+        CHECK(n1.has_value() && n2.has_value() && n3.has_value() && n4.has_value());
+        if (n1 && n2 && n3 && n4) {
+            CHECK_EQ(n1->name, std::string("Program D"), "Program D moved to number 1");
+            CHECK_EQ(n2->name, std::string("Program A"), "Program A shifted to number 2");
+            CHECK_EQ(n3->name, std::string("Program B"), "Program B shifted to number 3");
+            CHECK_EQ(n4->name, std::string("Program C"), "Program C shifted to number 4");
+        }
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 2, "Song A followed Program A to number 2");
+        CHECK_EQ(pcg.setlists()[0].songs[0].instrumentName, std::string("Program A"),
+                 "Song A's instrumentName resolves to the content it actually followed");
+
+        auto combiAfter = pcg.decodeCombi(0, 0);
+        CHECK(combiAfter.has_value());
+        if (combiAfter) {
+            CHECK_EQ(combiAfter->timbres[2].number, 3, "Combi Timbre 2 followed Program B to number 3");
+            CHECK_EQ(combiAfter->timbres[2].rawBankCode, 0, "Combi Timbre 2's raw code untouched (still INT-A)");
+        }
+
+        // Rejected: out-of-range index.
+        auto bad = pcg.moveProgramWithinBank(0, 0, 99);
+        CHECK(!bad.ok);
+    }
+
+    // --- moveProgramWithinBank(): no-op (fromNumber == toNumber) ---------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildProgramMoveFixture(), error));
+        auto result = pcg.moveProgramWithinBank(0, 1, 1);
+        CHECK(result.ok);
+        CHECK_EQ(result.setlistRefsRepointed, 0, "no-op -- nothing to repoint");
+    }
+
+    // --- moveProgramToBank(): happy path, dest-referenced refusal,
+    // same-bank refusal, engine-type refusal -------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildProgramMoveFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        // A standalone stand-in "Init Program" template -- same trick
+        // testResetProgram() uses a real fixture record for, except this
+        // one is a synthetic 32-byte record built directly (its own
+        // distinct name, "Init Program Stand-in", is all that matters for
+        // telling a reset apart from the fixture's own content).
+        std::vector<uint8_t> hd1Template;
+        pushNameRecord(hd1Template, "Init Program Stand-in", 32);
+        std::vector<uint8_t> exiTemplate;  // never read in this test -- no EXi move attempted
+
+        // bank1/0 ("Other Bank Program") IS referenced (Song B) -- refuse.
+        auto refused = pcg.moveProgramToBank(0, 3, 1, 0, hd1Template, exiTemplate);
+        CHECK(!refused.ok);
+        auto stillThere = pcg.decodeProgram(1, 0);
+        CHECK(stillThere.has_value());
+        if (stillThere) CHECK_EQ(stillThere->name, std::string("Other Bank Program"), "refused move writes nothing");
+
+        // Same-bank rejected outright (use moveProgramWithinBank() instead).
+        auto sameBank = pcg.moveProgramToBank(0, 1, 0, 3, hd1Template, exiTemplate);
+        CHECK(!sameBank.ok);
+
+        // Different engine type (bank 0 = HD-1, bank 2 = EXi) rejected.
+        auto wrongType = pcg.moveProgramToBank(0, 1, 2, 0, hd1Template, exiTemplate);
+        CHECK(!wrongType.ok);
+
+        // Happy path: move Program A (bank0/1, referenced by Song A) into
+        // bank1/1 ("Empty Target", unreferenced, same HD-1 type).
+        auto moved = pcg.moveProgramToBank(0, 1, 1, 1, hd1Template, exiTemplate);
+        CHECK(moved.ok);
+        if (!moved.ok) std::fprintf(stderr, "  moveProgramToBank() error: %s\n", moved.error.c_str());
+        CHECK_EQ(moved.setlistRefsRepointed, 1, "Song A (the only referrer) followed Program A to its new home");
+        CHECK_EQ(moved.combiRefsRepointed, 0, "nothing Combi-Timbre-referenced bank0/1");
+
+        auto atDest = pcg.decodeProgram(1, 1);
+        CHECK(atDest.has_value());
+        if (atDest) CHECK_EQ(atDest->name, std::string("Program A"), "destination now holds the moved Program's content");
+
+        auto vacated = pcg.decodeProgram(0, 1);
+        CHECK(vacated.has_value());
+        if (vacated) CHECK_EQ(vacated->name, std::string("Init Program Stand-in"), "vacated source refilled with the template");
+
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.bank, 1, "Song A repointed to the new bank");
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 1, "Song A repointed to the new number");
+
+        // Rejected: out-of-range destination bank.
+        auto outOfRange = pcg.moveProgramToBank(0, 2, 99, 0, hd1Template, exiTemplate);
+        CHECK(!outOfRange.ok);
     }
 }
 
@@ -2302,6 +2521,83 @@ void testCombiRearrange() {
     }
 }
 
+// Combi table's "Reset entry" -- clears a slot back to a blank Combi,
+// sourced live from another "Init Combi" in the SAME bank (no shipped
+// template exists, see resetCombi()'s own doc comment). Reuses
+// buildCombiRearrangeFixture(): bank0 has a real "Init Combi" at number4 to
+// draw from; bank1 has none (its only placeholder is "- iNit COMBI -",
+// which looksLikeEmptyCombiName() would match but the donor search's exact,
+// case-sensitive "Init Combi" match deliberately does not), isolating the
+// "no donor" refusal the same way testCombiRearrange()'s moveCombiToBank()
+// case does.
+void testResetCombi() {
+    // --- Happy path: reset Combi A (bank0/1, referenced by Song A) -- the
+    // reference is left pointing at bank0/1, now showing the reset content
+    // (never repointed elsewhere, unlike swap/move) ----------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.resetCombi(0, 1);
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  resetCombi() error: %s\n", result.error.c_str());
+
+        auto reset = pcg.decodeCombi(0, 1);
+        CHECK(reset.has_value());
+        if (reset) CHECK_EQ(reset->name, std::string("- Init Combi -"), "slot now holds the donor's bytes, visibly marked");
+
+        // The donor itself (bank0/4, "Init Combi") must be untouched --
+        // resetCombi() COPIES from it, unlike moveCombiToBank()'s vacate
+        // step which relocates a filler and leaves nothing behind at its
+        // own old spot.
+        auto donor = pcg.decodeCombi(0, 4);
+        CHECK(donor.has_value());
+        if (donor) CHECK_EQ(donor->name, std::string("Init Combi"), "donor slot untouched by the copy");
+
+        // The other real Combis in the bank are untouched by an unrelated reset.
+        auto untouchedB = pcg.decodeCombi(0, 2);
+        CHECK(untouchedB.has_value());
+        if (untouchedB) CHECK_EQ(untouchedB->name, std::string("Combi B"), "unrelated slot untouched");
+
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.bank, 0, "Song A's reference NOT repointed: still bank 0");
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 1, "Song A's reference NOT repointed: still number 1");
+        CHECK_EQ(pcg.setlists()[0].songs[0].instrumentName, std::string("- Init Combi -"),
+                 "Song A's cached instrumentName now resolves to the reset content");
+    }
+
+    // --- Rejected: bank 1 has no exact "Init Combi" donor ----------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto noDonor = pcg.resetCombi(1, 0);
+        CHECK(!noDonor.ok);
+        auto stillThere = pcg.decodeCombi(1, 0);
+        CHECK(stillThere.has_value());
+        if (stillThere) CHECK_EQ(stillThere->name, std::string("Other Bank Combi"), "rejected reset writes nothing");
+    }
+
+    // --- Rejected: out-of-range bank/number -------------------------------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiRearrangeFixture(), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto badBank = pcg.resetCombi(99, 0);
+        CHECK(!badBank.ok);
+        auto badNumber = pcg.resetCombi(0, 99);
+        CHECK(!badNumber.ok);
+    }
+}
+
 // --- Cross-dataset Combi copy: two independent files (not one shared
 // fixture -- this feature is inherently cross-file, unlike every other
 // Combi test above) -----------------------------------------------------
@@ -2751,10 +3047,11 @@ void testProgramCopyRecognizesRealFactoryEmptyNames() {
     {
         std::vector<uint8_t> dummyCombiBank;
         pushNameRecord(dummyCombiBank, "Unused", kCrossDsCombiRecordSize);
-        // Two DISTINCT source Programs (0, 3) -- copying the SAME source into
-        // both target slots would trip DuplicateExists on the second copy
-        // (an identical Program would already exist elsewhere by then), which
-        // isn't what this test is checking.
+        // Two DISTINCT source Programs (0, 3), not that it's load-bearing
+        // any more (copyProgramFrom() no longer rejects a byte-identical
+        // match elsewhere in the file, see its own doc comment) -- kept
+        // distinct anyway so each target slot's own check below is
+        // unambiguous about which copy landed where.
         auto fixture = buildCrossDatasetFixture(
             dummyCombiBank, 1, {{0, "Real Program"}, {1, "Init Program"}, {2, "Init EXi Program"}, {3, "Second Program"}}, {},
             std::nullopt);
@@ -2838,7 +3135,9 @@ int main() {
     testResolveDuplicateCombisConsolidateDifferentContent();
     testResetProgram();
     testProgramSwap();
+    testProgramMove();
     testCombiRearrange();
+    testResetCombi();
     testCombiCrossDatasetCopy();
     testCombiCrossDatasetCopyExactSlot();
     testProgramCopyRecognizesRealFactoryEmptyNames();

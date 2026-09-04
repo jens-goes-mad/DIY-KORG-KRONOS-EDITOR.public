@@ -28,12 +28,18 @@ repoints every affected Set List reference, and never touches anything else in t
 
 - **Drop it directly onto an empty slot** (one still named "Init Combi," Korg's own default
   -- shown in the Name column) to **copy** it there. The source is left completely
-  untouched, including its own Set List references -- this is how you keep two variations
-  of the same Combi, e.g. one tuned for a band with a brass section and one without, without
-  ever editing the original.
+  untouched -- this is how you keep two variations of the same Combi, e.g. one tuned for a
+  band with a brass section and one without, without ever editing the original. (This used
+  to be a Shift-to-copy gesture; Shift/Option don't reliably register during a drag on this
+  platform, confirmed directly, so it's unconditional now -- see below for how to *move*
+  instead.)
 - **Drop it directly onto any other (already-used) Combi** to **swap** the two -- both
   keep their content, just at each other's position, and every Set List slot referencing
   either one follows it to its new spot. Works across banks too, since nothing is destroyed.
+  **To move a Combi INTO an empty slot** (rather than copying it there), drag the *empty*
+  slot onto the used one instead of the other way around -- it's the same swap gesture,
+  just reversed: the used Combi lands where the empty one was, and an "Init Combi" is left
+  behind at its old spot.
 - **Drop it between two rows in the same bank** (or before the first / after the last) to
   **move** it there, shifting the intervening Combis down one to make room -- same insert
   behavior as a Setlist slot.
@@ -45,8 +51,10 @@ repoints every affected Set List reference, and never touches anything else in t
   [Duplicates](/guide/prog#duplicates)' `- Init Program (HD1) -`), so this only works if the
   source's own bank has at least one spare "Init Combi" slot to draw from.
 
-Every one of these shows a toast reporting how many Set List slots got repointed. All four
-gestures above are same-dataset only -- for copying across two different files, see below.
+Every one of these shows a toast reporting how many Set List slots got repointed. All of
+these gestures are same-dataset only -- for copying across two different files, see below.
+As you drag, the target row is **blue** when the drop will *move* or *swap* and **green**
+(with a **"+"** cursor) when it will *copy*; an edge line means *insert between rows*.
 
 ## Copying a Combi to a different dataset
 
@@ -73,6 +81,21 @@ same-dataset copy, only the destination changes.
 **Cross-dataset swap and cross-dataset move-to-a-different-bank (overwrite) aren't
 supported yet** -- only the copy-onto-an-empty-slot gesture above works across two
 different files; the other three rearrange gestures stay same-dataset-only for now.
+
+## Resetting a slot
+
+Click the **⋯** button in a Combi row's own last column (or right-click the row) for a small local
+menu with one action: **Reset entry** (the same
+menu the [Programs](/guide/prog#resetting-a-slot) table uses). Confirming it clears the
+slot back to a blank "- Init Combi -" -- unlike a Program, there's no single factory
+template to write (real "Init Combi" bytes differ across banks), so the blank record is
+sourced live from another genuinely blank slot elsewhere in the *same* bank; if that bank
+happens to be completely full (no spare "Init Combi" left anywhere in it), the reset is
+refused rather than fabricating one. This is a single-slot reset: nothing else in the file
+is repointed -- any Set List slot that already referenced this exact slot keeps pointing at
+it, and will now show the reset content instead.
+
+This applies immediately once confirmed -- no undo, same as every other write in this app.
 
 ## Duplicates
 

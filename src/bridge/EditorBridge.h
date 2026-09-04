@@ -242,11 +242,12 @@ public:
     // {ok} or {ok:false, error}. Copies a Program's raw bytes from the source
     // slot into the destination slot -- see PcgFile::copyProgramFrom()'s own
     // doc comment for the exact validation guards (bank type must match,
-    // target slot must be empty, no byte-identical duplicate may already
-    // exist in the destination dataset). Same-dataset or cross-dataset both
-    // work (srcDatasetId may equal dstDatasetId). This is the first bridge
-    // method that writes directly into a dataset's retained raw bytes rather
-    // than only mutating in-memory bookkeeping -- see STATE.md.
+    // target slot must be empty -- a byte-identical duplicate elsewhere in
+    // the destination dataset is fine, no restriction on that). Same-dataset
+    // or cross-dataset both work (srcDatasetId may equal dstDatasetId). This
+    // is the first bridge method that writes directly into a dataset's
+    // retained raw bytes rather than only mutating in-memory bookkeeping --
+    // see STATE.md.
     choc::value::Value copyProgram(const choc::value::ValueView& args);
 
     // [datasetId, bankA, numberA, bankB, numberB] -> {ok, setlistRefsRepointed,
@@ -255,13 +256,28 @@ public:
     // PcgFile::swapPrograms()'s own doc comment for why, unlike copyProgram()
     // above, this doesn't go cross-dataset) and repoints every Set List slot
     // AND Combi Timbre reference pointing at either one to follow its
-    // content. Built so a plain drag-and-drop between two slots that are
-    // both genuinely empty ("Init Program") doesn't have to fight
-    // copyProgramFrom()'s own DuplicateExists guard (every Init Program is
-    // byte-identical to every other one, so copying one onto another always
-    // trips it) -- a swap never creates a new copy of anything, so that
-    // check doesn't apply here at all.
+    // content -- see PcgFile::swapPrograms()'s own doc comment for why this
+    // stays the one non-destructive way to exchange two occupied slots
+    // holding genuinely different content, even now that copyProgram()
+    // above no longer refuses a byte-identical match elsewhere in the file.
     choc::value::Value swapProgram(const choc::value::ValueView& args);
+
+    // [datasetId, bank, fromNumber, toNumber] -> {ok, setlistRefsRepointed,
+    // combiRefsRepointed, combiRefsSkipped} or {ok:false, error}. Moves a
+    // Program to a new position within its own bank, shifting the
+    // intervening range to make room -- see
+    // PcgFile::moveProgramWithinBank()'s own doc comment.
+    choc::value::Value moveProgramWithinBank(const choc::value::ValueView& args);
+
+    // [datasetId, srcBank, srcNumber, dstBank, dstNumber] -> {ok,
+    // setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped} or
+    // {ok:false, error}. Moves a Program into a specific slot in a
+    // DIFFERENT bank of the same engine type, overwriting whatever was
+    // there -- see PcgFile::moveProgramToBank()'s own doc comment for the
+    // destination-referenced/engine-type refusals and how the vacated
+    // source slot gets refilled. Reads resources/Init-Program-HD1.raw/
+    // Init-Program-EXi.raw fresh off disk (same as resetProgram() above).
+    choc::value::Value moveProgramToBank(const choc::value::ValueView& args);
 
     // [datasetId, bank, number, targets, requireByteExactMatch] -> {ok,
     // clearedPrograms, setlistRefsRepointed, combiRefsRepointed,
@@ -334,6 +350,13 @@ public:
     // currently an empty ("Init Combi") slot -- see PcgFile::copyCombi()'s
     // own doc comment.
     choc::value::Value copyCombi(const choc::value::ValueView& args);
+
+    // [datasetId, bank, number] -> {ok} or {ok:false, error}. Clears one
+    // Combi slot back to a blank "- Init Combi -" record -- the Combi
+    // equivalent of resetProgram(), nothing else in the file repointed. See
+    // PcgFile::resetCombi()'s own doc comment (including why it can refuse
+    // for a fully-populated bank).
+    choc::value::Value resetCombi(const choc::value::ValueView& args);
 
     // [srcDatasetId, srcBank, srcNumber, dstDatasetId, dstBank, dstNumber] -> {ok,
     // dependencies:[{timbreIndex, srcBank, srcNumber, name, bankType, found,
