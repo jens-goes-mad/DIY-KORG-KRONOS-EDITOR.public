@@ -42,8 +42,10 @@ valuable ground truth. This applies to copying a Program directly, or as part of
 
 ### Swapping Programs by Shift+drag
 
-Dropping a Program directly onto another (already-used) Program normally refuses, since the
-two would otherwise collide -- **hold Shift before you start dragging** (and keep it held)
+A plain drop onto another (already-used) Program never lights up as a valid target in the
+first place -- the row simply doesn't turn green and the cursor shows "not allowed," rather
+than accepting the drop and failing afterward, same as dropping onto a used
+[Setlist](/guide/setlist) slot. **Hold Shift before you start dragging** (and keep it held)
 to swap the two instead: both keep their content, just at each other's position, and every
 Set List slot and every Combi Timbre that referenced either one follows it to its new spot.
 Same dataset only (a swap has no meaning across two different files). It's the only way to

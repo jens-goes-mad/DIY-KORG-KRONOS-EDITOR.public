@@ -370,7 +370,16 @@ function createProgramsPanel(
       // move and the Shift swap outright for a cross-dataset drag -- unlike
       // the plain copy, neither has a cross-dataset meaning (a bank/number
       // reference isn't portable across two files' bank layouts, same
-      // reasoning as Setlist slots and Combi's own move/swap).
+      // reasoning as Setlist slots and Combi's own move/swap). Plain
+      // (non-Shift) copy onto an already-occupied row is ALSO rejected here
+      // (reported directly, 2026-09-04, preferring Setlist's "never lights
+      // up as a target" over a post-drop failure toast) -- previously this
+      // only surfaced as a "Copy failed" toast from copyProgramFrom()'s own
+      // TargetSlotOccupied guard (PcgFile.cpp) AFTER a green, seemingly-valid
+      // drop; now the row simply never shows as a copy target, same as
+      // Setlist's looksLikeEmptySetlistName() check. Shift+onto-occupied
+      // (swap) is unaffected -- swapping two occupied slots is exactly what
+      // that gesture is for.
       makeRowDraggable(tr, {
         zones: true,
         getPayload: () => ({ datasetId: getDatasetId(), bank: p.bank, number: p.number, bankType: p.bankType }),
@@ -379,6 +388,7 @@ function createProgramsPanel(
           const sameDataset = dragged.datasetId === getDatasetId();
           if (zone === "on") {
             if (shiftKey && !sameDataset) return null;  // swap is same-dataset only
+            if (!shiftKey && !looksLikeEmptyProgramName(p.name)) return null;  // plain copy needs an empty target
             return { effect: shiftKey ? "move" : "copy" };
           }
           if (!sameDataset) return null;  // before/after move is same-dataset only
