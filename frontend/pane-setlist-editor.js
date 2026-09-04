@@ -182,6 +182,7 @@ function createSetlistPanel(
           1.3,   // Type
           3.5,   // Bank -- room for "I-C 000" plus an optional "(HD-1)"/"(EXi)" suffix (wraps onto a 2nd line if it still doesn't fit, see .bank-jump-button)
           1.3,   // Vol
+          0.8,   // "more actions" menu -- pane.js's menuCell(), same trailing column Programs/Combis have
         ])}
         <thead>
           <tr>
@@ -190,6 +191,7 @@ function createSetlistPanel(
             <th title="Program or Combi">Type</th>
             <th title="Bank / number within bank">Bank</th>
             <th>Vol</th>
+            <th></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -351,7 +353,7 @@ function createSetlistPanel(
     const result = await window.putSongRecordBytes(getDatasetId(), currentSetlistIndex, entry.index, Array.from(newBytes));
     if (!result.ok) {
       log(`[Pane ${paneId}] ${result.error}`);
-      return;
+      return false;
     }
     slotBytesCache.set(entry.index, newBytes);
     const codecs = await loadSlotCodecs();
@@ -361,6 +363,7 @@ function createSetlistPanel(
     entry.color = codecs.decodeSlotColor(newBytes);
     entry.volume = codecs.decodeSlotVolume(newBytes);
     renderRows();
+    return true;
   }
 
   // Same idea as commitSlotBytes() above, but for the slot's separate
@@ -371,12 +374,61 @@ function createSetlistPanel(
     const result = await window.putNameRecordBytes(getDatasetId(), currentSetlistIndex, entry.index, Array.from(newBytes));
     if (!result.ok) {
       log(`[Pane ${paneId}] ${result.error}`);
-      return;
+      return false;
     }
     nameBytesCache.set(entry.index, newBytes);
     const codecs = await loadSlotCodecs();
     entry.label = codecs.decodeSlotName(newBytes);
     renderRows();
+    return true;
+  }
+
+  // Row's own "Reset entry" -- clears a Set List slot back to a blank
+  // "- Init Setlist -", the Setlist equivalent of Programs'/Combis' own
+  // reset. Genuinely simpler than either of those: a real, never-touched
+  // Set List slot's own byte pattern is CONFIRMED all-blank (docs/content/
+  // format/index.md §3.2/§4.3, "Unpopulated song slots are empty
+  // strings"), so unlike Program (a shipped Init Program template) or
+  // Combi (a live-donor search for a real "Init Combi" record elsewhere in
+  // the same bank), this needs neither -- writing genuinely blank bytes
+  // for BOTH records already matches the real hardware-confirmed empty
+  // state exactly. The only thing that's this app's own convention (not
+  // Korg's) is the visible "- Init Setlist -" name, patched in afterward
+  // for the same "an untouched slot and a deliberately cleared one should
+  // look different" reason "- Init Combi -"/"- Init Program (HD1) -" exist.
+  // Reuses commitSlotBytes()/commitNameBytes() -- the SAME write path
+  // every other edit on this row goes through, not a second one.
+  async function resetEntry(entry) {
+    const confirmed = await window.showConfirmDialog(
+      `Reset slot ${kronosNumber(entry.index)} ("${entry.label || "(empty)"}") to a blank "- Init Setlist -"? This can't be undone.`,
+      { confirmLabel: "Reset", isDanger: true }
+    );
+    if (!confirmed) return;
+
+    const [currentParams, currentName, codecs] = await Promise.all([getSlotBytes(entry), getNameBytes(entry), loadSlotCodecs()]);
+    if (currentParams == null || currentName == null) {
+      showToast("Reset failed: couldn't read the slot's current bytes.", { isError: true });
+      return;
+    }
+
+    // Params record: all-zero, the confirmed real "unpopulated" byte
+    // pattern -- no Program/Combi reference, comment, color, volume, font
+    // size, or transpose survives. Same length this slot's record already
+    // has, never a hardcoded 542.
+    const paramsOk = await commitSlotBytes(entry, new Uint8Array(currentParams.length));
+    // Name record: the 4-byte marker preserved (setlist-editor-name.js's
+    // encodeSlotName() -- see its own doc comment for why that marker must
+    // never be touched: on a Set List's FIRST slot specifically, it's the
+    // only byte pattern that identifies where the Set List's own name
+    // record ends and its 128 songs begin), the 24-byte name field
+    // replaced with the visibility marker.
+    const nameOk = await commitNameBytes(entry, codecs.encodeSlotName(currentName, "- Init Setlist -"));
+
+    if (!paramsOk || !nameOk) {
+      showToast("Reset failed -- see the log for details.", { isError: true });
+      return;
+    }
+    showToast(`Reset slot ${kronosNumber(entry.index)} to a blank "- Init Setlist -".`);
   }
 
   // ONE editor <tr> per slot with an open panel (not one per open section)
@@ -399,7 +451,7 @@ function createSetlistPanel(
     const editorTr = document.createElement("tr");
     editorTr.classList.add("editor-row");
     const td = document.createElement("td");
-    td.colSpan = 5;  // #, Song, Type, Bank, Vol
+    td.colSpan = 6;  // #, Song, Type, Bank, Vol, menu
 
     const panel = document.createElement("div");
     panel.className = "editor-panel";
@@ -832,18 +884,29 @@ function createSetlistPanel(
         openSection(entry, "comment");
       });
 
+      // Row's own "more actions" menu -- currently just Reset entry, same
+      // shared column/scaffolding (pane.js's menuCell()/showRowContextMenu())
+      // as the Programs and Combis tables already use, not a third
+      // hand-rolled copy.
+      const rowMenuItems = [{ label: "Reset entry…", onSelect: () => resetEntry(entry) }];
+      tr.addEventListener("contextmenu", (ev) => showRowContextMenu(ev, rowMenuItems));
+
       // Drop ONTO a row copies that slot over this one; drop on the top/
       // bottom edge inserts (a reorder within this Set List, or a copy in
       // from a different Set List) -- app.js's onDropEntry picks which.
       // Cross-DATASET Setlist drops are rejected outright (a slot's
       // bank/number references aren't portable across two files' layouts --
       // see onDropEntry's own doc comment); classify returns null for them
-      // so the row never lights up as a target.
+      // so the row never lights up as a target. Dropping ONTO a slot that's
+      // already in use is ALSO rejected (reported directly, 2026-09-04) --
+      // pane.js's looksLikeEmptySetlistName(), same reasoning Combi/Programs
+      // already refuse an onto-occupied copy for.
       makeRowDraggable(tr, {
         zones: true,
         getPayload: () => ({ datasetId: getDatasetId(), setlistIndex: currentSetlistIndex, index: entry.index }),
         classify: ({ dragged, zone }) => {
           if (dragged.datasetId !== getDatasetId()) return null;
+          if (zone === "on" && !looksLikeEmptySetlistName(entry.label)) return null;
           const reorder = zone !== "on" && dragged.setlistIndex === currentSetlistIndex;
           return { effect: reorder ? "move" : "copy" };
         },
@@ -852,6 +915,7 @@ function createSetlistPanel(
             datasetId: getDatasetId(),
             setlistIndex: currentSetlistIndex,
             index: entry.index,
+            label: entry.label,
             zone,
           }),
       });
@@ -950,7 +1014,7 @@ function createSetlistPanel(
       // Comment editor panel later rather than showing it here; entry.holdTime
       // itself is untouched (still fetched/returned by getEntries()), just
       // not rendered as its own column for now.
-      tr.append(idxTd, labelTd, typeTd, bankTd, volTd);
+      tr.append(idxTd, labelTd, typeTd, bankTd, volTd, menuCell(rowMenuItems));
       tbody.appendChild(tr);
 
       // The editor panel, if this slot's is open -- see buildEditorRow()'s

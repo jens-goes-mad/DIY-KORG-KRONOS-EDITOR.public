@@ -289,6 +289,24 @@ Unpopulated song slots are empty strings (all-NUL after the marker) --
 most factory-default Set Lists (`"Set List 005"` .. `"Set List 127"`) have
 no songs assigned.
 
+**This app's own "reset a slot" marker (2026-09-04, not Korg's)**: unlike a
+Program or Combi, a genuinely untouched Set List slot has no factory
+placeholder text at all -- just the blank string confirmed above -- so this
+project's own Reset entry feature (`pane-setlist-editor.js`'s
+`resetEntry()`) writes real, hardware-matching blank bytes for the SBK1
+params record, but patches the SDB1 name field specifically to
+`"- Init Setlist -"` (24-byte field, 4-byte marker preserved untouched --
+see the marker table above for why touching it on a Set List's FIRST slot
+specifically would corrupt the list-boundary detection) rather than leaving
+it blank too. Purely a visibility convention so a deliberately-cleared slot
+reads differently from one nobody's ever touched -- same reasoning as
+Programs' own `"- Init Program (HD1) -"`/`"- Init Program (EXi) -"` below
+(§5.5), and Combis' `"- Init Combi -"` (not yet written up in this document
+-- see `PcgFile.cpp`'s `moveCombiToBank()`/`resetCombi()` and STATE.md
+entries 34/74 for that one). `looksLikeEmptySetlistName()` (`pane.js` and,
+for `PcgFile::sortSetlist()`'s own "empty slots sort last" logic,
+`PcgFile.cpp`) recognizes both the blank string and this marker as "empty."
+
 **Verified** end to end against the real 47.9MB sample: all 128 Set Lists
 extracted correctly, including 5 real user-named ones (`Preload Set List`,
 `emergency exit`, `Wiener Hof Old Stars`, `Misplaced Childhood`, `Pink

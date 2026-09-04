@@ -42,10 +42,15 @@ so they don't get interleaved with the songs you're actually organizing.
 Drag any Setlist row within its own Set List, or onto the same Set List shown in the
 *opposite* pane:
 
-- **Drop it directly onto another row** to copy that slot's whole content (name, Program/
+- **Drop it directly onto an empty slot** to copy that slot's whole content (name, Program/
   Combi reference, Color, Volume, Comment -- everything) onto the target. The source slot
   is left completely unchanged. This works between two *different* Set Lists too (same
-  dataset), not just within one.
+  dataset), not just within one. **Dropping onto a slot that's already in use refuses** --
+  same reasoning the [Programs](/guide/prog) and [Combi](/guide/combi) tables already
+  enforce for their own onto-occupied copy: a copy-over is silent and total, so landing on
+  a used slot by accident would destroy it with no undo anywhere in this app. [Reset the
+  slot](#resetting-a-slot) first to make it a valid target again, or drop onto a genuinely
+  empty one.
 - **Drop it between two rows** (or before the first / after the last) to *insert* it there
   instead -- every slot in between shifts down one to make room. A line appears along the
   top or bottom edge of the row you're hovering to show exactly where the insert will
@@ -56,15 +61,32 @@ Drag any Setlist row within its own Set List, or onto the same Set List shown in
   Save As writes out.
 
 While you drag, the feedback tells you what a drop right now would do: a **green** row
-with a **"+"** cursor means it will *copy*, a **blue** row means it will *move* the slot
-into that position, and the edge line means *insert*. It's the same visual language in
-the Programs and Combis tables.
+with a **"+"** cursor means it will *copy* (the only thing an onto-a-row drop ever does
+here), the edge line means *insert*, and hovering a slot that's already in use shows
+neither -- the cursor itself goes to "not allowed." Same green-for-copy/edge-line-for-
+insert visual language the Programs and Combis tables use, plus a **blue** row there for
+their own *swap* gesture, which Setlist doesn't have.
 
 Both of these write real bytes into the loaded file's own in-memory data immediately --
 there's no separate "commit" step, for every case except the cross-Set-List insert noted
 above. Dragging a slot to a *different loaded file* (a different dataset entirely) is
 intentionally blocked, since a slot's Program/Combi reference is a raw bank/number pointer
 that's only meaningful inside its own file.
+
+## Resetting a slot
+
+Click the **⋯** button in a slot's own last column (or right-click the row) for a small
+local menu with one action: **Reset entry** (the same menu the [Programs](/guide/prog#resetting-a-slot)
+and [Combi](/guide/combi#resetting-a-slot) tables use). Confirming it clears the slot back
+to a blank **"- Init Setlist -"** -- no Program/Combi reference, and Color/Volume/Font
+size/Transpose/Comment all back to their defaults. Unlike a Program or Combi reset, this
+needs no factory template or live donor: a genuinely untouched Set List slot's own bytes
+are confirmed blank on real hardware, so writing blank bytes back already matches that
+exactly -- the visible "- Init Setlist -" name is purely this app's own marker (same
+convention as Combi's "- Init Combi -"), so a slot you deliberately cleared reads
+differently from one that was simply never touched.
+
+This applies immediately once confirmed -- no undo, same as every other write in this app.
 
 ## Multi-select
 

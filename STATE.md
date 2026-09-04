@@ -5586,6 +5586,108 @@ App/UI:
         says duplicate content is fine, the swap section's own "why" rewritten to match
         the code comments. Frontend-only pieces `jsc` parse-checked; still not run in a
         real browser.
+  82. **BUILT (2026-09-04)**, two pieces of direct feedback bringing Setlist up to the
+      same rules Programs/Combis already follow -- both frontend-only, no backend
+      change needed at all.
+      - **"Copying a setlist item over a used entry should be blocked."** Setlist's
+        onto-a-row drop (`app.js`'s `onDropEntry`) used to overwrite whatever was there
+        unconditionally -- no equivalent of Combi's/Programs' own onto-occupied
+        refusal existed for it. New `pane.js` `looksLikeEmptySetlistName(name)` --
+        genuinely simpler than its Combi/Program siblings: a real, never-touched Set
+        List slot's SDB1 name record is CONFIRMED blank on real hardware (docs/content/
+        format/index.md §3.2: "Unpopulated song slots are empty strings"), not a Korg
+        factory placeholder string the way "Init Program"/"Init Combi" are, so this only
+        needs the blank check plus this app's own new "- Init Setlist -" marker (below)
+        -- no third factory-name table to maintain. Enforced in TWO places, same
+        defense-in-depth as Combi/Programs: `pane-setlist-editor.js`'s own `classify()`
+        rejects the "on" zone outright (row never lights up as a target, cursor shows
+        "not allowed") using the row's own already-known `entry.label` -- no extra
+        bridge round-trip -- and `onDropEntry` re-checks the same thing from a new
+        `target.label` field (threaded through the drop payload) before writing
+        anything, with a clear toast if a stale render let a now-invalid drop through
+        anyway. Same-day, also fixed while touching this exact function: the copy
+        success message switched from `setStatus()` to `showToast()`, matching the
+        visibility fix entry 81 already gave `onDropProgram()`.
+      - **"We need the ⋯ button to reset a setlist too ('- Init Setlist -')."** New
+        `resetEntry()` in `pane-setlist-editor.js`, reached via the SAME shared
+        `menuCell()`/`showRowContextMenu()` column Programs/Combis already use (their
+        table gained its own trailing "⋯" column + a matching colSpan bump on the
+        editor row, same shape as entries 76/77). Genuinely simpler than Program's
+        (a shipped Init Program template) or Combi's (a live-donor search for a real
+        "Init Combi" elsewhere in the same bank): since a real unpopulated Set List
+        slot's own bytes are CONFIRMED blank (see above), writing blank bytes for
+        BOTH records already matches the real hardware-confirmed empty state exactly
+        -- no template file needed, and no "raw byte file is missing" fallback to
+        build, because there was never a file to be missing in the first place. The
+        ONE thing that's this app's own invention, not Korg's, is the visible
+        "- Init Setlist -" name patched in afterward (same "a deliberately-cleared
+        slot should look different from an untouched one" reasoning "- Init Combi -"/
+        "- Init Program (HD1) -" already exist for) -- written via the EXISTING,
+        already-marker-preserving `setlist-editor-name.js` codec (`encodeSlotName()`,
+        built 2026-08-16 for the General section's own Name field, reused as-is here,
+        not duplicated) so the 4-byte SDB1 marker byte is never touched -- correctness-
+        critical specifically for a Set List's FIRST slot, whose marker is documented
+        as "the *only* way to find where one Set List's name ends and its 128 songs
+        begin" (§3.2); blindly zeroing the whole 28-byte record would have corrupted
+        that. Reuses the EXISTING `commitSlotBytes()`/`commitNameBytes()` write path
+        every other Setlist edit (Color/Volume/Comment/Name) already goes through, not
+        a second one -- both grew a `return true/false` (previously nothing) so
+        `resetEntry()` can tell a write failed and show a toast, a small, backward-
+        compatible addition (every existing caller already ignored the return value).
+      - **Explicitly flagged, not fixed**: `PcgFile::sortSetlist()`'s own "empty slots
+        sort to the end" check (`name.empty()`) doesn't know about the new
+        "- Init Setlist -" marker, so a freshly-reset slot would sort by that literal
+        string (starting with "-") instead of landing with the other blanks -- a real
+        but minor inconsistency, left alone rather than reaching into backend C++ for
+        a cosmetic sort-order nuance nobody asked about this round.
+      - **Verified**: `jsc` parse-checked every touched file. A dedicated harness
+        (stripping `export`/loading the real `setlist-editor-name.js` codec as a plain
+        script) confirmed `looksLikeEmptySetlistName()`'s five cases (blank, undefined,
+        a real name, the marker, and a case-insensitive match), `encodeSlotName()`
+        preserving a real confirmed marker byte pattern while patching the name, and
+        the `classify()` rejection logic across four scenarios (onto a used slot ->
+        rejected, onto blank -> copy, onto a reset slot -> copy again, before/after a
+        used slot -> still allowed to reorder). No backend touched, so no C++ rebuild
+        needed this round. Guide docs (`docs/content/guide/setlist/index.md`) updated:
+        the drag-and-drop section notes the new refusal and links to the new "Resetting
+        a slot" section; also corrected a stale claim in the same paragraph ("a blue row
+        means it will move the slot" -- blue has only ever meant Combi's/Programs' own
+        swap gesture in this app, never a Setlist outcome, predating this session).
+        Still not run in a real browser.
+
+  83. **FIXED (2026-09-04)**, closing the gap entry 82 explicitly flagged the same
+      round: `PcgFile::sortSetlist()`'s "empty slots sort to the end" check was a bare
+      `name.empty()`, so a freshly-`resetEntry()`-ed slot -- whose name is the literal
+      marker string `"- Init Setlist -"`, not blank -- sorted ALPHABETICALLY among real
+      content (leading `-` sorts ahead of everything under ascending) instead of landing
+      with the genuinely untouched slots at the end. New `PcgFile.cpp` helper
+      `looksLikeEmptySetlistName()` (C++ mirror of `pane.js`'s own function of the same
+      name, entry 82) -- blank string OR a case-insensitive "init setlist" match --
+      used in `sortSetlist()`'s comparator in place of the old check.
+      - **Verified**: new `pcg_file_test` case writes the marker directly into slot 2's
+        name record (bypassing `resetEntry()`, which is frontend-only), sorts ascending,
+        and checks the marker landed at the END alongside the other empty slots rather
+        than ahead of `"Song One"`/`"Song Zero"` -- confirmed non-vacuous with the usual
+        deliberate-break discipline (reverted the fix, rebuilt with `touch` to dodge the
+        entry-78 mtime gotcha, watched 3 CHECK_EQs FAIL at the right lines, restored,
+        rebuilt clean). `pcg_file_test`: "All checks passed". `kronos_editor` also
+        rebuilt clean (no frontend change this round -- backend-only fix).
+      - **Docs**: `docs/content/format/index.md` §3.2 (Set List block) gained a
+        paragraph documenting the "- Init Setlist -" marker as this app's own invention
+        (not Korg's) alongside the already-confirmed "unpopulated slots are blank"
+        finding, and pointing `looksLikeEmptySetlistName()` readers at both the JS and
+        C++ copies. While writing that paragraph, caught it citing `"- Init Combi -"`
+        as documented "below" in the same file -- checked with a plain grep, found zero
+        hits, so that marker has actually never been written up in `format/index.md`
+        despite predating this session by weeks (entries 34/74) -- corrected the wording
+        to point at `PcgFile.cpp`/STATE.md instead of a nonexistent section rather than
+        adding the missing writeup itself, which is its own separate piece of work,
+        not part of this round's ask. `docs/content/overview/index.md`'s "What's built
+        so far" section (the page CLAUDE.md calls out by name to keep current after a
+        refactor, separately from STATE.md) updated to mention the onto-occupied
+        refusal, empty/reset-slots-sort-last, unrestricted Program re-copying, the
+        shared Reset entry action, and Program/Combi drag-and-drop gesture parity --
+        all shipped across entries 76-82 but never reflected there until now.
 
 CLEAN UP -- noted 2026-08-15:
 

@@ -1010,6 +1010,41 @@ void testPcgFileEndToEnd() {
         CHECK_EQ(pcg.setlists()[0].songs[0].comment, std::string("Hello test"), "sortSetlist() descending: song 0 restored");
         CHECK_EQ(pcg.setlists()[0].songs[1].name, std::string("Song One"), "sortSetlist() descending: song 1 restored");
         CHECK_EQ(pcg.setlists()[0].songs[1].comment, std::string("second"), "sortSetlist() descending: song 1's params restored");
+
+        // A freshly-reset slot's name is this app's own "- Init Setlist -"
+        // marker (pane-setlist-editor.js's resetEntry()), not a blank
+        // string -- FIXED 2026-09-04, flagged when that marker was
+        // introduced and reported directly as still not fixed the same
+        // round: sortSetlist() must treat it as empty too (via
+        // looksLikeEmptySetlistName(), not a bare name.empty() check), or
+        // it would sort ALPHABETICALLY ('-' < 'S', ahead of both real
+        // songs) instead of landing with the genuinely untouched slots.
+        // Written directly here (slot 2, currently blank) rather than
+        // through resetEntry() itself, which is frontend-only.
+        {
+            auto nameBytes = pcg.nameRecordBytes(0, 2);
+            CHECK(nameBytes.has_value());
+            if (nameBytes) {
+                static const std::string kMarker = "- Init Setlist -";
+                for (size_t i = 0; i < 24; ++i) {
+                    (*nameBytes)[4 + i] = i < kMarker.size() ? static_cast<uint8_t>(kMarker[i]) : 0;
+                }
+                CHECK(pcg.putNameRecordBytes(0, 2, *nameBytes));
+            }
+        }
+        CHECK_EQ(pcg.setlists()[0].songs[2].name, std::string("- Init Setlist -"), "marker written directly for this test");
+
+        CHECK(pcg.sortSetlist(0, /*ascending=*/true));
+        CHECK_EQ(pcg.setlists()[0].songs[0].name, std::string("Song One"),
+                 "real content still sorts first, marker doesn't jump the queue");
+        CHECK_EQ(pcg.setlists()[0].songs[1].name, std::string("Song Zero"), "real content still sorts first");
+        // Stable-sort guarantee: every slot looksLikeEmptySetlistName()
+        // treats as empty compares equal to every other one, so their
+        // relative order among themselves is preserved -- the marker was
+        // the FIRST of the (regular-blank) trailing group before sorting,
+        // so it's still the first one right after the two real songs now.
+        CHECK_EQ(pcg.setlists()[0].songs[2].name, std::string("- Init Setlist -"),
+                 "the marker landed with the other empty slots, not sorted alphabetically ahead of real content");
     }
 }
 

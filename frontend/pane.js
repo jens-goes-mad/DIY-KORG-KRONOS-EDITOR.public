@@ -119,6 +119,21 @@ function looksLikeEmptyProgramName(name) {
   return lower === "init exi program" || lower.includes("init program");
 }
 
+// A Set List slot, unlike a Program or Combi, genuinely has NO factory
+// placeholder name to match against -- a real, never-touched slot's SDB1
+// name record is a blank string, CONFIRMED end to end against a real
+// 47.9MB backup (docs/content/format/index.md §3.2: "Unpopulated song
+// slots are empty strings"). So this only needs the blank check PLUS this
+// app's own "- Init Setlist -" reset marker (pane-setlist-editor.js's
+// resetEntry()) -- there's no Korg-authored text to also recognize the way
+// looksLikeEmptyProgramName()/looksLikeEmptyCombiName() above do. Used by
+// the drag-and-drop "copy over" gesture (app.js's onDropEntry, this row's
+// own classify() in pane-setlist-editor.js) to refuse overwriting a slot
+// that's actually in use.
+function looksLikeEmptySetlistName(name) {
+  return !name || /init setlist/i.test(name);
+}
+
 // `bankType` (a raw kronos::ProgramBankType value, see
 // PROGRAM_BANK_TYPE_NAMES above) is optional and only ever shown for
 // Programs -- Combis have no engine type of their own, so it's ignored

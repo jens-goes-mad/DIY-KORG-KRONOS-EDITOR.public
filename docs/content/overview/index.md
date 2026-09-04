@@ -84,14 +84,18 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   or two entirely different backups for comparison. A pane-visibility toggle (Left only /
   Both / Right only) makes this usable on a small screen too.
 - Real editing that writes straight into the loaded file's own bytes: Set List slot
-  reordering and copying by drag-and-drop, Color/Volume/Comment/Font-size editing, A-Z/Z-A
-  physical re-sorting, copying a Program's raw bytes into another slot (same file or a
-  different one), and rearranging Combis by drag-and-drop -- swap, move within or between
-  banks, or copy onto an empty slot -- with every affected Set List reference repointed
-  automatically. Copying a Combi onto an empty slot works *across datasets* too: every
-  Program its Timbres depend on is matched byte-for-byte against the destination file, and
-  a sliding panel lets you choose where to place any that don't exist there yet before the
-  copy applies.
+  reordering and copying by drag-and-drop (copying onto an already-occupied slot is
+  refused, not silently destructive), Color/Volume/Comment/Font-size editing, A-Z/Z-A
+  physical re-sorting (empty and reset slots always sort last, never interleaved
+  alphabetically among real content), copying a Program's raw bytes into another slot
+  any number of times (same file or a different one), and rearranging Programs and Combis
+  by drag-and-drop with matching gestures on both -- swap, move within or between banks,
+  or copy onto an empty slot -- with every affected Set List reference repointed
+  automatically. Every Set List/Program/Combi row also has a **Reset entry** action back
+  to a blank, recognizably-marked placeholder. Copying a Combi onto an empty slot works
+  *across datasets* too: every Program its Timbres depend on is matched byte-for-byte
+  against the destination file, and a sliding panel lets you choose where to place any
+  that don't exist there yet before the copy applies.
 - Cross-links between everywhere a Program/Combi/Set List slot references another --
   clicking one jumps straight to it, with per-pane Back/Forward history that returns you to
   the exact row you came from, not just its category. Shift+click any of these to jump in

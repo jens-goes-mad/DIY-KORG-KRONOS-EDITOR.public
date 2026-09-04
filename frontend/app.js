@@ -115,6 +115,22 @@ async function onDropEntry(source, target) {
     // halves of a slot's data, since they live in separate SBK1/SDB1
     // records, see PcgFile.h's own doc comment on nameRecordBytes().
     if (sameList && source.index === target.index) return;
+    // Refuse to overwrite a slot that's actually in use -- reported
+    // directly (2026-09-04), same reasoning Combi's/Programs' own
+    // onto-occupied refusal already has (TargetSlotOccupied/
+    // looksLikeEmptyCombiName): a copy-over is silent and total (name +
+    // every param, comment included), so landing on a used slot by
+    // accident would destroy it with no undo anywhere in this app. `target.label`
+    // is the row's own already-known display name (pane-setlist-editor.js's
+    // `entry.label`) -- no extra bridge round-trip needed just to check this.
+    // Reset the slot first (its own "⋯" menu) to make it a valid target again.
+    if (!looksLikeEmptySetlistName(target.label)) {
+      showToast(
+        `Can't copy onto slot ${kronosNumber(target.index)} -- it's already in use. Reset it first, or drop onto an empty slot.`,
+        { isError: true }
+      );
+      return;
+    }
     const [srcParams, srcName] = await Promise.all([
       window.getSongRecordBytes(source.datasetId, source.setlistIndex, source.index),
       window.getNameRecordBytes(source.datasetId, source.setlistIndex, source.index),
@@ -131,7 +147,10 @@ async function onDropEntry(source, target) {
       showToast(`Copy failed: ${putParams.ok ? putName.error : putParams.error}`, { isError: true });
       return;
     }
-    setStatus(`Copied slot ${kronosNumber(source.index)} -> slot ${kronosNumber(target.index)}.`);
+    // showToast, not setStatus -- same visibility fix already applied to
+    // onDropProgram()'s own copy message (setStatus's own doc comment
+    // admits it's easy to miss).
+    showToast(`Copied slot ${kronosNumber(source.index)} -> slot ${kronosNumber(target.index)}.`);
   } else if (sameList) {
     // Insert: relocate source to just before/after target, shifting the
     // intervening range -- one native call (EditorBridge::reorderSongEntry),

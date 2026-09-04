@@ -1074,6 +1074,22 @@ bool looksLikeEmptyProgramName(const std::string& name) {
     return lower == "init exi program" || lower.find("init program") != std::string::npos;
 }
 
+// A Set List slot, unlike a Program or Combi, genuinely has NO factory
+// placeholder name to match against -- a real, never-touched slot's SDB1
+// name record is a blank string, CONFIRMED end to end against a real
+// 47.9MB backup (docs/content/format/index.md §3.2: "Unpopulated song
+// slots are empty strings"). So this only needs the blank check plus this
+// app's own "- Init Setlist -" reset marker (PcgFile::resetSong() is
+// frontend-only today -- pane-setlist-editor.js's resetEntry() -- so
+// nothing here writes that marker yet, only reads it back for this sort).
+// Mirrors pane.js's own JS-side looksLikeEmptySetlistName().
+bool looksLikeEmptySetlistName(const std::string& name) {
+    if (name.empty()) return true;
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    return lower.find("init setlist") != std::string::npos;
+}
+
 // Shared grouping logic for findProgramNameCollisions()/
 // findCombiNameCollisions() below -- both need the exact same "group by
 // (name, bankType), then by hash within each group, keep only groups with
@@ -2447,11 +2463,18 @@ bool PcgFile::sortSetlist(int setlistIndex, bool ascending) {
     const auto& songs = setlists_[static_cast<size_t>(setlistIndex)].songs;
     const int count = static_cast<int>(songs.size());
 
+    // looksLikeEmptySetlistName(), not a bare name.empty() check (FIXED
+    // 2026-09-04, flagged when resetEntry()'s own "- Init Setlist -" marker
+    // was introduced -- reported directly as still not fixed the same
+    // round): a freshly-reset slot's name is that literal marker text, not
+    // blank, so a plain .empty() check would have sorted it alphabetically
+    // among real content (starting with "-", near the top under ascending)
+    // instead of landing with the genuinely untouched slots at the end.
     std::vector<int> order(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) order[static_cast<size_t>(i)] = i;
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
-        const bool aEmpty = songs[static_cast<size_t>(a)].name.empty();
-        const bool bEmpty = songs[static_cast<size_t>(b)].name.empty();
+        const bool aEmpty = looksLikeEmptySetlistName(songs[static_cast<size_t>(a)].name);
+        const bool bEmpty = looksLikeEmptySetlistName(songs[static_cast<size_t>(b)].name);
         if (aEmpty != bEmpty) return !aEmpty;  // non-empty always sorts before empty
         if (aEmpty) return false;              // both empty -- keep their relative order
         return ascending ? songs[static_cast<size_t>(a)].name < songs[static_cast<size_t>(b)].name
