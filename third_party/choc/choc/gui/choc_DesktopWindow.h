@@ -1141,6 +1141,24 @@ private:
     // WM_DESTROY handler, to preserve the existing contract (main.cpp's own
     // bookkeeping needs this to fire once the window is genuinely gone,
     // exactly as before this whole change).
+    //
+    // public: (DIY-KRONOS-EDITOR local addition, 2026-09-05, FIXED --
+    // Windows CI build failure): DesktopWindow::forceClose() (below this
+    // struct, outside the #if CHOC_WINDOWS/CHOC_LINUX/CHOC_APPLE split)
+    // calls `pimpl->forceClose()` unconditionally on every platform. The
+    // Linux and macOS Pimpl structs never declare a `private:` section at
+    // all, so every member -- forceClose() included -- is public there by
+    // C++'s own default-public-in-a-struct rule. This Pimpl (Windows) DOES
+    // have a `private:` label above (before setFileDropCallback's sibling
+    // members), and forceClose() landed below it when first added, making
+    // it private on this platform only -- MSVC's error C2248 on this exact
+    // line, first hit by a Windows CI run that finally exercised this
+    // header (no Windows toolchain was available when it was written, per
+    // this method's own comment above). This one method is carved back out
+    // to public to match the other two platforms' behavior; everything
+    // else in this section (handleSizeChange, handleFileDrop, etc.) stays
+    // private as before.
+public:
     void forceClose()
     {
         hwnd.reset();
@@ -1149,6 +1167,7 @@ private:
             owner.windowClosed();
     }
 
+private:
     void handleSizeChange()
     {
         resizeContentToFit();
