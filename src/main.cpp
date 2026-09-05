@@ -264,6 +264,17 @@ int main() {
     // LAST one closes (see windowClosed below), not on the first.
     std::vector<std::unique_ptr<EditorWindowInstance>> openWindows;
 
+    // The one Usage Guide window (2026-09-05, "i" button next to the pane-
+    // visibility toggle) -- a singleton, not a new window per click:
+    // openUsageGuideWindow below (bound per-window, see webviewIsReady's own
+    // capture list further down) brings this one to front if it's already
+    // open rather than stacking duplicates, same reasoning the private
+    // module's own SGX-2 editor window uses for a given Program. Reset to
+    // nullptr via its own onClosed callback once the user closes it, so a
+    // later click knows to open a fresh one rather than dereferencing a
+    // dangling pointer.
+    EditorWindowInstance* usageGuideWindow = nullptr;
+
     // The entire extension-point surface this repo exposes to an optional
     // private companion module (see bridge/EditorExtension.h). Declared
     // (default-constructed, `createWindow` left empty) BEFORE
@@ -341,7 +352,8 @@ int main() {
             return loadFrontendResource(relative, resourceDir);
         };
 
-        options.webviewIsReady = [&bridge, &ctx, extraBindings, rawInstance](choc::ui::WebView& view) {
+        options.webviewIsReady = [&bridge, &ctx, extraBindings, rawInstance, &createEditorWindow, frontendDir,
+                                   &usageGuideWindow](choc::ui::WebView& view) {
             bindEditorBridgeFunctions(view, bridge);
 #ifdef EDITOR_HAS_PRIVATE_MODULE
             registerPrivateEditorExtensions(view, ctx);
@@ -356,6 +368,28 @@ int main() {
             // window already owns its own WebView/bindings pair.
             view.bind("confirmQuitAndClose", [rawInstance](const choc::value::ValueView&) -> choc::value::Value {
                 rawInstance->window->forceClose();
+                return choc::value::Value();
+            });
+            // The "i" button next to the pane-visibility toggle (2026-09-05,
+            // reported directly) -- opens frontend/help.html (this repo's own
+            // frontendDir, never a private module's, since the Usage Guide is
+            // public-project content) in a separate top-level window, so it
+            // can be dragged to a second screen and left open while working.
+            // Bound on EVERY window (main or otherwise), same "full bridge
+            // surface everywhere" reasoning as bindEditorBridgeFunctions()
+            // itself -- there's no reason a secondary window couldn't also
+            // offer it. Re-focuses the existing window instead of opening a
+            // second one if it's already open (usageGuideWindow reset to
+            // nullptr by its own onClosed below once the user closes it).
+            view.bind("openUsageGuideWindow", [&createEditorWindow, frontendDir,
+                                                &usageGuideWindow](const choc::value::ValueView&) -> choc::value::Value {
+                if (usageGuideWindow != nullptr) {
+                    usageGuideWindow->window->toFront();
+                    return choc::value::Value();
+                }
+                usageGuideWindow = createEditorWindow("/help.html", "DIY Kronos Editor -- Usage Guide", 720, 640, 480,
+                                                       400, nullptr, [&usageGuideWindow] { usageGuideWindow = nullptr; },
+                                                       frontendDir);
                 return choc::value::Value();
             });
 #if CHOC_APPLE

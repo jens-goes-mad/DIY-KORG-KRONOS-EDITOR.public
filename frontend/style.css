@@ -1674,3 +1674,20 @@ td.has-comment {
 .internals-bank-groups {
   padding-top: 8px;
 }
+
+/* help.html's Usage Guide window (2026-09-05) -- the "i" button next to the
+   pane-visibility toggle. Bulma's own `.content` class (loaded via
+   vendor/bulma.min.css, same as every other page) already does the actual
+   typography work for the rendered Markdown (headings/lists/code/hr/links);
+   this is just readable line length + breathing room around it, same
+   reasoning any plain prose page wants regardless of theme. `.content`'s own
+   colors come from Bulma's `[data-theme=dark]` variables (help.html sets
+   `data-theme="dark"` on `<html>`, same as index.html), so no color
+   overrides needed here the way confirm-dialog.js's modal-card above
+   needed one -- that one specific Bulma variable doesn't follow
+   `[data-theme=dark]`, `.content`'s do. */
+.usage-guide-body {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 32px 40px;
+}

@@ -46,6 +46,13 @@
            setPaneVisibility(): swapping panes and toggling this are
            independent, so this always means "the pane currently shown on
            the left/right," even after a swap. -->
+      <!-- Opens the Usage Guide (frontend/help.html) in its own separate
+           top-level window (main.cpp's createEditorWindow(), bound as
+           window.openUsageGuideWindow -- see app.js) rather than a modal, so
+           it can be dragged to a second screen and left open while working.
+           Public, not private-build-gated (unlike the Settings button
+           below) -- every build ships this. -->
+      <button class="button is-small usage-guide-button" type="button" title="Usage Guide (opens in a separate window)">ⓘ</button>
       <div class="pane-visibility-bar">
         <div class="buttons has-addons">
           <button class="button is-small pane-visibility-button" data-visibility="left" type="button" title="Show only the left pane">Left only</button>

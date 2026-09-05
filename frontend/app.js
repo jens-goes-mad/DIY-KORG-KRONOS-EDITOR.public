@@ -527,3 +527,22 @@ if (typeof window.hasPrivateModule === "function") {
   settingsButton.hidden = false;
   settingsButton.addEventListener("click", () => window.toggleMidiSettingsPanel());
 }
+
+// The "i" Usage Guide button (index.html's topbar, 2026-09-05) -- always
+// visible, no private-module gate (unlike Settings above): opens
+// frontend/help.html in its own top-level window (main.cpp's
+// createEditorWindow(), bound as window.openUsageGuideWindow), a real native
+// window rather than a modal so it can sit on a second screen while working.
+// main.cpp's own binding brings the existing window to front on a repeat
+// click rather than opening a second one. The typeof guard (same pattern
+// pane-program-editor.js's openSgx2Editor() uses) only ever matters in
+// plain-browser/mock_bridge.js mode -- a bare page has no way to open a
+// second real native window at all, so this shows a clear toast there
+// instead of throwing.
+document.querySelector(".usage-guide-button").addEventListener("click", () => {
+  if (typeof window.openUsageGuideWindow !== "function") {
+    showToast("Usage Guide: not available in plain-browser mode -- run the native app.", { isError: true });
+    return;
+  }
+  window.openUsageGuideWindow();
+});

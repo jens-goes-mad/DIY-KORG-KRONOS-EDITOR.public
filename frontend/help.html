@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <title>Usage Guide</title>
+  <!-- Same vendored stylesheets as index.html (no CDN, this app has no
+       internet-access assumption) -- Bulma's own `.content` typography
+       helper (headings/lists/code/hr/links) does almost all the styling
+       work for the rendered guide below; style.css layers the app's dark
+       palette + a couple of small .usage-guide-body tweaks on top. -->
+  <link rel="stylesheet" href="vendor/bulma.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- markdown-lite.js's renderMarkdownToHtml() fills this in from
+       usage-guide-content.js's USAGE_GUIDE_MARKDOWN once both scripts have
+       loaded -- see the inline script at the bottom. `.content` is Bulma's
+       own prose-typography class; `.usage-guide-body` is this app's own
+       small width/padding addition (style.css). -->
+  <div class="content usage-guide-body" id="usageGuideBody"></div>
+
+  <script src="markdown-lite.js"></script>
+  <script src="usage-guide-content.js"></script>
+  <script>
+    document.getElementById("usageGuideBody").innerHTML = renderMarkdownToHtml(USAGE_GUIDE_MARKDOWN.trim());
+  </script>
+</body>
+</html>
