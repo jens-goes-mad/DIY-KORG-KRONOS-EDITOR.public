@@ -672,8 +672,8 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, o
         <div class="tabs is-boxed is-small pane-category-tabs">
           <ul>
             <li class="is-active" data-category="setlist"><a>Setlist</a></li>
-            <li data-category="programs"><a>Programs</a></li>
             <li data-category="combis"><a>Combis</a></li>
+            <li data-category="programs"><a>Programs</a></li>
             <li data-category="duplicates"><a>Duplicates</a></li>
             <li data-category="internals"><a>Internals</a></li>
           </ul>
