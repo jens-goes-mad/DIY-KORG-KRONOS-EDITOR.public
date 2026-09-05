@@ -5724,4 +5724,60 @@ CLEAN UP -- noted 2026-08-15:
      corrected; a dedicated pass over the rest of that page is still
      needed.
 
+  84. **CHANGED (2026-09-05)**: moved the Combis tab between Setlist and
+      Programs (`pane.js`, a plain `<li>` reorder, direct request, no logic
+      depends on tab DOM order). Separately, reported directly that the
+      gear-icon Settings button (entry from 2026-09-03's "Generic sliding
+      sidebar component, MIDI Settings UI" work) was missing -- root cause
+      wasn't a private-repo-linking problem as guessed, but that this whole
+      feature had only ever landed on the `midi-sysex-templates-cli` branch,
+      which had diverged from `main` by four commits (the Combi/Program
+      drag-and-drop parity round, entries 80-83, plus the Windows build
+      fix). **Merged that branch into `main`** per direct choice (over
+      rebasing or leaving it split) -- one real conflict in `style.css`
+      (`main`'s already-generalized `.row-context-menu` vs. that branch's
+      older `.program-row-menu`/`openRowMenu()`; kept `main`'s version and
+      fixed a stale `.cross-dataset-panel` comment reference the branch's
+      own `.sidebar-panel*` rename had left behind). Verified: `cmake
+      --build` (`kronos_editor` + `pcg_file_test`) clean post-merge, private
+      module compiling in (this machine's own submodule checkout is
+      populated), `pcg_file_test` all checks passed.
+  85. **BUILT (2026-09-05)**: a Usage Guide window -- a new "i" button next
+      to the Left/Both/Right pane-visibility toggle (reported directly),
+      opening `frontend/help.html` in its own top-level native window (not
+      a modal) via a new `openUsageGuideWindow` binding (`main.cpp`, using
+      the existing `createEditorWindow()` multi-window machinery, singleton
+      -- refocuses rather than stacking a second window). Content covers
+      the dual-pane layout, table structure, drag-and-drop copy/move/swap
+      rules per table, the Shift trick, Reset entry, and cross-pane
+      (Shift+click) navigation -- meant to grow incrementally, not a one-
+      time dump. New `frontend/markdown-lite.js`: a small hand-rolled
+      Markdown-to-HTML renderer (headings, paragraphs, bold/italic/inline
+      code, fenced code blocks, one-level lists with wrapped-line
+      continuations, links, hr) covering exactly what the guide's own
+      content (`frontend/usage-guide-content.js`, a plain JS template
+      string, not a fetched `.md` asset) uses -- built rather than vendoring
+      a real Markdown library, see that file's own doc comment for why and
+      when to revisit. Verified: `cmake --build` clean, `pcg_file_test` all
+      checks passed, every new/touched JS file `jsc` parse-checked, and the
+      renderer functionally exercised end to end against the real guide
+      content via a `jsc` script -- caught and fixed a real bug this way
+      (wrapped list-item continuation lines were falling out of their list
+      into a stray paragraph) before it ever shipped. NOT verified: actually
+      clicking the button in a running window -- no display available in
+      this environment, so the real click-through is still owed.
+  86. **BUILT (2026-09-05)**: a public Release Notes page
+      (`docs/content/release-notes/index.md`, weight 7 -- between the User
+      Guide/format/building/components/midi cluster and the "me, myself and
+      I and legal stuff" page at weight 1000, per direct request to place it
+      "between app and legal"). A short, user-facing bullet-point summary
+      per tagged version (Initial/0.1.0, 0.1.8, 0.1.9 so far), not a commit
+      log -- grounded in the real `git log`/tag history (`git tag
+      --sort=-creatordate`, then `git log v0.1.0..v0.1.8` and
+      `v0.1.8..v0.1.9`) rather than invented, per this project's own "no
+      guessing" standard applied to release history instead of file-format
+      bytes. Update this page by hand alongside future version tags, the
+      same "keep the docs in sync by hand" discipline as the format page
+      and the Hugo Overview page.
+
 === END STATE BLOCK ===
