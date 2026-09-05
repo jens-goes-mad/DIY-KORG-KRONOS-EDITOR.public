@@ -7,7 +7,7 @@ menu:
     main:
         weight: 7
         params:
-            icon: history
+            icon: calendar-stats
 
 toc: true
 ---

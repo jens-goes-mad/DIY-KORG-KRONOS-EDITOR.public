@@ -5780,4 +5780,58 @@ CLEAN UP -- noted 2026-08-15:
       same "keep the docs in sync by hand" discipline as the format page
       and the Hugo Overview page.
 
+  87. **FIXED (2026-09-05)**: reported directly that a push wasn't producing
+      the expected new Hugo nav item -- the site had actually been failing
+      to build/deploy since the `midi-sysex-templates-cli` merge (entry 84),
+      three pushes in a row, entirely silently (nothing surfaces a failed
+      GitHub Pages deploy back into this session on its own). Root cause,
+      confirmed from the real Actions run log the user pasted directly (this
+      environment has no `gh` CLI and the Actions API's job-log endpoint
+      needs admin rights even on a public repo, so that paste was the only
+      way to see it): `ERROR Error: icon 'broadcast.svg' is not found under
+      'assets/icons' folder` and the same for `'history.svg'` -- `docs/
+      content/midi/index.md`'s `icon: broadcast` (added by that merge) and
+      this session's own new `icon: history` (entry 86) both named Tabler
+      icons that are real (confirmed by fetching each from tabler-icons'
+      own GitHub repo directly) but were never actually vendored into
+      `assets/icons` in the shared `DIY-HUGO-SCAFFOLD.public` module this
+      project's docs import (`docs/go.mod` pins an exact commit, not a
+      floating branch) -- that module only ships a small hand-picked subset
+      of icons per-name, confirmed directly against its own `assets/icons`
+      listing (a sibling checkout on this machine, `../DIY-HUGO-
+      SCAFFOLD.public`) rather than assumed. Fixed by swapping both pages to
+      icons that already exist at the CURRENTLY PINNED scaffold commit
+      (confirmed via `git ls-tree` at that exact commit, not just the
+      scaffold's own latest) -- `music` for the MIDI page, `calendar-stats`
+      for Release Notes -- rather than bumping the module pin itself: this
+      environment has no working `go`/`hugo` binary (Homebrew's own API
+      fetch and a direct golang.org tarball download both failed/timed out
+      against this sandbox's network), so hand-editing `go.mod`'s pseudo-
+      version and `go.sum`'s checksums without a toolchain to actually
+      verify them would trade one build failure for a likely different one
+      (a checksum mismatch) -- exactly the kind of unverified change this
+      project's own methodology exists to avoid. Separately (real, but not
+      this fix): added `broadcast.svg`/`history.svg` to the scaffold repo
+      itself anyway (real Tabler icons, MIT, fetched verbatim same as its
+      existing `book.svg`/`sitemap.svg`) since they're genuinely useful for
+      a future page on any of the DIY-* sites that import it -- committed
+      and pushed there, but its pin in THIS repo's `go.mod` is untouched, so
+      it has no effect here yet.
+      - **Open follow-up, not resolved this round**: `docs/go.mod` still
+        pins the OLDER scaffold commit (`505cbe62405b`) -- bumping it to
+        pick up the two new icons for real (if a future page actually wants
+        them, rather than `music`/`calendar-stats`) needs a real `go`/`hugo`
+        toolchain to regenerate `go.sum` correctly, which this environment
+        doesn't have. Do this from a machine with working Go tooling:
+        `hugo mod get -u github.com/jens-goes-mad/DIY-HUGO-SCAFFOLD.public`
+        (or `go get` the same, from `docs/`), then commit the updated
+        `go.mod`/`go.sum` together.
+      - **Also unresolved**: nothing in this app/workflow surfaces a failed
+        Pages deploy back to wherever pushes are made from -- this failure
+        sat for three pushes before it was noticed by chance. Worth a real
+        notification (e-mail from GitHub already fires for failed workflow
+        runs by default, unless disabled in the user's own GitHub
+        notification settings -- not this repo's to fix) rather than relying
+        on someone checking the live site.
+
 === END STATE BLOCK ===

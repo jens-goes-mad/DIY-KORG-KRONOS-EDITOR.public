@@ -7,7 +7,7 @@ menu:
     main:
         weight: 6
         params:
-            icon: broadcast
+            icon: music
 
 toc: true
 ---
