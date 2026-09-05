@@ -508,3 +508,22 @@ window.confirmAppQuitRequested = async () => {
     await window.cancelAppQuitReply();
   }
 };
+
+// The Settings (gear) button (index.html's topbar) -- only ever shown when
+// the optional private companion module is actually linked into this
+// build. `window.hasPrivateModule` is bound per-window by the private
+// module's own registerPrivateEditorExtensions() (Sgx2Editor.cpp) --
+// existing at all (not its return value) IS the "is this a private build"
+// signal, same "does this binding exist" pattern pane-program-editor.js's
+// openSgx2Editor() already uses for window.openSgx2EditorWindow, just
+// gating a whole button's visibility here instead of one click's outcome.
+// A public build never gets this binding, so the button stays hidden
+// (index.html's own default) and nothing here ever runs. Toggles the MIDI
+// Settings sidebar (midi-settings-panel.js) -- a plain, synchronous open/
+// close, not a window.openXyz()-style async native call, since (2026-08-28,
+// per direct feedback) this no longer opens a second native window at all.
+if (typeof window.hasPrivateModule === "function") {
+  const settingsButton = document.querySelector(".settings-button");
+  settingsButton.hidden = false;
+  settingsButton.addEventListener("click", () => window.toggleMidiSettingsPanel());
+}

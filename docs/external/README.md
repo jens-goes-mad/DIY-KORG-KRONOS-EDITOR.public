@@ -104,14 +104,23 @@ that exploration doesn't live only in chat history.
 - **Origin**: not yet documented here -- added directly to the repo 2026-08-08; where
   exactly these were sourced from still needs recording (ask before assuming/citing a
   URL, per this project's own rule against guessing sources).
-- **Contents**: `SetList.txt`, `Prog_HD-1.txt`, `Prog_EXi.txt`, `Prog_EXi_Common.txt`,
-  `CombiAndSongTimbreSet.txt`, `Global.txt`, `DrumKit.txt`, `DrumTrackPattern.txt`,
-  `DrumTrackPatternEvent.txt`, `Effect.txt`, `Song.txt`, `SongControl.txt`,
-  `SongEvent.txt`, `WaveSequence.txt`, `KARMA_GE_RTP.txt`, `KRONOS_MIDI_SysEx.txt`, plus
-  a `SysExParams/VoiceModels/` subfolder (one file per sound engine: `AL-1`, `CX-3`,
-  `EP-1`, `HD-1`, `MOD-7`, `MS-20EX`, `PolysixEX`, `SGX-1`, `STR-1`, `Off`). Each
+- **Contents**: `SetList.txt`, `CombiAndSongTimbreSet.txt`, `Global.txt`, `DrumKit.txt`,
+  `DrumTrackPattern.txt`, `DrumTrackPatternEvent.txt`, `Effect.txt`, `Song.txt`,
+  `SongControl.txt`, `SongEvent.txt`, `WaveSequence.txt`, `KARMA_GE_RTP.txt`. Each
   top-level file documents one SysEx-addressable object's exact byte layout: offset, bit
   range, parameter name, valid data range, and human-readable value meaning.
+  **Update, 2026-08-16**: `Prog_HD-1.txt`, `Prog_EXi.txt`, `Prog_EXi_Common.txt`,
+  `KRONOS_MIDI_SysEx.txt`, and the `SysExParams/VoiceModels/` subfolder (per-engine
+  parameter tables: `AL-1`, `CX-3`, `EP-1`, `HD-1`, `MOD-7`, `MS-20EX`, `PolysixEX`,
+  `SGX-1`, `STR-1`, `Off`) moved into this project's private companion submodule as part
+  of the repo split that session (see the main repo's own `CLAUDE.md`/`STATE.md`) -- the
+  EXi/HD-1 Program and per-engine parameter tables feed that submodule's own SGX-2/EXi
+  parameter-editor work, and the MIDI Implementation document feeds its MIDI SysEx
+  transport work, both judged too large/open-ended a scope for this free/OSS repo. Some
+  of what those files document is now covered, in this project's own words rather than
+  reproduced verbatim, on the public [MIDI SysEx Protocol page](/midi) (2026-09-03) --
+  citations below to `Prog_HD-1.txt` etc. are historical (what was used AT THE TIME,
+  while those files were still here), not a claim they're still in this folder.
 - **Why it matters here**: these are Korg's own official SysEx parameter tables, not a
   third party's reverse-engineering -- and they turned out to describe the *same* records
   this project parses on disk, byte-for-byte, once the chunk-header fix above (§1.2's

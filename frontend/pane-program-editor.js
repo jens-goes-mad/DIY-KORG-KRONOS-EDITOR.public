@@ -556,40 +556,33 @@ function createDuplicatesPanel(
   // name/bankType is what applyResolvePicker() below needs instead of the
   // byte-exact path's own bank/number lookup.
   let resolvePicker = null;
-  // Lazily created on first open, appended to document.body once (not into
-  // `panel` itself -- position:fixed doesn't need to live inside the
-  // scrolling pane content, and this way it survives render()'s own
-  // `panel.innerHTML = ""` unaffected). Reuses the cross-dataset Combi copy
-  // panel's own CSS shell (style.css's `.cross-dataset-panel*` -- backdrop,
-  // slide-in, header/body/footer) rather than inventing a second one, but
-  // built with plain DOM here (not lit-html, unlike that file's own PILOT)
-  // to stay consistent with the rest of this already-plain-DOM panel.
-  let resolvePanelEls = null;
+  // Owns none of the sliding-panel SHELL itself (2026-08-28, per direct
+  // request -- "make the sidebar generic and usable for all kinds of
+  // content... avoid tightly coupling between the different components")
+  // -- createSidebarPanel() (sidebar-panel.js) handles the backdrop/
+  // open-close-state/two-step-reveal every sidebar in this app needs; this
+  // closure only ever builds its OWN content (buildResolvePickerBody()
+  // below) and calls resolveSidebar.update()/.open() when this picker's
+  // own state changes. One instance per pane (created eagerly here, same
+  // "once per createDuplicatesPanel() call" lifetime the old hand-rolled
+  // version already had) -- its own root <div> is created fresh and
+  // appended to document.body, since (unlike the app-level singletons in
+  // index.html, e.g. #midiSettingsPanelRoot) there's one of these per pane,
+  // not one for the whole app.
+  const resolveSidebarRoot = document.createElement("div");
+  document.body.appendChild(resolveSidebarRoot);
+  const resolveSidebar = window.createSidebarPanel(resolveSidebarRoot, { edge: "right" });
 
-  function ensureResolvePanelEls() {
-    if (resolvePanelEls) return resolvePanelEls;
-    const backdrop = document.createElement("div");
-    backdrop.className = "cross-dataset-panel-backdrop";
-    backdrop.hidden = true;
-    backdrop.addEventListener("click", closeResolvePicker);
-
-    const panelEl = document.createElement("div");
-    panelEl.className = "cross-dataset-panel duplicate-resolve-panel";
-    panelEl.hidden = true;
-
-    document.body.append(backdrop, panelEl);
-    resolvePanelEls = { backdrop, panelEl };
-    return resolvePanelEls;
-  }
-
-  function openResolvePicker(group, isProgram, requireByteExactMatch, nameGroupKey) {
-    resolvePicker = { isProgram, group, requireByteExactMatch, nameGroupKey: nameGroupKey || null, src: null, dupl: new Set() };
-    renderResolvePicker();
-  }
-
-  function closeResolvePicker() {
-    resolvePicker = null;
-    renderResolvePicker();
+  // "Resolve" (byte-exact -- these copies really are identical) vs
+  // "Consolidate" (name-collision -- these entries genuinely differ, the
+  // user is choosing to treat them as close enough on purpose) -- two
+  // different words for two different levels of consequence, per
+  // resolvePicker's own requireByteExactMatch doc comment above.
+  function resolvePickerTitle() {
+    const { group, isProgram, requireByteExactMatch, nameGroupKey } = resolvePicker;
+    return requireByteExactMatch
+      ? `Resolve duplicates -- ${group[0] ? group[0].name || "(empty)" : ""}`
+      : `Consolidate variants -- ${nameCollisionGroupLabel(nameGroupKey, isProgram)}`;
   }
 
   // Slides in from whichever screen edge is nearest THIS pane -- same idea
@@ -601,55 +594,22 @@ function createDuplicatesPanel(
     return paneEl && paneEl.matches(".pane:last-of-type") ? "right" : "left";
   }
 
-  function renderResolvePicker() {
-    const { backdrop, panelEl } = ensureResolvePanelEls();
-
-    if (!resolvePicker) {
-      backdrop.classList.remove("is-visible");
-      panelEl.classList.remove("is-open");
-      backdrop.hidden = true;
-      panelEl.hidden = true;
-      return;
-    }
-
-    backdrop.hidden = false;
-    panelEl.hidden = false;
-    panelEl.classList.remove("slide-from-left", "slide-from-right");
-    panelEl.classList.add(`slide-from-${resolvePanelSlideDirection()}`);
-    // Two-step reveal (unhide this frame, add the transition classes next
-    // frame) -- same trick combi-cross-dataset-panel.js's own renderPanel()
-    // uses, so the slide-in transition actually animates instead of
-    // snapping straight to its open position.
-    requestAnimationFrame(() => {
-      backdrop.classList.add("is-visible");
-      panelEl.classList.add("is-open");
+  function openResolvePicker(group, isProgram, requireByteExactMatch, nameGroupKey) {
+    resolvePicker = { isProgram, group, requireByteExactMatch, nameGroupKey: nameGroupKey || null, src: null, dupl: new Set() };
+    resolveSidebar.open({
+      title: resolvePickerTitle(),
+      edge: resolvePanelSlideDirection(),
+      build: buildResolvePickerBody,
     });
+  }
 
+  function closeResolvePicker() {
+    resolvePicker = null;
+    resolveSidebar.close();
+  }
+
+  function buildResolvePickerBody(bodyEl, footerEl) {
     const { group, isProgram, requireByteExactMatch } = resolvePicker;
-
-    panelEl.innerHTML = "";
-    const header = document.createElement("div");
-    header.className = "cross-dataset-panel-header";
-    const title = document.createElement("h2");
-    title.className = "cross-dataset-panel-title";
-    // "Resolve" (byte-exact -- these copies really are identical) vs
-    // "Consolidate" (name-collision -- these entries genuinely differ, the
-    // user is choosing to treat them as close enough on purpose) -- two
-    // different words for two different levels of consequence, per this
-    // picker's own requireByteExactMatch doc comment above.
-    title.textContent = requireByteExactMatch
-      ? `Resolve duplicates -- ${group[0] ? group[0].name || "(empty)" : ""}`
-      : `Consolidate variants -- ${nameCollisionGroupLabel(resolvePicker.nameGroupKey, isProgram)}`;
-    const closeBtn = document.createElement("button");
-    closeBtn.type = "button";
-    closeBtn.className = "cross-dataset-panel-close";
-    closeBtn.title = "Close";
-    closeBtn.textContent = "✕";
-    closeBtn.addEventListener("click", closeResolvePicker);
-    header.append(title, closeBtn);
-
-    const body = document.createElement("div");
-    body.className = "cross-dataset-panel-body";
 
     if (group.length < 2) {
       const done = document.createElement("div");
@@ -657,7 +617,7 @@ function createDuplicatesPanel(
       done.textContent = requireByteExactMatch
         ? "Every duplicate in this group has already been resolved."
         : "Nothing left to consolidate in this group.";
-      body.appendChild(done);
+      bodyEl.appendChild(done);
     } else {
       const table = document.createElement("table");
       table.className = "table is-fullwidth is-narrow duplicate-resolve-table";
@@ -690,7 +650,7 @@ function createDuplicatesPanel(
         srcRadio.addEventListener("change", () => {
           resolvePicker.src = entryKey;
           resolvePicker.dupl = new Set(group.map((e) => `${e.bank}-${e.number}`).filter((key) => key !== entryKey));
-          renderResolvePicker();
+          resolveSidebar.update();
         });
         srcTd.appendChild(srcRadio);
 
@@ -708,7 +668,7 @@ function createDuplicatesPanel(
         duplCheckbox.addEventListener("change", () => {
           if (duplCheckbox.checked) resolvePicker.dupl.add(entryKey);
           else resolvePicker.dupl.delete(entryKey);
-          renderResolvePicker();
+          resolveSidebar.update();
         });
         duplTd.appendChild(duplCheckbox);
 
@@ -718,29 +678,27 @@ function createDuplicatesPanel(
         tr.append(srcTd, duplTd, slotTd);
         tbody.appendChild(tr);
       }
-      body.appendChild(table);
+      bodyEl.appendChild(table);
     }
 
-    const footer = document.createElement("div");
-    footer.className = "cross-dataset-panel-footer";
     // Only appears once BOTH a src and at least one dupl are chosen, per
     // explicit request -- there's nothing coherent to resolve otherwise.
     if (resolvePicker.src != null && resolvePicker.dupl.size > 0) {
       const resolveBtn = document.createElement("button");
       resolveBtn.type = "button";
-      // Own class, not Bulma's `.is-link` (2026-08-26, per direct request --
-      // overrides an earlier deliberate call to leave this one blue) --
-      // style.css gives it --editor-accent, matching the rest of this
-      // picker's now-fully-orange look (sub-tab strip, Src/Dupl inputs).
-      resolveBtn.className = "button is-small duplicate-resolve-apply-button";
+      // .accent-button, not Bulma's `.is-link` (2026-08-26, per direct
+      // request -- overrides an earlier deliberate call to leave this one
+      // blue) -- style.css gives it --editor-accent, matching the rest of
+      // this picker's now-fully-orange look (sub-tab strip, Src/Dupl
+      // inputs). Generic class, shared with midi-settings-panel.js's own
+      // "Dump Request" button (2026-08-28) -- see style.css's own comment.
+      resolveBtn.className = "button is-small accent-button";
       resolveBtn.textContent = requireByteExactMatch
         ? `Resolve ${resolvePicker.dupl.size} into Src`
         : `Consolidate ${resolvePicker.dupl.size} into Src`;
       resolveBtn.addEventListener("click", () => applyResolvePicker());
-      footer.appendChild(resolveBtn);
+      footerEl.appendChild(resolveBtn);
     }
-
-    panelEl.append(header, body, footer);
   }
 
   async function applyResolvePicker() {
@@ -820,7 +778,11 @@ function createDuplicatesPanel(
         resolvePicker = null;
       }
     }
-    renderResolvePicker();
+    if (resolvePicker) {
+      resolveSidebar.update({ title: resolvePickerTitle() });
+    } else {
+      resolveSidebar.close();
+    }
   }
 
   // One duplicate group's expanded detail -- every copy in the group gets a
@@ -925,7 +887,7 @@ function createDuplicatesPanel(
       countTd.className = "duplicate-group-count-cell";
       const countLabel = document.createElement("span");
       countLabel.textContent = `${group.length} identical copies`;
-      // "..." opens the resolve picker (renderResolvePicker() below) for
+      // "..." opens the resolve picker (buildResolvePickerBody() below) for
       // exactly this group -- visible whether the row is expanded or not,
       // per explicit request, so opening the picker doesn't need expanding
       // first. Own click handler, not the row's -- stopPropagation() so it

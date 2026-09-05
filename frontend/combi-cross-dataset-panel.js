@@ -103,8 +103,8 @@ function renderRoot() {
   if (!session) {
     lit.render(
       lit.html`
-        <div class="cross-dataset-panel-backdrop" hidden></div>
-        <div class="cross-dataset-panel" hidden></div>
+        <div class="sidebar-panel-backdrop" hidden></div>
+        <div class="sidebar-panel" hidden></div>
       `,
       combiCrossDatasetPanelRoot
     );
@@ -122,17 +122,17 @@ function renderRoot() {
     console.error("[combi-cross-dataset-panel] render failed:", err);
     lit.render(
       lit.html`
-        <div class="cross-dataset-panel-backdrop is-visible" ?hidden=${!mounted}></div>
-        <div class="cross-dataset-panel slide-from-right is-open" ?hidden=${!mounted}>
-          <div class="cross-dataset-panel-header">
-            <h2 class="cross-dataset-panel-title">Something went wrong</h2>
+        <div class="sidebar-panel-backdrop is-visible" ?hidden=${!mounted}></div>
+        <div class="sidebar-panel slide-from-right is-open" ?hidden=${!mounted}>
+          <div class="sidebar-panel-header">
+            <h2 class="sidebar-panel-title">Something went wrong</h2>
           </div>
-          <div class="cross-dataset-panel-body">
+          <div class="sidebar-panel-body">
             <div class="cross-dataset-unresolved-empty">
               The panel failed to render: ${err && err.message ? err.message : String(err)}
             </div>
           </div>
-          <div class="cross-dataset-panel-footer">
+          <div class="sidebar-panel-footer">
             <button class="button is-small cross-dataset-cancel" type="button" @click=${() => closeSession()}>Close</button>
           </div>
         </div>
@@ -291,32 +291,32 @@ function renderSession(mounted, open, session) {
   lit.render(
     lit.html`
       <div
-        class="cross-dataset-panel-backdrop ${open ? "is-visible" : ""}"
+        class="sidebar-panel-backdrop ${open ? "is-visible" : ""}"
         ?hidden=${!mounted}
         @click=${doClose}
       ></div>
-      <div class="cross-dataset-panel slide-from-${edge} ${open ? "is-open" : ""}" ?hidden=${!mounted}>
-        <div class="cross-dataset-panel-header">
-          <h2 class="cross-dataset-panel-title">Copy ${sourceLabel} &rarr; ${targetLabel}</h2>
-          <button class="cross-dataset-panel-close" type="button" title="Cancel" @click=${doClose}>&#10005;</button>
+      <div class="sidebar-panel slide-from-${edge} ${open ? "is-open" : ""}" ?hidden=${!mounted}>
+        <div class="sidebar-panel-header">
+          <h2 class="sidebar-panel-title">Copy ${sourceLabel} &rarr; ${targetLabel}</h2>
+          <button class="sidebar-panel-close" type="button" title="Cancel" @click=${doClose}>&#10005;</button>
         </div>
-        <div class="cross-dataset-panel-body">
+        <div class="sidebar-panel-body">
           ${
             analysis.dependencies.length > 0
-              ? lit.html`<h3 class="cross-dataset-section-heading">Timbres</h3>
+              ? lit.html`<h3 class="sidebar-section-heading">Timbres</h3>
                 ${depRows}`
               : lit.nothing
           }
           ${
             unmappableRows.length > 0
-              ? lit.html`<h3 class="cross-dataset-section-heading">Unrecognized references</h3>
+              ? lit.html`<h3 class="sidebar-section-heading">Unrecognized references</h3>
                 ${unmappableRows}`
               : lit.nothing
           }
-          <h3 class="cross-dataset-section-heading">Choose a destination bank</h3>
+          <h3 class="sidebar-section-heading">Choose a destination bank</h3>
           ${unresolvedRows}
         </div>
-        <div class="cross-dataset-panel-footer">
+        <div class="sidebar-panel-footer">
           <button class="button is-small cross-dataset-cancel" type="button" @click=${doClose}>Cancel</button>
           <button class="button is-small is-link cross-dataset-apply" type="button" ?disabled=${applyDisabled} @click=${doApply}>
             Apply
@@ -342,7 +342,7 @@ function openSession(session) {
 function closeSession() {
   panelState = { ...panelState, open: false };
   renderRoot();
-  const panelEl = combiCrossDatasetPanelRoot.querySelector(".cross-dataset-panel");
+  const panelEl = combiCrossDatasetPanelRoot.querySelector(".sidebar-panel");
   panelEl.addEventListener(
     "transitionend",
     () => {
