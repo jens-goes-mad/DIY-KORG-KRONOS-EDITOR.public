@@ -22,42 +22,53 @@
 #include "bridge/EditorExtension.h"
 
 #ifdef EDITOR_EMBED_RESOURCES
+#include "bridge/EmbeddedAssetRegistry.h"
 #include "generated/EmbeddedAssets.h"
+#include "kronos/AssetObfuscation.h"
 #endif
 
 namespace {
 
 std::string mimeTypeFor(const std::string& path) {
-    if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".html") == 0) return "text/html";
-    if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".js") == 0) return "application/javascript";
-    if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".css") == 0) return "text/css";
+    auto endsWith = [&](const char* ext) {
+        const std::size_t n = std::string(ext).size();
+        return path.size() >= n && path.compare(path.size() - n, n, ext) == 0;
+    };
+    if (endsWith(".html")) return "text/html";
+    if (endsWith(".js")) return "application/javascript";
+    if (endsWith(".css")) return "text/css";
+    if (endsWith(".json")) return "application/json";
+    if (endsWith(".svg")) return "image/svg+xml";
     return "application/octet-stream";
 }
 
 #ifdef EDITOR_EMBED_RESOURCES
 
 // Release build: served straight out of the binary, no files on disk needed.
-// KNOWN GAP, deliberately deferred (matching the resources/ dir's own "no
-// Release build is packaged/shipped yet" note below): this only searches the
-// PUBLIC repo's own embedded frontend/ table (tools/embed_resources.py globs
-// only this repo's frontend/ directory, see CMakeLists.txt). An optional
-// private module's own frontend/ (e.g. private/diy-korg-kronos-editor/
-// frontend/) is never embedded, so a Release build with EDITOR_HAS_PRIVATE_MODULE
-// defined would successfully open that module's window and then fail every
-// resource request for it. Not solved this pass -- Debug builds (the only
-// ones actually used/tested so far) read everything live off disk instead,
-// unaffected by this gap.
+// The embedded bytes are OBFUSCATED (deflate + keystream cipher, see
+// tools/embed_resources.py --obfuscate) so `strings`/a text editor on the
+// shipped binary reveal nothing readable -- kronos::deobfuscateAsset()
+// reverses it here. This is obfuscation, not encryption: the key is compiled
+// in (it has to be), it just makes pulling the frontend back out real work.
+//
+// Two tables are consulted: this repo's own frontend/ (editor_embedded), and
+// -- when an optional private companion module is linked in -- that module's
+// own separately-embedded frontend/, via the EmbeddedAssetRegistry resolver
+// it registers. Path namespaces are disjoint (/index.html, /pane.js,
+// /components/* here vs /sgx-2/*, /common/* there), so order is irrelevant;
+// a build without the private submodule never registers a resolver.
 std::optional<choc::ui::WebView::Options::Resource> loadFrontendResource(const std::string& relative,
                                                                           const std::string&) {
     for (const auto& file : editor_embedded::getEmbeddedFiles()) {
         if (relative == file.path) {
             choc::ui::WebView::Options::Resource resource;
-            resource.data.assign(file.data, file.data + file.size);
+            const auto plain = kronos::deobfuscateAsset(file.data, file.size);
+            resource.data.assign(plain.begin(), plain.end());
             resource.mimeType = mimeTypeFor(relative);
             return resource;
         }
     }
-    return std::nullopt;
+    return kronos::resolveExtraEmbeddedAsset(relative);
 }
 
 #else
@@ -137,6 +148,9 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
                [&bridge](const choc::value::ValueView& args) { return bridge.findCombiNameCollisions(args); });
     view.bind("findDuplicateCombis",
                [&bridge](const choc::value::ValueView& args) { return bridge.findDuplicateCombis(args); });
+    view.bind("findDuplicateProgramsAcrossDatasets", [&bridge](const choc::value::ValueView& args) {
+        return bridge.findDuplicateProgramsAcrossDatasets(args);
+    });
     view.bind("getProgramBankTypes",
                [&bridge](const choc::value::ValueView& args) { return bridge.getProgramBankTypes(args); });
     view.bind("copyProgram", [&bridge](const choc::value::ValueView& args) { return bridge.copyProgram(args); });
@@ -336,15 +350,24 @@ int main() {
         // menu, right-click "Inspect Element", and the legacy
         // developerExtrasEnabled/isInspectable machinery (see CHOC's own
         // choc_WebView.h) all stay off, matching a real shipped product
-        // rather than a dev build. EDITOR_EMBED_RESOURCES is already this
-        // project's "is this a real packaged/Release build" marker
-        // (CMakeLists.txt), reused here rather than a second flag -- a
-        // Debug build keeps debug mode on exactly as before.
-#ifdef EDITOR_EMBED_RESOURCES
-        options.enableDebugMode = false;
+        // rather than a dev build. EDITOR_RELEASE_HARDENED is set by
+        // CMakeLists.txt for a Release / embedded-resources build (it implies
+        // EDITOR_EMBED_RESOURCES -- checked below); a Debug build keeps debug
+        // mode on exactly as before.
+#if defined(EDITOR_RELEASE_HARDENED)
+    #if !defined(EDITOR_EMBED_RESOURCES)
+        #error "EDITOR_RELEASE_HARDENED must imply EDITOR_EMBED_RESOURCES"
+    #endif
+        constexpr bool kEnableWebViewDebug = false;
 #else
-        options.enableDebugMode = true;
+        constexpr bool kEnableWebViewDebug = true;
 #endif
+        // Can never silently regress: a hardened build that somehow set this
+        // true would fail to compile here rather than ship with devtools.
+#if defined(EDITOR_RELEASE_HARDENED)
+        static_assert(!kEnableWebViewDebug, "hardened build must not enable WebView debug mode");
+#endif
+        options.enableDebugMode = kEnableWebViewDebug;
 
         options.fetchResource = [resourceDir, entryHtml](const std::string& path)
             -> std::optional<choc::ui::WebView::Options::Resource> {
@@ -355,6 +378,34 @@ int main() {
         options.webviewIsReady = [&bridge, &ctx, extraBindings, rawInstance, &createEditorWindow, frontendDir,
                                    &usageGuideWindow](choc::ui::WebView& view) {
             bindEditorBridgeFunctions(view, bridge);
+#ifdef EDITOR_RELEASE_HARDENED
+            // Defence-in-depth on top of enableDebugMode = false: swallow the
+            // devtools keyboard shortcuts and the native context menu on
+            // every window (main, SGX-2, Usage Guide -- this handler runs per
+            // window). The app's own right-click row menus are unaffected --
+            // showRowContextMenu() in frontend/pane.js builds its own DOM
+            // dropdown and calls preventDefault() itself; this only kills the
+            // browser-native menu. addInitScript covers reloads; the inline
+            // evaluate covers the current (already-loading) document.
+            static const std::string kLockdownJs = R"JS(
+              (function () {
+                if (window.__editorLockdownInstalled) return;
+                window.__editorLockdownInstalled = true;
+                window.addEventListener('keydown', function (e) {
+                  var k = (e.key || '').toLowerCase();
+                  if (k === 'f12'
+                      || ((e.ctrlKey || e.metaKey) && e.shiftKey && (k === 'i' || k === 'j' || k === 'c'))
+                      || (e.metaKey && e.altKey && (k === 'i' || k === 'j' || k === 'c' || k === 'u'))) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                }, true);
+                window.addEventListener('contextmenu', function (e) { e.preventDefault(); }, true);
+              })();
+            )JS";
+            view.addInitScript(kLockdownJs);
+            view.evaluateJavascript(kLockdownJs);
+#endif
 #ifdef EDITOR_HAS_PRIVATE_MODULE
             registerPrivateEditorExtensions(view, ctx);
 #endif
@@ -430,11 +481,25 @@ int main() {
         instance->window->toFront();
 
         choc::ui::WebView* viewPtr = instance->webView.get();
-        bridge.addDatasetsChangedListener([viewPtr] {
+        // `viewPtr` itself doubles as this listener's own removal key below
+        // -- unique for exactly as long as the listener capturing it stays
+        // registered, which is exactly the lifetime windowClosed's own
+        // removeDatasetsChangedListener() call needs to bound.
+        bridge.addDatasetsChangedListener(viewPtr, [viewPtr] {
             viewPtr->evaluateJavascript("if (window.refreshDatasets) window.refreshDatasets();");
         });
 
-        instance->window->windowClosed = [&openWindows, rawInstance, onClosed] {
+        instance->window->windowClosed = [&openWindows, rawInstance, onClosed, &bridge, viewPtr] {
+            // FIXED (2026-09-11, reported directly -- a real crash): without
+            // this, closing ANY secondary window (Usage Guide, an optional
+            // private module's own window) left its listener above
+            // registered forever, capturing `viewPtr` by raw pointer -- the
+            // NEXT dataset change anywhere (e.g. opening another file)
+            // called into that now-destroyed WebView and crashed
+            // (EXC_BAD_ACCESS inside evaluateJavascript). Must run before
+            // `instance`/its WebView are actually destroyed below, which
+            // this does (openWindows.erase() is what triggers that).
+            bridge.removeDatasetsChangedListener(viewPtr);
             if (onClosed) onClosed();
             openWindows.erase(std::remove_if(openWindows.begin(), openWindows.end(),
                                               [rawInstance](const std::unique_ptr<EditorWindowInstance>& w) {

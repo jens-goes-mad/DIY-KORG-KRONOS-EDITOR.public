@@ -6,6 +6,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "choc/containers/choc_Value.h"
@@ -220,6 +221,28 @@ public:
     // symmetry with the Combi tab's own name-collision check below.
     choc::value::Value findDuplicateCombis(const choc::value::ValueView& args); // [datasetId]
 
+    // [datasetIds, bankFilter] -> [{members: [{datasetId, filename, bank,
+    // number, name, bankType}]}] -- one entry per duplicate group, contentHash itself
+    // never serialized (same convention as programToValue()/combiToValue()
+    // elsewhere in this file: it's internal bookkeeping, the frontend never
+    // needs to compare hashes itself). The cross-DATASET sibling of
+    // findDuplicatePrograms() above -- searches several already-open
+    // datasets at once instead of one, and only reports a match that spans
+    // 2+ DISTINCT datasets (a match confined to one dataset is already
+    // covered by that dataset's own findDuplicatePrograms()). `datasetIds`
+    // is a JS array of dataset ids to include (an id no longer open is
+    // silently skipped, not an error); `bankFilter` is a JS array of Program
+    // bank indices to restrict to (empty = no restriction). Empty/unused
+    // "Init Program"-looking slots never appear (see
+    // PcgFile::findDuplicateProgramsAcrossFiles()'s own doc comment).
+    // `filename` is the basename of that dataset's own displayName (which
+    // is otherwise shown/stored as a full path everywhere else in this app,
+    // see datasets.js) -- shortened here specifically because this result
+    // table's whole point is to distinguish WHICH open file a match lives
+    // in, and a full path is much harder to scan at a glance in that
+    // context. See STATE.md entry 89 for the feature this serves.
+    choc::value::Value findDuplicateProgramsAcrossDatasets(const choc::value::ValueView& args);
+
     // [datasetId] -> [{name, variants: [{members: [ProgramInfo/CombiInfo...]}]}].
     // The inverse question from findDuplicatePrograms() above: entries
     // sharing a NAME but NOT byte-identical -- see PcgFile::
@@ -398,7 +421,20 @@ public:
     // by tests/pcg_file_test.cpp-style code with zero CHOC dependency,
     // same reasoning PcgFile itself is kept CHOC-free.
     using DatasetsChangedListener = std::function<void()>;
-    void addDatasetsChangedListener(DatasetsChangedListener listener);
+    // `key` identifies this listener for a later removeDatasetsChangedListener()
+    // call -- a std::function has no identity of its own to compare against,
+    // so the caller supplies something stable and unique to the listener's
+    // OWN lifetime (main.cpp's createEditorWindow() passes the WebView* the
+    // listener itself captures). Removal matters: a secondary window (Usage
+    // Guide, or an optional private module's own window) registers a
+    // listener capturing its own WebView* by raw pointer, and closing that
+    // window destroys the WebView -- the NEXT dataset change (e.g. opening
+    // another file) would call into the dangling pointer and crash if
+    // nothing ever removed the listener. Confirmed as a real crash
+    // (EXC_BAD_ACCESS inside evaluateJavascript, reported directly) once a
+    // second window was opened and closed before any further file-open.
+    void addDatasetsChangedListener(const void* key, DatasetsChangedListener listener);
+    void removeDatasetsChangedListener(const void* key);
 
     // NOT bound to JS -- like addDatasetsChangedListener() above, these are
     // native-side-only, for an optional private companion module's own C++
@@ -448,7 +484,7 @@ private:
 
     std::map<int, Dataset> m_datasets;
     int m_nextDatasetId = 1;
-    std::vector<DatasetsChangedListener> m_datasetsChangedListeners;
+    std::vector<std::pair<const void*, DatasetsChangedListener>> m_datasetsChangedListeners;
     void notifyDatasetsChanged();
     std::set<std::tuple<int, int, int>> m_lockedProgramRecords;  // (datasetId, bank, number) -- see lockProgramRecord()'s own doc comment
 

@@ -1,5 +1,6 @@
 #include "EditorBridge.h"
 
+#include <algorithm>
 #include <fstream>
 
 #include "platform/NativeFileDialog.h"
@@ -119,6 +120,30 @@ std::vector<std::pair<int, int>> targetsArg(const choc::value::ValueView& args, 
 choc::value::Value bytesToValue(const std::vector<uint8_t>& bytes) {
     return choc::value::createArray(static_cast<uint32_t>(bytes.size()),
                                      [&](uint32_t i) { return static_cast<int32_t>(bytes[i]); });
+}
+
+// Reads args[index] as a JS array of plain numbers into std::vector<int> --
+// same shape as bytesArg() above, just without the uint8_t clamp (dataset
+// ids and bank indices both run well past 255). Empty if the argument is
+// missing or isn't an array.
+std::vector<int> intArrayArg(const choc::value::ValueView& args, size_t index) {
+    std::vector<int> result;
+    if (!args.isArray() || args.size() <= index) return result;
+    auto arr = args[static_cast<uint32_t>(index)];
+    if (!arr.isArray()) return result;
+    result.reserve(arr.size());
+    for (uint32_t i = 0; i < arr.size(); ++i) result.push_back(static_cast<int>(arr[i].getWithDefault<double>(0)));
+    return result;
+}
+
+// The last path component of `path`, tolerating either separator -- this
+// app otherwise shows/stores a dataset's full path everywhere (see
+// datasets.js's own comment on why), but findDuplicateProgramsAcrossDatasets()
+// below needs a short per-row label distinguishing WHICH open file a cross-
+// dataset match lives in, where a full path would be needless noise.
+std::string basenameOf(const std::string& path) {
+    const size_t pos = path.find_last_of("/\\");
+    return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
 // Bounds-checked lookup into the `[bank][number]` counts PcgFile::setlistUsageCounts()
@@ -354,12 +379,26 @@ choc::value::Value EditorBridge::closeDataset(const choc::value::ValueView& args
     return makeOk();
 }
 
-void EditorBridge::addDatasetsChangedListener(DatasetsChangedListener listener) {
-    m_datasetsChangedListeners.push_back(std::move(listener));
+void EditorBridge::addDatasetsChangedListener(const void* key, DatasetsChangedListener listener) {
+    m_datasetsChangedListeners.push_back({key, std::move(listener)});
+}
+
+// See this method's own doc comment in EditorBridge.h -- fixes a real crash
+// (a closed window's listener, still registered, dereferencing its own
+// now-destroyed WebView* on the next dataset change).
+void EditorBridge::removeDatasetsChangedListener(const void* key) {
+    m_datasetsChangedListeners.erase(
+        std::remove_if(m_datasetsChangedListeners.begin(), m_datasetsChangedListeners.end(),
+                        [key](const auto& entry) { return entry.first == key; }),
+        m_datasetsChangedListeners.end());
 }
 
 void EditorBridge::notifyDatasetsChanged() {
-    for (const auto& listener : m_datasetsChangedListeners) listener();
+    // Copy first -- a listener could plausibly close its own window (and so
+    // call removeDatasetsChangedListener()) while being invoked; iterating a
+    // snapshot rather than the live vector keeps that safe.
+    auto listeners = m_datasetsChangedListeners;
+    for (const auto& [key, listener] : listeners) listener();
 }
 
 choc::value::Value EditorBridge::isDatasetDirty(const choc::value::ValueView& args) {
@@ -750,6 +789,61 @@ choc::value::Value EditorBridge::findDuplicateCombis(const choc::value::ValueVie
                                               : choc::value::createEmptyArray());
             groupValue.addArrayElement(v);
         }
+        result.addArrayElement(groupValue);
+    }
+    return result;
+}
+
+choc::value::Value EditorBridge::findDuplicateProgramsAcrossDatasets(const choc::value::ValueView& args) {
+    const std::vector<int> datasetIds = intArrayArg(args, 0);
+    const std::vector<int> bankFilter = intArrayArg(args, 1);
+
+    // Resolve each requested id to a live file, silently dropping any that's
+    // no longer open (e.g. closed between the sidebar's dataset list being
+    // built and "Find" being clicked) -- `resolvedDatasetIds` stays parallel
+    // to `files`, so a CrossFileDuplicateGroup member's fileIndex (an index
+    // into `files`) maps straight back to the real datasetId at the same
+    // position.
+    std::vector<const kronos::PcgFile*> files;
+    std::vector<int> resolvedDatasetIds;
+    files.reserve(datasetIds.size());
+    resolvedDatasetIds.reserve(datasetIds.size());
+    for (int datasetId : datasetIds) {
+        auto it = m_datasets.find(datasetId);
+        if (it == m_datasets.end()) continue;
+        files.push_back(&it->second.file);
+        resolvedDatasetIds.push_back(datasetId);
+    }
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& group : kronos::PcgFile::findDuplicateProgramsAcrossFiles(files, bankFilter)) {
+        // contentHash itself is never sent to JS -- same convention as
+        // programToValue()/combiToValue() elsewhere in this file, which
+        // never serialize it either: it's this project's own internal
+        // bookkeeping (PcgFile.h's own doc comment on ProgramInfo), not a
+        // Kronos field, and the frontend never needs to compare hashes
+        // itself -- only to render the groups this method already grouped.
+        auto groupValue = choc::value::createObject("CrossDatasetDuplicateGroup");
+
+        auto members = choc::value::createEmptyArray();
+        for (const auto& member : group.members) {
+            const int datasetId = resolvedDatasetIds[static_cast<size_t>(member.fileIndex)];
+            const auto it = m_datasets.find(datasetId);
+            const std::string filename = it != m_datasets.end() ? basenameOf(it->second.displayName) : "";
+
+            auto memberValue = choc::value::createObject("CrossDatasetProgramMatch");
+            memberValue.setMember("datasetId", datasetId);
+            memberValue.setMember("filename", filename);
+            memberValue.setMember("bank", member.bank);
+            memberValue.setMember("number", member.number);
+            memberValue.setMember("name", member.name);
+            // Same raw-int convention as programToValue()'s own "bankType"
+            // member -- "C++ decodes, JS presents" (see that function's own
+            // comment).
+            memberValue.setMember("bankType", static_cast<int>(member.bankType));
+            members.addArrayElement(memberValue);
+        }
+        groupValue.setMember("members", members);
         result.addArrayElement(groupValue);
     }
     return result;

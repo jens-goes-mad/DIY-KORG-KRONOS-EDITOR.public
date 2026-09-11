@@ -531,6 +531,43 @@ public:
     // that result shape with.
     std::vector<std::vector<CombiInfo>> findDuplicateCombis() const;
 
+    // One Program match within a cross-file duplicate group -- see
+    // findDuplicateProgramsAcrossFiles() below. `fileIndex` is simply the
+    // position of the owning file within the `files` vector that call was
+    // given; it carries no meaning of its own outside that one call (the
+    // caller -- EditorBridge, which owns the real per-dataset ids -- maps it
+    // back to a real datasetId/filename).
+    struct CrossFileProgramMatch {
+        int fileIndex = 0;
+        int bank = 0;
+        int number = 0;
+        std::string name;
+        ProgramBankType bankType = ProgramBankType::Hd1;
+    };
+    struct CrossFileDuplicateGroup {
+        uint64_t contentHash = 0;
+        std::vector<CrossFileProgramMatch> members;  // 2+ files represented, sorted by (fileIndex, bank, number)
+    };
+
+    // The cross-FILE sibling of findDuplicatePrograms() above -- a STATIC
+    // method (not an instance method) because it inherently looks across
+    // several already-loaded files at once, none of which "owns" the
+    // operation the way a single PcgFile owns its own findDuplicatePrograms().
+    // `files` may contain null entries (skipped); `bankFilter` restricts
+    // which Program banks participate (an empty vector means no restriction
+    // at all -- every bank matches), matching the caller's own selected-bank
+    // checkboxes rather than this function guessing a default. Empty/unused
+    // slots are dropped via the same looksLikeEmptyProgramName() check
+    // findDuplicatePrograms()'s name-collision sibling already uses --
+    // without it, every "Init Program" slot across every open file would
+    // collapse into one useless giant group. A group is only returned if its
+    // members span 2+ DISTINCT files -- a match confined to one file alone
+    // is already covered by that file's OWN findDuplicatePrograms(), so it's
+    // filtered out here to keep this specifically to genuinely cross-file
+    // matches. See STATE.md entry 89 for the feature this was built for.
+    static std::vector<CrossFileDuplicateGroup> findDuplicateProgramsAcrossFiles(
+        const std::vector<const PcgFile*>& files, const std::vector<int>& bankFilter);
+
     // Re-decodes one Program directly from the retained raw file bytes,
     // independently of programs() (which was built once during load) --
     // proof that the decoder is a real, reusable, on-demand operation

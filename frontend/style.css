@@ -1691,3 +1691,44 @@ td.has-comment {
   margin: 0 auto;
   padding: 24px 32px 40px;
 }
+
+/* Cross-dataset Program duplicate finder (cross-dataset-duplicates-panel.js,
+   STATE.md entry 89) -- one dataset checkbox per row in the "filters" view. */
+.cross-dataset-dup-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* The "results" view's grouped table -- .sidebar-panel is only min(420px,
+   90vw) wide (style.css above), too narrow for 3 real columns at a
+   comfortable width, so cells truncate with an ellipsis rather than
+   wrapping/overflowing; the full name/path is still available via the
+   native title tooltip a plain text overflow gives for free in most
+   browsers, good enough for a first cut. table-layout: fixed matches every
+   other real .table in this app (colgroupHtml()'s own comment, pane.js). */
+.cross-dataset-dup-table {
+  table-layout: fixed;
+}
+.cross-dataset-dup-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cross-dataset-dup-group-header td {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+  background: transparent;
+}
+.cross-dataset-dup-row {
+  cursor: pointer;
+}
+.cross-dataset-dup-row:hover,
+.cross-dataset-dup-row:focus-visible {
+  background: var(--editor-accent);
+  color: #1b1d22;
+}

@@ -5834,4 +5834,258 @@ CLEAN UP -- noted 2026-08-15:
         notification settings -- not this repo's to fix) rather than relying
         on someone checking the live site.
 
-=== END STATE BLOCK ===
+  88. **BUILT (2026-09-07)**: hardened the shippable (resource-embedding)
+      build -- `EDITOR_RELEASE_HARDENED`, auto-on with `EDITOR_EMBED_RESOURCES`
+      (so `CMAKE_BUILD_TYPE=Release` or an explicit `-DEDITOR_EMBED_RESOURCES=ON`).
+      Three parts, all verified against a clean `-DCMAKE_BUILD_TYPE=Release`
+      build on this machine:
+      - **Embedded frontend is obfuscated**, not plain byte arrays. Before:
+        `strings build/kronos_editor.app/Contents/MacOS/kronos_editor` dumped
+        every line of JS/HTML/CSS and every source comment verbatim. Now each
+        file is `zlib.compress(9)` then run through a dependency-free keystream
+        cipher (`key[i]` arithmetic + keyed byte-rotate + xorshift64 XOR, then
+        a position-dependent rotate) before it lands in the generated arrays.
+        `tools/gen_asset_key.py` mints a fresh 32-byte key per build tree
+        (a CMake custom command with no `DEPENDS` -- regenerates only when its
+        outputs are missing, so reconfigures don't churn every asset) and
+        writes it two ways: `generated/AssetKey.h` (scattered into four
+        misleadingly-named 8-byte arrays + a `uint32` mask seed, reassembled
+        at runtime by `src/kronos/AssetKey.cpp` -- never a contiguous 32-byte
+        literal) and `generated/asset_key.bin` (raw, for the Python embed
+        step). `tools/embed_resources.py` gained `--obfuscate --key <file>`;
+        `src/kronos/AssetObfuscation.cpp` reverses the transform (cipher +
+        `choc::zlib::InflaterStream`) at load time in `main.cpp`'s
+        `loadFrontendResource()`. **Explicitly obfuscation, not encryption** --
+        the key is compiled in (the app has no user to get one from), a
+        determined RE can always recover it; the goal was "hours not seconds",
+        and the honest caveat is written into `docs/content/building/index.md`.
+        Verified: a throwaway harness deobfuscated all 38 public + 32 private
+        embedded assets with the real per-build key, `/index.html` round-trips
+        to `<!doctype html>`, `strings` on the release binary finds zero
+        recognisable frontend tokens (only the small inline JS literals that
+        live in `main.cpp` itself). New `ctest` target `asset_obfuscation_test`
+        round-trips `deobfuscateAssetWithKey()` against a committed fixture
+        (`tests/fixtures/asset_obfuscation.{key,plain,obf}`, regenerable via
+        `tests/fixtures/gen_asset_obfuscation_fixture.py` which imports the
+        SAME Python `_obfuscate()` the build uses -- so encoder/decoder drift
+        fails the test).
+      - **The private module's frontend is now actually embedded** (closes the
+        gap entry in `main.cpp` / `src/main.cpp`'s old KNOWN GAP comment: a
+        Release build opened the SGX-2 window then failed every resource
+        request for it). `private/.../CMakeLists.txt` embeds its `frontend/`
+        into its own `editor_embedded_sgx2` table with the SAME key;
+        `private/.../src/Sgx2AssetRegistration.cpp` registers a resolver on the
+        new `src/bridge/EmbeddedAssetRegistry.{h,cpp}` that `loadFrontendResource()`
+        falls through to when its own table misses (path namespaces are
+        disjoint: `/index.html`,`/pane.js`,`/components/*` vs `/sgx-2/*`,
+        `/common/*`). `Sgx2AssetRegistration.cpp` is compiled unconditionally
+        with a no-op `#else` branch so a Debug build (which reads that frontend
+        off disk via `EDITOR_SGX2_FRONTEND_DIR`) still links.
+      - **CHOC debug mode locked down** beyond entry 63's `enableDebugMode =
+        false`: a `static_assert` in `main.cpp` makes a hardened build fail to
+        compile if the flag could be true (verified by deliberately forcing it
+        -- build fails with "hardened build must not enable WebView debug
+        mode"); every window gets a `view.addInitScript` + inline-`evaluate`
+        that swallows F12 / Ctrl+Shift+I / Cmd+Opt+I and the native context
+        menu (the app's own `showRowContextMenu()` builds its own DOM dropdown
+        and is unaffected); the Release binary is symbol-stripped
+        (`strip -x` post-build on Apple, `-s`/`--gc-sections` on Linux,
+        `/OPT:REF /OPT:ICF` on MSVC) + `-fvisibility=hidden` -- `nm` on the
+        stripped binary shows ~211 symbols vs thousands. `private/.../src/Sgx2EditorStandaloneMain.cpp`
+        (a dev-only target CI never ships) had its hardcoded
+        `enableDebugMode = true` changed to gate on the `KRONOS_SGX2_DEBUG`
+        env var it already uses elsewhere.
+      - Not done, deliberately: **JS minification**. The brief asked for
+        "minify + compress"; there is no JS toolchain in this repo (no `node`),
+        and a hand-rolled minifier is exactly the fragile guess this project's
+        methodology forbids. Compression already destroys readability of
+        strings/comments in the binary, so that half is covered. True
+        minification stays a future step if a JS build step is ever added
+        (e.g. a vendored `esbuild`).
+      - Not done, deliberately: **obfuscating the asset PATH strings** -- the
+        generated table still has `{ "/sgx-2/sgx2-editor.js", ... }` readable
+        via `strings`. Routes aren't secret and leaving them helps diagnose a
+        broken build; only the content is obfuscated.
+
+  89. **BUILT (2026-09-11)**: cross-dataset Program duplicate finder -- a
+      global (not per-pane) tool that finds byte-exact duplicate Programs
+      across ALL currently-open datasets, complementing the existing
+      per-dataset Duplicates tab (`findDuplicatePrograms()`, entry 67 and
+      earlier), which only ever looks inside one file. RFC discussed and
+      settled first, recorded here, then built the same session per direct
+      request ("record first, than start").
+      - **Backend**: `PcgFile::findDuplicateProgramsAcrossFiles(files,
+        bankFilter)` (`src/kronos/PcgFile.h`/`.cpp`) -- a STATIC method (it
+        inherently spans several already-loaded files, none of which "owns"
+        the operation the way a single `PcgFile` owns its own
+        `findDuplicatePrograms()`). Unions every file's Programs, drops
+        anything matching `looksLikeEmptyProgramName()` (confirmed: without
+        this, every unused "Init Program" slot across N files collapses
+        into one useless giant group), restricts to `bankFilter` if
+        non-empty, groups by the existing FNV-1a `contentHash` (already a
+        pure function of record bytes, directly comparable across files
+        with no new hashing scheme), keeps only groups whose members span
+        2+ DISTINCT files (a same-file-only match is already covered by
+        that file's own `findDuplicatePrograms()`). Returns
+        `CrossFileDuplicateGroup{contentHash, members:
+        [CrossFileProgramMatch{fileIndex, bank, number, name, bankType}]}`
+        -- `fileIndex` is just the position in the `files` vector the
+        caller passed, meaningless outside that one call; the caller maps
+        it back to a real identity. New `EditorBridge::
+        findDuplicateProgramsAcrossDatasets([datasetIds], [bankFilter])`
+        resolves each id to a live file (silently skipping one no longer
+        open), calls the above, and marshals each member to
+        `{datasetId, filename, bank, number, name, bankType}` --
+        `contentHash` itself is deliberately never serialized to JS, same
+        convention `programToValue()`/`combiToValue()` already use (it's
+        this project's own bookkeeping, not a Kronos field, and the
+        frontend never needs to compare hashes itself, only render groups
+        this method already grouped). `filename` is a NEW small
+        `basenameOf()` helper -- `Dataset::displayName` is the full path
+        everywhere else in this app (`datasets.js`'s own comment: "not a
+        truncated/basename-only"), but a per-row Datasource column's whole
+        point is distinguishing WHICH open file a match lives in, where a
+        full path is needless noise. Bound as
+        `window.findDuplicateProgramsAcrossDatasets` in `main.cpp`.
+      - **Verified**: `testFindDuplicateProgramsAcrossFiles()`
+        (`tests/pcg_file_test.cpp`) -- loads `buildSyntheticPcgFile()`
+        TWICE into two independent `PcgFile`s rather than a dedicated
+        fixture (since both decode identical bytes, every non-empty
+        Program in one is byte-identical to its counterpart in the other by
+        construction). Confirms: a single-file call finds nothing even
+        though that file has a REAL intra-file duplicate pair (the actual
+        regression check for the "2+ distinct files" rule); a Program
+        unique within each file but shared ACROSS files forms a correct
+        2-member cross-file group; an intra-file duplicate pair becomes a
+        4-member group across two files (2 copies x 2 files), not two
+        separate groups; the bank filter includes/excludes correctly; a
+        bank filter matching nothing yields no groups, not a crash; a null
+        file entry (mirrors a stale datasetId) is silently skipped. Full
+        `pcg_file_test`/`kronos_editor` (incl. the private submodule)
+        rebuild clean, zero warnings, `ctest` green.
+      - **Frontend**: new `frontend/cross-dataset-duplicates-panel.js`, a
+        NEW topbar icon (⧉, index.html, beside the pane-visibility
+        [left|both|right] buttons -- always visible, no private-module
+        gate) toggling ONE `createSidebarPanel()` instance with two views
+        instead of a separate results overlay stacked on top of it: RFC's
+        own "in-window overlay, not a second native window" decision is
+        already satisfied by the sidebar's own slide-in shell, so a SECOND
+        overlay mechanism on top of that would just be more machinery for
+        no real benefit. "filters" view: one checkbox per open dataset
+        (persisted across sidebar re-opens, re-defaulted to "everything
+        open" whenever every previous choice has closed out from under it)
+        + a bank-filter row reusing `pane.js`'s existing `PROGRAM_BANK_NAMES`/
+        `renderBankFilterRow()` (no new hardcoded bank list, no new "which
+        20 banks" guess) with `present` = the UNION of every OPEN dataset's
+        own `getProgramBankTypes()` banks, deliberately NOT restricted to
+        just the checked datasets (per direct decision) so toggling a
+        dataset checkbox never reshuffles which bank buttons are enabled +
+        a "Find" button (disabled under 2 selected datasets, with an
+        explanatory title, since no group could ever span 2+ files with
+        fewer than that). "results" view: grouped table (group header +
+        member rows, NOT a flat list -- a flat list would make it
+        impossible to see which rows are actual twins), columns Name /
+        Datasource (the bridge's own basename) / ID (`formatBankNumber()`,
+        the same "INT-A 001" / "U-A 008 (EXi)" formatting the per-file
+        Duplicates tab already uses), a "← New search" button back to
+        filters. No `getBankType` coloring on the FILTER row's own buttons
+        (unlike `pane.js`'s single-dataset one) -- a bank's engine type is
+        a per-FILE fact that could disagree between files sharing that
+        checkbox, so showing one file's answer next to a checkbox not
+        scoped to that file would mislead rather than help.
+      - **Navigation**: click a result row -> right pane; Shift+click ->
+        left pane; sidebar closes either way. Resolved by DOM position
+        (`.panes .pane` first/last element), NOT by paneId "A"/"B" -- same
+        convention `app.js`'s `setPaneVisibility()`/`swapPanes()` already
+        rely on. Reuses each target pane's own existing `loadDataset()` (if
+        it isn't already showing that dataset) then `jumpToInstrument()` --
+        no new navigation primitive needed. Referencing `panes`/
+        `renderBankFilterRow`/`PROGRAM_BANK_NAMES`/`formatBankNumber` (all
+        defined in `app.js`/`pane.js`) as bare globals from a file loaded
+        earlier in `index.html` works the same way `pane-program-editor.js`
+        already calls `pane.js`'s `renderBankFilterRow()` despite loading
+        before it -- classic `<script>` tags share one lexical scope, and
+        none of these are referenced until a later user action, by which
+        point every script has already run its own top level.
+      - **Caching**: the last search's result stays displayed across
+        sidebar close/reopen (`cache`, keyed on the exact sorted dataset-id
+        + bank-filter selection) so repeat open/close is instant, no bridge
+        round-trip -- invalidated the COARSE way agreed in the RFC (b:
+        "dropped on ANY write", not a new per-dataset version counter), but
+        implemented WITHOUT touching every write call site across
+        `app.js`/`pane-program-editor.js`/`pane-combi-editor.js` (which
+        would have meant a much larger, more invasive change for one
+        sidebar): each cache entry snapshots `listDatasets()`'s own `dirty`
+        flag per involved dataset at search time, and a reopen re-fetches
+        `listDatasets()` and treats the cache as stale the moment ANY of
+        those flags has flipped, or a dataset closed. `isDatasetDirty()`
+        latches (never resets false once true), so this can miss a SECOND
+        write after the first already flipped it dirty within one session
+        -- acceptable under the RFC's own "coarse" mandate, and verified in
+        isolation (`osascript -l JavaScript`, 6 scenarios: usable right
+        after search, stale after a tracked dataset goes dirty/closes,
+        stale after the selection itself changes, not usable with no
+        cache). New search always recomputes and overwrites the cache
+        regardless of staleness.
+      - **Scope, as agreed**: Programs only (Combi cross-dataset duplicates
+        explicitly deferred -- "different story afterwards"); no
+        resolution/write action of any kind from this view (a Program's
+        bank/number pointer is meaningless translated into a different
+        file's bank layout, the same reason cross-file Set List slot copy
+        is already blocked) -- read-only jump-to is the whole feature;
+        cross-file NAME collisions (as opposed to byte-exact) also out of
+        scope.
+      - **Not done, deliberately**: no `mock_bridge.js` fake for
+        `findDuplicateProgramsAcrossDatasets()` -- checked first, and NONE
+        of this app's existing Duplicates-family bridge calls
+        (`findDuplicatePrograms`, `resolveDuplicateProgram`, etc.) have one
+        either; `pane-program-editor.js`'s own `safeFetch()` already
+        treats a missing binding as "nothing found" rather than an error,
+        so plain-browser/mock mode just shows an empty result, consistent
+        with how every sibling Duplicates feature already behaves there.
+      - **Adjacent gap surfaced, not yet fixed**: opening the exact same
+        file twice as two separate datasets is already blocked for the
+        Open dialog / programmatic `openFile` path
+        (`EditorBridge::openFileAtPath()` dedups by path, returns
+        `alreadyOpen:true`) -- but its own comment says drag-and-drop
+        "never had one to compare." Worth closing at some point, since this
+        feature's per-row Datasource column implicitly assumes one dataset
+        == one real file; not blocking, since the existing dedup already
+        covers the common case (the Open dialog/`openFile`).
+
+  90. **FIXED (2026-09-11)**: a real, reported crash (`EXC_BAD_ACCESS` inside
+      `choc::ui::WebView::evaluateJavascript`, hit while testing entry 89
+      above) -- PRE-EXISTING, already present in the last commit
+      (`a3b640e`), unrelated to entry 89's own new code: closing ANY
+      secondary window (Usage Guide, or an optional private module's own
+      window) left its `EditorBridge::addDatasetsChangedListener()`
+      registration in place forever, capturing that window's `WebView*` by
+      raw pointer (`main.cpp`'s `createEditorWindow()`). The next dataset
+      change ANYWHERE (opening another file, closing a dataset) called
+      `notifyDatasetsChanged()`, which invoked every registered listener
+      including the now-dangling one -- `viewPtr->evaluateJavascript(...)`
+      on a destroyed WebView, straight into `SIGSEGV`.
+      - Fixed by giving each listener an identity: `addDatasetsChangedListener`
+        now takes a `const void* key` (the caller's own `WebView*`, which is
+        already unique for exactly the listener's intended lifetime) alongside
+        the callback, and a new `removeDatasetsChangedListener(key)` erases by
+        that key. `m_datasetsChangedListeners` is now
+        `vector<pair<const void*, DatasetsChangedListener>>`, not a bare
+        `vector<DatasetsChangedListener>`. `notifyDatasetsChanged()` iterates
+        a COPY of the vector, not the live one, so a listener that itself
+        closes a window (and thus calls `removeDatasetsChangedListener()`
+        reentrantly) can't invalidate the iteration.
+      - `main.cpp`'s `createEditorWindow()`: `windowClosed` now calls
+        `bridge.removeDatasetsChangedListener(viewPtr)` before its existing
+        `openWindows` cleanup -- the only call site of
+        `addDatasetsChangedListener()` in the whole tree (checked, including
+        the private submodule), so nothing else needed updating for the new
+        2-arg signature.
+      - Verified: full `pcg_file_test`/`kronos_editor` (incl. private
+        submodule) rebuild clean, zero new warnings, `ctest` green. Not
+        re-reproduced interactively (would need driving real window open/
+        close through the native app) -- the fix is a direct, mechanical
+        match for the crash's own stack trace (dangling `viewPtr` inside
+        `evaluateJavascript`, called from `notifyDatasetsChanged()`), not a
+        guess; worth the user re-confirming by hand (open a secondary
+        window, close it, then open another file) now that it's fixed.

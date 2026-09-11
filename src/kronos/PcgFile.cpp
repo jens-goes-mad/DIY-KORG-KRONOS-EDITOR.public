@@ -1161,6 +1161,56 @@ std::vector<PcgFile::NameCollisionGroup> PcgFile::findCombiNameCollisions() cons
     return groupNameCollisions(entries);
 }
 
+std::vector<PcgFile::CrossFileDuplicateGroup> PcgFile::findDuplicateProgramsAcrossFiles(
+    const std::vector<const PcgFile*>& files, const std::vector<int>& bankFilter) {
+    std::unordered_map<uint64_t, std::vector<CrossFileProgramMatch>> byHash;
+    for (int fileIndex = 0; fileIndex < static_cast<int>(files.size()); ++fileIndex) {
+        const PcgFile* file = files[static_cast<size_t>(fileIndex)];
+        if (!file) continue;
+        for (const auto& program : file->programs_) {
+            if (looksLikeEmptyProgramName(program.name)) continue;
+            if (!bankFilter.empty() &&
+                std::find(bankFilter.begin(), bankFilter.end(), program.bank) == bankFilter.end()) {
+                continue;
+            }
+            byHash[program.contentHash].push_back({fileIndex, program.bank, program.number, program.name, program.bankType});
+        }
+    }
+
+    std::vector<CrossFileDuplicateGroup> groups;
+    // Not a structured-binding `for (auto& [hash, members] : byHash)` --
+    // capturing a structured binding by reference in the lambda below is a
+    // C++20 extension this project's toolchain warns on; `entry.first`/
+    // `entry.second` sidesteps it while targeting C++17.
+    for (auto& entry : byHash) {
+        std::vector<CrossFileProgramMatch>& members = entry.second;
+        std::sort(members.begin(), members.end(), [](const CrossFileProgramMatch& a, const CrossFileProgramMatch& b) {
+            if (a.fileIndex != b.fileIndex) return a.fileIndex < b.fileIndex;
+            return a.bank != b.bank ? a.bank < b.bank : a.number < b.number;
+        });
+        // Only a match spanning 2+ DISTINCT files is reported here -- a
+        // same-file-only match is already covered by that file's own
+        // findDuplicatePrograms() (see this method's own doc comment in
+        // PcgFile.h).
+        const bool spansMultipleFiles =
+            std::any_of(members.begin(), members.end(),
+                        [&](const CrossFileProgramMatch& m) { return m.fileIndex != members.front().fileIndex; });
+        if (!spansMultipleFiles) continue;
+        groups.push_back({entry.first, std::move(members)});
+    }
+    // unordered_map iteration order isn't deterministic run-to-run -- sort
+    // groups themselves so callers (and tests) see a stable order, same
+    // reasoning as findDuplicatePrograms()/findDuplicateCombis() above.
+    std::sort(groups.begin(), groups.end(), [](const CrossFileDuplicateGroup& a, const CrossFileDuplicateGroup& b) {
+        const auto& af = a.members.front();
+        const auto& bf = b.members.front();
+        if (af.fileIndex != bf.fileIndex) return af.fileIndex < bf.fileIndex;
+        if (af.bank != bf.bank) return af.bank < bf.bank;
+        return af.number < bf.number;
+    });
+    return groups;
+}
+
 PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int bankB, int numberB) {
     CombiRearrangeResult result;
 

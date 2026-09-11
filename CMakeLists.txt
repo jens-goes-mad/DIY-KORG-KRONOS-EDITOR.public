@@ -47,6 +47,38 @@ if (NOT EDITOR_EMBED_RESOURCES AND CMAKE_BUILD_TYPE STREQUAL "Release")
     set(EDITOR_EMBED_RESOURCES ON)
 endif()
 
+# A build that embeds resources is a real shippable build -- lock it down:
+# WebView debug mode forced off with a compile-time assert against regression
+# (src/main.cpp), devtools-shortcut/context-menu suppression injected into
+# every window, and a symbol-stripped Release binary (see the strip/
+# visibility settings and the APPLE/Linux/MSVC blocks below). Defined here
+# rather than derived from NDEBUG so a non-Release `-DEDITOR_EMBED_RESOURCES=ON`
+# build is hardened too.
+if (EDITOR_EMBED_RESOURCES)
+    set(EDITOR_RELEASE_HARDENED ON)
+
+    # Per-build obfuscation key for the embedded frontend (see
+    # tools/gen_asset_key.py, tools/embed_resources.py --obfuscate,
+    # src/kronos/AssetObfuscation.cpp). Generated ONCE per build tree: this
+    # command has no DEPENDS, so it only runs when its outputs are missing (a
+    # clean build dir / CI / fresh checkout). Both this repo's frontend embed
+    # and the optional private module's own frontend embed consume
+    # ${EDITOR_ASSET_KEY_BIN}, so the two share one key.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(EDITOR_ASSET_KEY_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/AssetKey.h")
+    set(EDITOR_ASSET_KEY_BIN "${CMAKE_CURRENT_BINARY_DIR}/generated/asset_key.bin")
+    add_custom_command(
+        OUTPUT "${EDITOR_ASSET_KEY_HEADER}" "${EDITOR_ASSET_KEY_BIN}"
+        COMMAND Python3::Interpreter
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_asset_key.py"
+                "${EDITOR_ASSET_KEY_HEADER}"
+                "${EDITOR_ASSET_KEY_BIN}"
+        COMMENT "Generating per-build frontend-asset obfuscation key"
+        VERBATIM
+    )
+    add_custom_target(editor_gen_asset_key DEPENDS "${EDITOR_ASSET_KEY_HEADER}" "${EDITOR_ASSET_KEY_BIN}")
+endif()
+
 add_executable(kronos_editor
     src/main.cpp
     src/bridge/EditorBridge.cpp
@@ -112,14 +144,30 @@ if (EDITOR_EMBED_RESOURCES)
                 "${EDITOR_EMBED_HEADER}"
                 "${EDITOR_EMBED_SOURCE}"
                 "editor_embedded"
+                --obfuscate --key "${EDITOR_ASSET_KEY_BIN}"
         DEPENDS ${EDITOR_FRONTEND_ASSETS} "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_resources.py"
-        COMMENT "Embedding frontend/ assets into the binary (release build)"
+                "${EDITOR_ASSET_KEY_BIN}"
+        COMMENT "Embedding + obfuscating frontend/ assets into the binary (release build)"
         VERBATIM
     )
 
-    target_sources(kronos_editor PRIVATE "${EDITOR_EMBED_SOURCE}")
+    # Shared obfuscation codec: AssetObfuscation.cpp is the pure transform
+    # (deflate/inflate + keystream cipher, testable against a fixed key);
+    # AssetKey.cpp reassembles the compiled-in per-build key from
+    # generated/AssetKey.h; EmbeddedAssetRegistry.cpp is the fallback lookup
+    # an optional private module registers its own embedded frontend through.
+    target_sources(kronos_editor PRIVATE
+        "${EDITOR_EMBED_SOURCE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/kronos/AssetObfuscation.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/kronos/AssetKey.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge/EmbeddedAssetRegistry.cpp"
+    )
+    add_dependencies(kronos_editor editor_gen_asset_key)
     target_include_directories(kronos_editor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
     target_compile_definitions(kronos_editor PRIVATE EDITOR_EMBED_RESOURCES=1)
+    if (EDITOR_RELEASE_HARDENED)
+        target_compile_definitions(kronos_editor PRIVATE EDITOR_RELEASE_HARDENED=1)
+    endif()
 
     # Same mechanism, second independent table (namespace
     # editor_embedded_resources, not editor_embedded -- two separate lookups,
@@ -204,6 +252,32 @@ elseif (WIN32)
     # and the OS-provided Evergreen runtime -- no extra link libraries needed.
 endif()
 
+# Hardened (shippable) build: strip symbols and dead-strip unused code so the
+# binary doesn't carry function names / unreferenced string literals that
+# make the frontend obfuscation (above) pointless to have. kronos_editor
+# only -- pcg_file_test and the dev-only tools below are untouched. A plain
+# Debug build never sets EDITOR_RELEASE_HARDENED, so the normal dev loop is
+# unaffected.
+if (EDITOR_RELEASE_HARDENED)
+    set_target_properties(kronos_editor PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+    target_compile_options(kronos_editor PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffunction-sections -fdata-sections>
+    )
+    if (APPLE)
+        target_link_options(kronos_editor PRIVATE -Wl,-x -Wl,-dead_strip)
+        add_custom_command(TARGET kronos_editor POST_BUILD
+            COMMAND "${CMAKE_STRIP}" -x "$<TARGET_FILE:kronos_editor>"
+            COMMENT "Stripping local symbols from kronos_editor")
+    elseif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+        target_link_options(kronos_editor PRIVATE -s -Wl,--gc-sections)
+    elseif (MSVC)
+        target_link_options(kronos_editor PRIVATE /OPT:REF /OPT:ICF)
+    endif()
+endif()
+
 # Scoped test target: only PcgFile.cpp/ProgramDecoder.cpp/CombiDecoder.cpp,
 # no main.cpp, no EditorBridge.cpp, no CHOC/WebView -- so `ctest` (or
 # building this target alone) stays fast and never needs a platform WebView
@@ -231,6 +305,21 @@ target_compile_definitions(pcg_file_test PRIVATE
 )
 
 add_test(NAME pcg_file_test COMMAND pcg_file_test)
+
+# Frontend-asset obfuscation round-trip: deobfuscateAssetWithKey() against a
+# committed fixture produced by tools/embed_resources.py with a FIXED test
+# key (tests/fixtures/asset_obfuscation.*). Pulls in third_party/choc for
+# choc::zlib but nothing else -- kept a separate small target rather than
+# folded into pcg_file_test, which deliberately has no choc dependency.
+add_executable(asset_obfuscation_test
+    tests/asset_obfuscation_test.cpp
+    src/kronos/AssetObfuscation.cpp
+)
+target_include_directories(asset_obfuscation_test PRIVATE src third_party/choc)
+target_compile_definitions(asset_obfuscation_test PRIVATE
+    ASSET_OBFUSCATION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+)
+add_test(NAME asset_obfuscation_test COMMAND asset_obfuscation_test)
 
 # Standalone hardware-validation CLI tool, same minimal dependency set as
 # pcg_file_test above (no main.cpp/EditorBridge.cpp/CHOC) -- see

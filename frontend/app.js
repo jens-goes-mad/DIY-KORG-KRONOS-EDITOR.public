@@ -546,3 +546,11 @@ document.querySelector(".usage-guide-button").addEventListener("click", () => {
   }
   window.openUsageGuideWindow();
 });
+
+// Cross-dataset Program duplicate finder (cross-dataset-duplicates-panel.js,
+// STATE.md entry 89) -- always visible, no private-module gate, same
+// "plain, synchronous open/close" toggle as the MIDI Settings button above
+// rather than a window.openXyz()-style async native call.
+document.querySelector(".cross-dataset-duplicates-button").addEventListener("click", () => {
+  window.toggleCrossDatasetDuplicatesPanel();
+});

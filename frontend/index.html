@@ -53,6 +53,14 @@
            Public, not private-build-gated (unlike the Settings button
            below) -- every build ships this. -->
       <button class="button is-small usage-guide-button" type="button" title="Usage Guide (opens in a separate window)">ⓘ</button>
+      <!-- Cross-dataset Program duplicate finder (cross-dataset-duplicates-
+           panel.js, STATE.md entry 89) -- a GLOBAL tool (not tied to either
+           pane), so it sits in the topbar rather than inside a pane's own
+           Duplicates tab (which only ever searches ONE dataset). Public,
+           every build ships this -- unlike the Settings button below, it
+           needs no private module. -->
+      <button class="button is-small cross-dataset-duplicates-button" type="button"
+              title="Find duplicate Programs across all open files">⧉</button>
       <div class="pane-visibility-bar">
         <div class="buttons has-addons">
           <button class="button is-small pane-visibility-button" data-visibility="left" type="button" title="Show only the left pane">Left only</button>
@@ -122,6 +130,13 @@
        native window needed. -->
   <div id="midiSettingsPanelRoot"></div>
 
+  <!-- Cross-dataset Program duplicate finder (cross-dataset-duplicates-
+       panel.js, STATE.md entry 89) -- mounted at the app level, same
+       reasoning as midiSettingsPanelRoot above: it isn't tied to either
+       pane/dataset, it searches across all of them at once. Public, unlike
+       midiSettingsPanelRoot's own private-module gate. -->
+  <div id="crossDatasetDuplicatesPanelRoot"></div>
+
   <!-- Loaded first among the app's own scripts, before anything that might
        call createSidebarPanel() -- see that file's own doc comment for why
        (some callers, e.g. midi-settings-panel.js, invoke it at their own
@@ -140,6 +155,7 @@
   <script src="combi-cross-dataset-panel.js"></script>
   <script src="confirm-dialog.js"></script>
   <script src="midi-settings-panel.js"></script>
+  <script src="cross-dataset-duplicates-panel.js"></script>
   <script src="mock_bridge.js"></script>
   <script src="app.js"></script>
 </body>

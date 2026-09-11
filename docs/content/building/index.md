@@ -64,6 +64,30 @@ time, even though `-DCMAKE_BUILD_TYPE=Release` is also needed at configure time 
 what this project's own `CMakeLists.txt` checks to decide whether to embed resources at
 all).
 
+#### Hardened Release build
+
+A build that embeds resources (`CMAKE_BUILD_TYPE=Release`, or an explicit
+`-DEDITOR_EMBED_RESOURCES=ON`) is treated as a shippable build and gets locked down
+(`EDITOR_RELEASE_HARDENED`):
+
+- **Embedded frontend is obfuscated** -- each file is deflate-compressed then run
+  through a keystream cipher (`tools/gen_asset_key.py` mints a fresh per-build-tree key,
+  `tools/embed_resources.py --obfuscate` applies the transform, `src/kronos/AssetObfuscation.cpp`
+  reverses it at load time). `strings`/a text editor on the binary reveal nothing
+  readable. **This is obfuscation, not encryption** -- the key is compiled into the
+  binary because the app decodes its own assets with no user input, so a determined
+  reverse-engineer can always recover it. The point is to make pulling the frontend back
+  out real work rather than a two-second `strings` dump. The optional private module's
+  own frontend is embedded + obfuscated the same way, with the same key.
+- **WebView debug mode is forced off**, with a `static_assert` in `main.cpp` so it can
+  never silently regress, plus per-window suppression of the devtools keyboard shortcuts
+  and the native context menu.
+- **The binary is symbol-stripped** and dead-code-stripped so function names and
+  unreferenced string literals don't leak.
+
+A plain Debug build is unaffected by all of this -- frontend read live off disk,
+devtools on, symbols intact.
+
 ### Where the binary ends up
 
 - macOS: `build/kronos_editor.app` -- a real bundle for Release builds specifically
@@ -102,8 +126,9 @@ back to a `window.prompt()` stub instead of a real file picker.
 
 ### Real DevTools attached to the running app
 
-`main.cpp` already sets `options.enableDebugMode = true` on the `choc::ui::WebView`, which
-CHOC wires up per platform and allows remote debugging.<br>
+`main.cpp` sets `options.enableDebugMode = true` on the `choc::ui::WebView` for **Debug
+builds** (a hardened Release build forces it off -- see "Hardened Release build" above),
+which CHOC wires up per platform and allows remote debugging.<br>
 
 This gives you breakpoints, a live console, and the DOM inspector against the *real*
 native bridge (`window.copyProgram`, `window.listDatasets`, actual file bytes) -- not

@@ -3150,6 +3150,88 @@ void testProgramCopyRecognizesRealFactoryEmptyNames() {
     }
 }
 
+// PcgFile::findDuplicateProgramsAcrossFiles() -- the cross-dataset sibling
+// of findDuplicatePrograms(), STATE.md entry 89. Deliberately reuses
+// buildSyntheticPcgFile() loaded TWICE (into two independent PcgFile
+// instances) rather than a dedicated fixture: since both loads decode the
+// exact same bytes, every non-empty Program in one is byte-identical to its
+// counterpart in the other by construction, which is exactly what's needed
+// to exercise real cross-file matches without hand-crafting duplicate byte
+// content a second time.
+void testFindDuplicateProgramsAcrossFiles() {
+    kronos::PcgFile fileA, fileB;
+    std::string error;
+    CHECK(fileA.loadFromMemory(buildSyntheticPcgFile(), error));
+    CHECK(fileB.loadFromMemory(buildSyntheticPcgFile(), error));
+
+    // Single-file call: buildSyntheticPcgFile()'s own bank0/{0,1} ("Test
+    // Program A") is a REAL intra-file duplicate pair (see
+    // findDuplicatePrograms()'s own test above) -- but with only one file in
+    // play, no group can span 2+ distinct files, so this must come back
+    // empty. This is the actual regression check for the "2+ DISTINCT
+    // files" rule: a naive implementation that forgot that filter would
+    // wrongly report 1 group here.
+    auto singleFileGroups = kronos::PcgFile::findDuplicateProgramsAcrossFiles({&fileA}, {});
+    CHECK_EQ(singleFileGroups.size(), static_cast<size_t>(0), "no group can span 2+ files when only 1 file is given");
+
+    // Two identical files, no bank filter: every non-empty Program in bank 0
+    // ("Test Program A" x2, "Unique Program") and bank 1 ("Bank1 Program0",
+    // "Bank1 Program1") has a byte-identical counterpart in the other file,
+    // so each of those 4 distinct hashes forms its own cross-file group;
+    // the two empty bank-0 records (3 and 4) are dropped by the
+    // looksLikeEmptyProgramName() filter and never appear.
+    auto allGroups = kronos::PcgFile::findDuplicateProgramsAcrossFiles({&fileA, &fileB}, {});
+    CHECK_EQ(allGroups.size(), static_cast<size_t>(4), "4 distinct non-empty Program hashes, each shared across both files");
+
+    // Find "Unique Program" (bank0/number2) -- unique WITHIN each file, but
+    // shared ACROSS the two files, so it must show up as exactly a 2-member
+    // cross-file group -- the case that most directly justifies this
+    // feature over the existing per-file findDuplicatePrograms().
+    const kronos::PcgFile::CrossFileDuplicateGroup* uniqueProgramGroup = nullptr;
+    for (const auto& group : allGroups) {
+        if (!group.members.empty() && group.members.front().name == "Unique Program") uniqueProgramGroup = &group;
+    }
+    CHECK(uniqueProgramGroup != nullptr);
+    if (uniqueProgramGroup) {
+        CHECK_EQ(uniqueProgramGroup->members.size(), static_cast<size_t>(2), "\"Unique Program\" found once per file");
+        CHECK_EQ(uniqueProgramGroup->members[0].fileIndex, 0, "first member is from fileA (index 0)");
+        CHECK_EQ(uniqueProgramGroup->members[0].bank, 0, "\"Unique Program\" lives in bank 0");
+        CHECK_EQ(uniqueProgramGroup->members[0].number, 2, "\"Unique Program\" is record 2");
+        CHECK_EQ(uniqueProgramGroup->members[1].fileIndex, 1, "second member is from fileB (index 1)");
+    }
+
+    // The byte-identical bank0/{0,1} pair ("Test Program A"): across both
+    // files that's 2 members per file x 2 files = 4 members in one group,
+    // not two separate 2-member groups -- contentHash doesn't care how many
+    // times a slot's bytes repeat within a file, only that they match.
+    const kronos::PcgFile::CrossFileDuplicateGroup* testProgramAGroup = nullptr;
+    for (const auto& group : allGroups) {
+        if (!group.members.empty() && group.members.front().name == "Test Program A") testProgramAGroup = &group;
+    }
+    CHECK(testProgramAGroup != nullptr);
+    if (testProgramAGroup) {
+        CHECK_EQ(testProgramAGroup->members.size(), static_cast<size_t>(4), "2 copies x 2 files");
+    }
+
+    // Bank filter: restricting to bank 0 only must drop both bank-1 groups
+    // ("Bank1 Program0"/"Bank1 Program1"), keeping just the 2 bank-0 ones.
+    auto bank0OnlyGroups = kronos::PcgFile::findDuplicateProgramsAcrossFiles({&fileA, &fileB}, {0});
+    CHECK_EQ(bank0OnlyGroups.size(), static_cast<size_t>(2), "bank filter {0} keeps only the 2 bank-0 groups");
+    for (const auto& group : bank0OnlyGroups) {
+        for (const auto& member : group.members) CHECK_EQ(member.bank, 0, "every member honors the bank filter");
+    }
+
+    // Bank filter naming a bank with no Programs at all: no groups, not an
+    // error/crash.
+    auto emptyBankGroups = kronos::PcgFile::findDuplicateProgramsAcrossFiles({&fileA, &fileB}, {7});
+    CHECK_EQ(emptyBankGroups.size(), static_cast<size_t>(0), "a bank filter matching nothing yields no groups");
+
+    // A null entry in `files` (mirrors EditorBridge looking up a datasetId
+    // that no longer exists) must be skipped, not crash.
+    auto withNullFile = kronos::PcgFile::findDuplicateProgramsAcrossFiles({&fileA, nullptr, &fileB}, {});
+    CHECK_EQ(withNullFile.size(), static_cast<size_t>(4), "a null file entry is silently skipped");
+}
+
 }  // namespace
 
 int main() {
@@ -3165,6 +3247,7 @@ int main() {
     testResolveDuplicates();
     testResolveDuplicatesConsolidateDifferentContent();
     testFindNameCollisions();
+    testFindDuplicateProgramsAcrossFiles();
     testFindAndResolveDuplicateCombis();
     testResolveDuplicateCombisSelective();
     testResolveDuplicateCombisConsolidateDifferentContent();
