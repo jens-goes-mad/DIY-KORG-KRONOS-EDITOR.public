@@ -420,7 +420,13 @@ function buildResultsView(bodyEl) {
   bodyEl.appendChild(hint);
 
   const table = document.createElement("table");
-  table.className = "table is-fullwidth is-narrow cross-dataset-dup-table";
+  // is-hoverable (2026-09-20, entry 96 fix) -- Bulma's own shared row-hover
+  // treatment (a subtle dark overlay), matching the Setlist/Programs/Combis
+  // tables exactly, instead of this table's own former hand-rolled orange
+  // hover -- see style.css's own comment on .cross-dataset-dup-row.is-open
+  // for why that orange hover was ALSO hiding an opened row's own orange
+  // title in practice.
+  table.className = "table is-fullwidth is-hoverable is-narrow cross-dataset-dup-table";
   table.innerHTML = "<thead><tr><th>Name</th><th>Datasource</th><th>ID</th></tr></thead>";
   const tbody = document.createElement("tbody");
 
@@ -600,7 +606,13 @@ function buildDivergenceTable(bodyEl, { heading, rows, isProgram, nameAHeader, n
   }
 
   const table = document.createElement("table");
-  table.className = "table is-fullwidth is-narrow cross-dataset-dup-table";
+  // is-hoverable (2026-09-20, entry 96 fix) -- Bulma's own shared row-hover
+  // treatment (a subtle dark overlay), matching the Setlist/Programs/Combis
+  // tables exactly, instead of this table's own former hand-rolled orange
+  // hover -- see style.css's own comment on .cross-dataset-dup-row.is-open
+  // for why that orange hover was ALSO hiding an opened row's own orange
+  // title in practice.
+  table.className = "table is-fullwidth is-hoverable is-narrow cross-dataset-dup-table";
   table.innerHTML = `<thead><tr><th>ID</th><th>${nameAHeader}</th><th>${nameBHeader}</th></tr></thead>`;
   const tbody = document.createElement("tbody");
   for (const d of rows) {

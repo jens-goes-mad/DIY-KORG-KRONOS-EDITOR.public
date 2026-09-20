@@ -29,6 +29,21 @@
 // `#midiSettingsPanelRoot`, index.html) -- one call per container; two
 // panels sharing one rootEl would fight over its contents.
 //
+// Mouse-drag resize (2026-09-20, direct request), built here rather than
+// per-caller since every current user of this shell (MIDI Settings, the
+// Duplicates resolve-picker, the cross-dataset tools panel) benefits
+// identically -- a thin handle on the panel's INNER edge (opposite
+// whichever side `edge` pins it to: left-edge handle for a right-docked
+// panel, right-edge handle for a left-docked one), drag to resize. Sets
+// `panelEl.style.width` directly, which -- being an inline style --
+// overrides ANY class-based width (including a caller's own scoped
+// default, e.g. index.html's `#crossDatasetDuplicatesPanelRoot
+// .sidebar-panel` override) regardless of specificity, so this works the
+// same way for every sidebar without each needing its own resize logic.
+// Session-only, per direct scope (not asked for): the width resets to
+// each panel's own CSS default the next time the app launches, not
+// persisted anywhere.
+//
 // Wrapped in an IIFE, same reason combi-cross-dataset-panel.js/
 // confirm-dialog.js already are (STATE.md entry 60) -- classic <script>
 // tags on one page share ONE global lexical scope for let/const, so an
@@ -70,11 +85,46 @@ function createSidebarPanel(rootEl, { edge: defaultEdge = "right" } = {}) {
     const footerEl = document.createElement("div");
     footerEl.className = "sidebar-panel-footer";
 
-    panelEl.append(header, bodyEl, footerEl);
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "sidebar-panel-resize-handle";
+    resizeHandle.addEventListener("mousedown", onResizeStart);
+
+    panelEl.append(header, bodyEl, footerEl, resizeHandle);
     backdrop.addEventListener("click", close);
 
-    els = { backdrop, panelEl, titleEl, bodyEl, footerEl };
+    els = { backdrop, panelEl, titleEl, bodyEl, footerEl, resizeHandle };
     return els;
+  }
+
+  // Drag-resize -- see this file's own top comment for why this lives here
+  // (shared by every sidebar) rather than per-caller. `currentEdge` decides
+  // which side grows the panel: dragging the handle LEFT widens a
+  // right-docked panel (its own right edge stays pinned at `right: 0`);
+  // dragging RIGHT widens a left-docked one.
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+  const MIN_WIDTH = 280;
+  const MAX_WIDTH = 900;
+
+  function onResizeStart(evt) {
+    evt.preventDefault();
+    resizeStartX = evt.clientX;
+    resizeStartWidth = els.panelEl.getBoundingClientRect().width;
+    document.addEventListener("mousemove", onResizeMove);
+    document.addEventListener("mouseup", onResizeEnd);
+  }
+
+  function onResizeMove(evt) {
+    const deltaX = evt.clientX - resizeStartX;
+    const signedDelta = currentEdge === "right" ? -deltaX : deltaX;
+    const maxAllowed = Math.min(MAX_WIDTH, window.innerWidth * 0.9);
+    const newWidth = Math.max(MIN_WIDTH, Math.min(maxAllowed, resizeStartWidth + signedDelta));
+    els.panelEl.style.width = `${newWidth}px`;
+  }
+
+  function onResizeEnd() {
+    document.removeEventListener("mousemove", onResizeMove);
+    document.removeEventListener("mouseup", onResizeEnd);
   }
 
   function renderContent() {
@@ -91,11 +141,15 @@ function createSidebarPanel(rootEl, { edge: defaultEdge = "right" } = {}) {
     currentBuild = build;
     isOpenState = true;
 
-    const { backdrop, panelEl } = ensureEls();
+    const { backdrop, panelEl, resizeHandle } = ensureEls();
     backdrop.hidden = false;
     panelEl.hidden = false;
     panelEl.classList.remove("slide-from-left", "slide-from-right");
     panelEl.classList.add(`slide-from-${currentEdge}`);
+    // The resize handle always sits on the panel's INNER edge -- opposite
+    // whichever side `slide-from-*` just pinned it to above.
+    resizeHandle.classList.remove("sidebar-panel-resize-handle-left", "sidebar-panel-resize-handle-right");
+    resizeHandle.classList.add(currentEdge === "right" ? "sidebar-panel-resize-handle-left" : "sidebar-panel-resize-handle-right");
     renderContent();
 
     // Two-step reveal (unhide this frame, add the transition classes next

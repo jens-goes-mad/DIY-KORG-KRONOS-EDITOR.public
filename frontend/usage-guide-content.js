@@ -105,6 +105,33 @@ already showing it. This is the fastest way to compare "what does this
 Combi's Timbre 3 actually sound like" without losing your place in the pane
 you started from.
 
+## Cross-dataset tools (⧉)
+
+The **⧉** button in the topbar (next to Left only / Both / Right only) opens a sidebar
+with two tools that work across every open file at once, independent of either pane:
+
+- **Find duplicates** -- across any number of open files, finds byte-exact duplicate
+  Programs: the same content sitting in more than one place.
+- **Compare two files** -- pick exactly two open files (A and B) and a bank filter; it
+  finds every Program *and* Combi slot both files actually have that's **diverged**
+  between them -- two backups of what's meant to be the same setup that have since
+  drifted apart.
+
+For Combis specifically, a diverged row tells you *why*, not just *that* it differs.
+**Click** it to expand a breakdown of exactly what changed -- a specific value where
+it's known (a Volume, a Timbre's Program reference), or a named section otherwise (an
+Insert Effect slot, its EQ, its Mixer settings). Each line has its own **←** / **→**
+button: **←** copies B's value into A, **→** copies A's value into B -- "A"/"B" here
+always mean this sidebar's own left/right columns, not whichever pane currently shows
+which side (Left only/Both/Right only and **⇄** don't change that). Resolving a change
+removes it from the list right away, and refreshes either pane if it's currently
+showing the file that just changed.
+
+**Double-click** a diverged row instead to jump both panes at once -- A's copy of that
+slot into the left pane, B's into the right -- for a live side-by-side look. (A Program
+row does the same thing on a single click, since it has no further breakdown to expand
+yet.)
+
 ## Saving
 
 Every edit above writes straight into the loaded file's own in-memory bytes

@@ -1520,6 +1520,31 @@ td.has-comment {
   left: 0;
   transform: translateX(-100%);
 }
+
+/* Mouse-drag resize handle (sidebar-panel.js, 2026-09-20, direct request)
+   -- a thin invisible strip straddling the panel's INNER edge (opposite
+   whichever side slide-from-*/right above pins it to), widened visually
+   only on hover so it doesn't otherwise compete with the panel's own
+   1px border. `.sidebar-panel` is itself `position: fixed`, so this
+   `position: absolute` child anchors to IT, not the viewport. */
+.sidebar-panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+.sidebar-panel-resize-handle:hover {
+  background: var(--accent);
+  opacity: 0.5;
+}
+.sidebar-panel-resize-handle-left {
+  left: -3px;
+}
+.sidebar-panel-resize-handle-right {
+  right: -3px;
+}
 .sidebar-panel.is-open {
   transform: translateX(0);
 }
@@ -1730,11 +1755,6 @@ td.has-comment {
 .cross-dataset-dup-row {
   cursor: pointer;
 }
-.cross-dataset-dup-row:hover,
-.cross-dataset-dup-row:focus-visible {
-  background: var(--editor-accent);
-  color: #1b1d22;
-}
 
 /* "Compare two files"'s Combi divergence breakdown (STATE.md entry 94) --
    one row per resolvable change, directly under the divergence row that
@@ -1796,20 +1816,24 @@ td.has-comment {
    (matching `.table.is-narrow .editor-row td`'s own now-commented-out
    attempt at a per-cell border, and why `.editor-row` itself carries it
    instead over there) -- putting it on every `<td>` would draw a broken
-   line under the button column too. */
+   line under the button column too.
+   ENTRY 96 FIX: this table used to hand-roll its own hover (solid orange
+   background) instead of Bulma's shared `.is-hoverable` (a subtle dark
+   overlay, what the Setlist/Programs/Combis tables actually use) --
+   reported directly ("in setlist its a dark gray"). That solid orange
+   hover was ALSO why an opened row's own orange title (right above) never
+   read as changed in practice: the mouse is still sitting on the row you
+   just clicked, so it was ALWAYS also :hover at the exact moment you'd
+   look at it, and hover's orange background + orange text is illegible --
+   the very reason the (now-removed) `.is-open:hover` override existed in
+   the first place. Switching the table to `.is-hoverable` (JS side) fixes
+   both at once: hover matches every other table's own subtle gray, and an
+   open row's orange title now stays visible under it too. */
 .cross-dataset-dup-row.is-open {
   color: var(--editor-accent);
 }
 .cross-dataset-dup-row.is-open td:first-child {
   border-left: 3px solid var(--editor-accent);
-}
-/* Without this, hovering an already-open row would show orange text (from
-   .is-open above) on the hover rule's own orange background -- same
-   specificity, source order alone would make .is-open's color win, which
-   reads as illegible orange-on-orange. Restores the hover rule's own dark
-   text so the two states stay readable together. */
-.cross-dataset-dup-row.is-open:hover {
-  color: #1b1d22;
 }
 .cross-dataset-dup-change-row {
   background: var(--panel);

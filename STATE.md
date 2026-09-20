@@ -6492,3 +6492,78 @@ CLEAN UP -- noted 2026-08-15:
         than sitting at their own natural content height -- matters once a
         longer description wraps to two lines and the row grows taller
         than the buttons' own intrinsic size would otherwise be.
+
+  96. **FIXED + BUILT (2026-09-20)**: a real bug reported directly ("the
+      hover color in the sidebar is orange, in setlist its a dark gray and
+      opened collapsible has a orange title instead, while its unchanged
+      in the sidebar"), plus mouse-drag sidebar resize.
+      - **Root cause of the hover bug**: `.cross-dataset-dup-table` never
+        got Bulma's own `is-hoverable` class (which the Setlist/Programs/
+        Combis tables all use, a subtle dark overlay) -- instead it had a
+        hand-rolled `:hover`/`:focus-visible` rule using a SOLID
+        `--editor-accent` (orange) background, predating entry 95's own
+        "reuse the Setlist's orange-title-when-open" work. That old orange
+        hover was ALSO the reason an opened row's own new orange title
+        (entry 95) never looked like it changed in practice: right after
+        clicking a row the mouse is still sitting on it, so it's ALWAYS
+        also `:hover` at the exact moment you'd look -- orange text on an
+        orange background is illegible, which is exactly why entry 95 had
+        to add a defensive `.is-open:hover { color: #1b1d22 }` override in
+        the first place (masking the title back to dark whenever hovered,
+        i.e. almost always). Fixed at the root: added `is-hoverable` to
+        both `cross-dataset-duplicates-panel.js` tables (Find duplicates
+        AND Compare two files -- they share the same row class, so both
+        get the fix), removed the old hand-rolled hover rule entirely, and
+        removed the now-unnecessary `.is-open:hover` masking override --
+        Bulma's own subtle gray hover no longer clashes with an open row's
+        orange title, so both are visible together as intended.
+      - **Mouse-drag sidebar resize**, direct request ("is it possible to
+        resize the sidebar by mouse dragging?") -- answer: yes, and built
+        into the SHARED `sidebar-panel.js` component rather than one-off
+        for this panel, since MIDI Settings and the Duplicates
+        resolve-picker sidebar use the exact same shell and benefit
+        identically. A thin drag handle sits on the panel's INNER edge
+        (opposite whichever side `edge` docks it to -- left-edge handle
+        for a right-docked panel and vice versa, so this works for either
+        orientation `createSidebarPanel()` supports), clamped to
+        [280px, min(900px, 90vw)]. Sets `panelEl.style.width` directly, an
+        inline style that overrides ANY class-based width (including a
+        caller's own scoped default, e.g. entry 95's
+        `#crossDatasetDuplicatesPanelRoot .sidebar-panel` 470px override)
+        regardless of specificity, so no per-sidebar-caller changes were
+        needed at all. Session-only, per direct scope -- resets to each
+        panel's own CSS default width on next app launch, not persisted;
+        not asked for, not built preemptively.
+      - **Verified**: the resize math (which direction widens vs. narrows
+        for each `edge`, and both clamp bounds) checked in isolation via
+        the `osascript -l JavaScript` workaround (no node in this
+        environment) -- 7 scenarios, all passing, before trusting it in
+        the browser. Both touched files re-syntax-checked. No C++ touched
+        this pass; full `ctest` suite re-confirmed green regardless.
+
+  97. **DOCS (2026-09-20)**: two doc updates, per direct request.
+      - **New Hugo page, `docs/content/experimental/`** -- a deliberately
+        brief, detail-free heads-up (per direct instruction: "avoid
+        details... screenshots later") that the private companion module's
+        Insert Effect decoding + a much bigger parameter-editing UI (knobs/
+        toggles/generic tables) are in progress, not yet stable, and not
+        documented byte-level anywhere on the site yet -- explicitly NOT
+        added to the Overview page's own "what's confirmed" section, since
+        none of it is confirmed yet. `menu.main.weight: 8` (after Release
+        Notes, before the catch-all "me" page at 1000); `icon:
+        circuit-diode` -- checked directly against the scaffold module's
+        OWN pinned commit (`git show <the exact hash docs/go.mod pins>:
+        assets/icons`, not just its current HEAD, which already differs --
+        the same "icon not found" trap entry 88's own history hit twice
+        with `broadcast`/`history`) before using it, confirmed actually
+        present there rather than guessed.
+      - **In-app Usage Guide** (`frontend/usage-guide-content.js`) gained a
+        new "Cross-dataset tools (⧉)" section describing entries 89-96:
+        where the icon lives, a one-line mention of "Find duplicates" for
+        context, and a fuller description of "Compare two files" -- the
+        A/B-vs-Norton-pane distinction, click-to-expand-and-resolve for
+        Combis with real values where known, double-click to jump both
+        panes. Rendered through the actual `renderMarkdownToHtml()` (the
+        app's own hand-rolled Markdown subset, not full CommonMark) to
+        confirm the bold/italic/list markup used actually produces the
+        intended HTML rather than assuming the syntax is supported.
