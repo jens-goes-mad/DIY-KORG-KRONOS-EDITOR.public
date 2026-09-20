@@ -6567,3 +6567,31 @@ CLEAN UP -- noted 2026-08-15:
         app's own hand-rolled Markdown subset, not full CommonMark) to
         confirm the bold/italic/list markup used actually produces the
         intended HTML rather than assuming the syntax is supported.
+
+  98. **DOCS (2026-09-21)**: entry 97 only added the cross-dataset tools
+      (entries 89-96) to the IN-APP Usage Guide, per that entry's own
+      literal instruction ("update the help text in the application
+      itself"). Reported directly after entry 97's Hugo deploy went live
+      ("where is the new Diverged section?") -- the PUBLIC Hugo User
+      Guide (`docs/content/guide/`) had no mention of it at all, unlike
+      the existing detailed per-dataset Duplicates section
+      (`docs/content/guide/prog/index.md#duplicates`), a real, reasonable
+      gap now closed:
+      - New page `docs/content/guide/cross-dataset/index.md` -- "Find
+        duplicates" (brief) and "Compare two files" at the same depth as
+        the existing per-dataset Duplicates section: the A/B-vs-Norton-
+        pane distinction stated as plainly as entry 97's own Usage Guide
+        wording, double-click to jump both panes, and a full breakdown of
+        the click-to-expand-and-resolve Combi UI (named-with-values vs.
+        named-only vs. the catch-all, the ←/→ semantics, immediate
+        no-confirm writes, auto-refresh). No screenshots (none exist yet
+        for this feature) -- deliberately no `![...]` image reference
+        added instead of a placeholder, since a missing image file would
+        break the Hugo build.
+      - `docs/content/guide/_index.md` gained a "Key features" bullet, a
+        new "### Cross-dataset tools (⧉)" subsection alongside the other
+        topbar-level controls (pane visibility, swap), and a "Where to go
+        next" link -- the same three touch-points every other guide
+        sub-page already gets.
+      - Not committed/pushed yet as of this entry -- the question that
+        prompted this was asked separately from a commit request.
