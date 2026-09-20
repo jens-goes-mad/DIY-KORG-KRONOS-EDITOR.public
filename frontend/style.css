@@ -1736,15 +1736,84 @@ td.has-comment {
   color: #1b1d22;
 }
 
-/* "Compare two files"'s Combi divergence breakdown (STATE.md entry 92) --
-   sits directly under the row it describes, deliberately NOT clickable
-   (only the row above it jumps panes) and NOT truncated the way a normal
-   .cross-dataset-dup-table td is -- this text IS the payload, wrapping
-   beats hiding it behind an ellipsis. */
-.cross-dataset-dup-changes-row td {
+/* "Compare two files"'s Combi divergence breakdown (STATE.md entry 94) --
+   one row per resolvable change, directly under the divergence row that
+   expands to show them (click to expand/collapse, same interaction as
+   this app's Setlist row editors -- see pane-setlist-editor.js's own
+   accordion sections) -- so this reuses that SAME --accent blue (not
+   --editor-accent's orange, which is this app's OWN "is-link pressed"
+   convention elsewhere, a different thing) for the hover/hint coloring,
+   per direct request ("same color/css" as the Setlist editors). NOT
+   truncated the way a normal .cross-dataset-dup-table td is -- this text
+   IS the payload, wrapping beats hiding it behind an ellipsis. */
+.cross-dataset-dup-change-row td {
   color: var(--text-dim);
   font-size: 12px;
   white-space: normal;
-  padding-top: 0;
-  padding-bottom: 8px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.cross-dataset-dup-change-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  align-items: stretch;  /* buttons stretch to the actions cell's own full height, see .cross-dataset-dup-resolve-button below */
+  height: 100%;
+}
+
+.cross-dataset-dup-resolve-button {
+  min-width: 2em;
+  height: 100%;  /* per direct request: col 3 (the button cell) matches the row's own full height, not just its own content's */
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.cross-dataset-dup-resolve-button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* This sidebar specifically, not the shared .sidebar-panel shell (also
+   used by MIDI Settings and the Duplicates resolve-picker, which stay at
+   the base 420px) -- 50px wider per direct request, since this one's own
+   Combi divergence table (description text + two buttons) is the most
+   cramped user of that shell. */
+#crossDatasetDuplicatesPanelRoot .sidebar-panel {
+  width: min(470px, 90vw);
+}
+
+/* "When a row is opened" (STATE.md entry 95, direct request: "reuse the
+   CSS from the Setlist table") -- composed from the SAME tokens the
+   Setlist row-editor system already defines (--editor-accent for "this
+   row has something open", --panel for its own expanded-content
+   background, see style.css's own .table tr.is-selected/.editor-row
+   comments above) rather than copied wholesale, since the exact visual
+   split asked for here (orange TITLE text + gray/brown ROW background,
+   not Setlist's own solid-orange-background-white-text treatment) is its
+   own composition of those same values, not a byte-for-byte reuse of a
+   single existing rule. `border-left` goes on the first cell specifically
+   (matching `.table.is-narrow .editor-row td`'s own now-commented-out
+   attempt at a per-cell border, and why `.editor-row` itself carries it
+   instead over there) -- putting it on every `<td>` would draw a broken
+   line under the button column too. */
+.cross-dataset-dup-row.is-open {
+  color: var(--editor-accent);
+}
+.cross-dataset-dup-row.is-open td:first-child {
+  border-left: 3px solid var(--editor-accent);
+}
+/* Without this, hovering an already-open row would show orange text (from
+   .is-open above) on the hover rule's own orange background -- same
+   specificity, source order alone would make .is-open's color win, which
+   reads as illegible orange-on-orange. Restores the hover rule's own dark
+   text so the two states stay readable together. */
+.cross-dataset-dup-row.is-open:hover {
+  color: #1b1d22;
+}
+.cross-dataset-dup-change-row {
+  background: var(--panel);
+}
+.cross-dataset-dup-change-row td:first-child {
+  border-left: 3px solid var(--editor-accent);
 }

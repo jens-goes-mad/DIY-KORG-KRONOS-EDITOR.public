@@ -1261,7 +1261,16 @@ std::vector<PcgFile::CombiDivergence> PcgFile::findDivergentCombisAcrossFiles(co
         auto recordA = fileA.combiRecordBytes(a.bank, a.number);
         auto recordB = fileB.combiRecordBytes(b.bank, b.number);
         CombiDivergence divergence{a.bank, a.number, a.name, b.name, {}};
-        if (recordA && recordB) divergence.changes = describeCombiDivergence(a, b, *recordA, *recordB);
+        if (recordA && recordB) {
+            // Only the human-readable side of each CombiChange is kept here
+            // -- this struct's own `changes` field is display-only (see its
+            // doc comment). The byte RANGES describeCombiDivergence() also
+            // returns are re-derived fresh, on demand, by
+            // EditorBridge::resolveCombiDivergenceChange() (STATE.md entry
+            // 94) when a specific change is actually being resolved, rather
+            // than carried through this struct/serialized to JS.
+            for (const auto& change : describeCombiDivergence(a, b, *recordA, *recordB)) divergence.changes.push_back(change.description);
+        }
         result.push_back(std::move(divergence));
     }
     std::sort(result.begin(), result.end(), [](const CombiDivergence& x, const CombiDivergence& y) {

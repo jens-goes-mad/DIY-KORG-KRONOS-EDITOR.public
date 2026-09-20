@@ -105,7 +105,11 @@ int decodeCombiTimbreVolume(const uint8_t* record, size_t recordSize, int timbre
 // reason is unknown" (direct quote). Two tiers, per direct RFC decision
 // (2026-09-20), REFINED the same day against two real backups (entry 93)
 // once every "Other section differs" hit in that real data turned out to
-// be the exact same previously-uncategorized field (Timbre Volume):
+// be the exact same previously-uncategorized field (Timbre Volume), and
+// each entry's raw byte RANGES exposed alongside its description (entry
+// 94) so a caller can actually RESOLVE one specific change (copy those
+// exact bytes from one file's record into the other's) instead of only
+// ever being able to describe it:
 //   - NAMED, WITH VALUES: each Timbre's Program reference/on-off status
 //     (already fully decoded via CombiInfo::timbres, zero new byte work),
 //     "Master Volume", and each Timbre's own "Volume" (the two fields
@@ -160,7 +164,35 @@ int decodeCombiTimbreVolume(const uint8_t* record, size_t recordSize, int timbre
 // decoded CombiInfo (for the Timbre-reference tier, and the contentHash
 // catch-all check) -- passed in rather than re-decoded here, since the
 // caller (PcgFile::findDivergentCombisAcrossFiles()) already has both.
-std::vector<std::string> describeCombiDivergence(const CombiInfo& a, const CombiInfo& b, const std::vector<uint8_t>& recordA,
+//
+// A change's `description` is DIRECTIONAL -- built from (a, b) in that
+// order ("111 -> 103" means a's value first) -- so a caller resolving one
+// specific change by matching this exact string back (STATE.md entry 94's
+// "->"/"<-" per-change resolve buttons) MUST always recompute this list in
+// the SAME (a, b) order it was first displayed in, regardless of which
+// direction the actual byte copy then runs -- the ranges themselves are
+// direction-agnostic (plain offsets), only the DESCRIPTION TEXT depends on
+// argument order.
+//
+// [{range.offset, range.length}] is exactly the set of bytes THAT ENTRY
+// covers, no more/less than what its own detection above already scans --
+// a caller resolving a coarse category (IFX/MFX/TFX/EQ/Mixer) by copying
+// these ranges therefore copies the WHOLE declared section, not just
+// whichever specific byte(s) happened to differ within it (there's no
+// record of which -- these categories only ever detected "differs
+// somewhere", never narrowed further, by design -- see this function's own
+// per-category comments above). The catch-all "Other section differs"
+// entry's own range is the ENTIRE record -- the only accurate answer when
+// nothing more specific was ever identified.
+struct CombiChangeRange {
+    size_t offset = 0;
+    size_t length = 0;
+};
+struct CombiChange {
+    std::string description;
+    std::vector<CombiChangeRange> ranges;
+};
+std::vector<CombiChange> describeCombiDivergence(const CombiInfo& a, const CombiInfo& b, const std::vector<uint8_t>& recordA,
                                                    const std::vector<uint8_t>& recordB);
 
 }  // namespace kronos

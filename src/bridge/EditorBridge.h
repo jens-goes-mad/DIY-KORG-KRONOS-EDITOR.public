@@ -269,6 +269,37 @@ public:
     // Combi divergence only said THAT two slots differ, never WHY.
     choc::value::Value findDivergentCombisAcrossDatasets(const choc::value::ValueView& args);
 
+    // [datasetIdA, datasetIdB, bank, number, changeDescription, direction] ->
+    // {ok, resolvedDatasetId} or {ok:false, error}. STATE.md entry 94, direct
+    // request: resolves ONE specific change from a Combi divergence's own
+    // `changes` list (findDivergentCombisAcrossDatasets() above) by copying
+    // exactly the raw bytes that change covers from one file's record into
+    // the other's. `direction` is `"a-to-b"` (copy A's bytes into B) or
+    // `"b-to-a"` (copy B's bytes into A) -- "A"/"B" always mean the same
+    // dataset ids the divergence was originally listed for, NOT whichever
+    // Norton pane currently shows which side (those can be swapped
+    // independently, see app.js's swapPanes()).
+    //
+    // `changeDescription` must be the EXACT string from a `changes` entry
+    // (e.g. "Master Volume 127 -> 124") -- this call re-decodes both
+    // records fresh and recomputes describeCombiDivergence() in the SAME
+    // (A, B) order the list was originally built in (descriptions are
+    // directional -- see that function's own doc comment in
+    // CombiDecoder.h), then matches by exact text to find which byte
+    // ranges to copy. No description match (already resolved by a
+    // previous call, or the underlying data changed since the list was
+    // fetched) is a plain error, not a crash -- the frontend is expected
+    // to re-fetch the whole comparison after any resolve rather than
+    // trying to keep a stale list in sync itself.
+    //
+    // Only `resolvedDatasetId`'s own dataset is actually written to --
+    // returned so the frontend knows which pane(s) (if either currently
+    // shows that dataset) need their own library view refreshed to reflect
+    // the write, same as every other cross-pane refresh in this app.
+    // Applies immediately, no confirm dialog -- matching every other write
+    // in this app (Resolve Duplicates, Reset entry, drag-and-drop, ...).
+    choc::value::Value resolveCombiDivergenceChange(const choc::value::ValueView& args);
+
     // [datasetId] -> [{name, variants: [{members: [ProgramInfo/CombiInfo...]}]}].
     // The inverse question from findDuplicatePrograms() above: entries
     // sharing a NAME but NOT byte-identical -- see PcgFile::

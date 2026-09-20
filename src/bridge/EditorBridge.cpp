@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <fstream>
 
+#include "kronos/CombiDecoder.h"
 #include "platform/NativeFileDialog.h"
 
 #ifdef EDITOR_EMBED_RESOURCES
@@ -889,6 +890,63 @@ choc::value::Value EditorBridge::findDivergentCombisAcrossDatasets(const choc::v
         v.setMember("changes", changes);
         result.addArrayElement(v);
     }
+    return result;
+}
+
+choc::value::Value EditorBridge::resolveCombiDivergenceChange(const choc::value::ValueView& args) {
+    const int datasetIdA = intArg(args, 0);
+    const int datasetIdB = intArg(args, 1);
+    const int bank = intArg(args, 2);
+    const int number = intArg(args, 3);
+    const std::string description = stringArg(args, 4);
+    const std::string direction = stringArg(args, 5);
+
+    if (direction != "a-to-b" && direction != "b-to-a") return makeError("Unknown resolve direction");
+
+    auto* fileA = fileOf(datasetIdA);
+    auto* fileB = fileOf(datasetIdB);
+    if (fileA == nullptr || fileB == nullptr) return makeError("One or both datasets are no longer open");
+
+    auto infoA = fileA->decodeCombi(bank, number);
+    auto infoB = fileB->decodeCombi(bank, number);
+    auto recordA = fileA->combiRecordBytes(bank, number);
+    auto recordB = fileB->combiRecordBytes(bank, number);
+    if (!infoA || !infoB || !recordA || !recordB) return makeError("No such Combi in one or both datasets");
+
+    // ALWAYS recomputed in (A, B) order -- see resolveCombiDivergenceChange()'s
+    // own doc comment in EditorBridge.h for why: descriptions are
+    // directional, and must match exactly what the frontend fetched
+    // earlier in this same order, regardless of which direction the copy
+    // itself then runs.
+    const auto changes = kronos::describeCombiDivergence(*infoA, *infoB, *recordA, *recordB);
+    const kronos::CombiChange* match = nullptr;
+    for (const auto& change : changes) {
+        if (change.description == description) {
+            match = &change;
+            break;
+        }
+    }
+    if (match == nullptr) {
+        return makeError("This change no longer exists -- it may already be resolved, or the data changed");
+    }
+
+    const bool aToB = direction == "a-to-b";
+    const std::vector<uint8_t>& source = aToB ? *recordA : *recordB;
+    std::vector<uint8_t> target = aToB ? *recordB : *recordA;
+    for (const auto& range : match->ranges) {
+        for (size_t i = 0; i < range.length; ++i) {
+            const size_t offset = range.offset + i;
+            if (offset < source.size() && offset < target.size()) target[offset] = source[offset];
+        }
+    }
+
+    kronos::PcgFile* targetFile = aToB ? fileB : fileA;
+    if (!targetFile->putCombiRecordBytes(bank, number, target)) {
+        return makeError("Failed to write the resolved Combi record");
+    }
+
+    auto result = makeOk();
+    result.setMember("resolvedDatasetId", aToB ? datasetIdB : datasetIdA);
     return result;
 }
 

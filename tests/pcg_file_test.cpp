@@ -3355,19 +3355,38 @@ void testDescribeCombiDivergence() {
     };
 
     // Master Volume (file offset 1192) -- named, with the real before/after
-    // values, not just "differs".
+    // values, not just "differs". Also checks the range data itself (entry
+    // 94) -- exactly the one byte, since a wrong range here would silently
+    // copy the wrong bytes when a caller actually resolves this change.
     {
         auto changes = changesAfterPoke(1192, 100);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Master Volume");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Master Volume 0 -> 100"), "Master Volume wording/values");
+        if (changes.size() == 1) {
+            CHECK_EQ(changes[0].description, std::string("Master Volume 0 -> 100"), "Master Volume wording/values");
+            CHECK_EQ(changes[0].ranges.size(), static_cast<size_t>(1), "Master Volume range count");
+            if (changes[0].ranges.size() == 1) {
+                CHECK_EQ(changes[0].ranges[0].offset, static_cast<size_t>(1192), "Master Volume range offset");
+                CHECK_EQ(changes[0].ranges[0].length, static_cast<size_t>(1), "Master Volume range length");
+            }
+        }
     }
 
     // IFX1's own first byte (Effect Type, file offset 92) -- named-only
-    // category, no value. Must NOT also trip IFX2/MFX/TFX/EQ.
+    // category, no value. Must NOT also trip IFX2/MFX/TFX/EQ. Range must
+    // cover the WHOLE 74-byte slot (entry 94's own "resolve the whole
+    // declared section" design), not just the one byte that happened to
+    // differ.
     {
         auto changes = changesAfterPoke(92, 5);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: IFX1");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("IFX1 differs"), "IFX1 wording");
+        if (changes.size() == 1) {
+            CHECK_EQ(changes[0].description, std::string("IFX1 differs"), "IFX1 wording");
+            CHECK_EQ(changes[0].ranges.size(), static_cast<size_t>(1), "IFX1 range count");
+            if (changes[0].ranges.size() == 1) {
+                CHECK_EQ(changes[0].ranges[0].offset, static_cast<size_t>(92), "IFX1 range offset");
+                CHECK_EQ(changes[0].ranges[0].length, static_cast<size_t>(74), "IFX1 range length (the whole slot)");
+            }
+        }
     }
 
     // IFX2's own last byte (file offset 92 + 74*2 - 1 = 239) -- confirms the
@@ -3375,7 +3394,7 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(239, 7);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: IFX2");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("IFX2 differs"), "IFX2 wording");
+        if (changes.size() == 1) CHECK_EQ(changes[0].description, std::string("IFX2 differs"), "IFX2 wording");
     }
 
     // One byte past IFX12's own end (file offset 980, the confirmed MFX
@@ -3384,7 +3403,7 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(980, 9);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: MFX, not IFX12");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("MFX differs"), "MFX wording");
+        if (changes.size() == 1) CHECK_EQ(changes[0].description, std::string("MFX differs"), "MFX wording");
     }
 
     // TFX range start (file offset 1120) -- and confirms it does NOT also
@@ -3392,7 +3411,7 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(1120, 3);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: TFX, no spurious Master Volume");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("TFX differs"), "TFX wording");
+        if (changes.size() == 1) CHECK_EQ(changes[0].description, std::string("TFX differs"), "TFX wording");
     }
 
     // Timbre1's own "(Track EQ) Mid Gain" byte (file offset
@@ -3400,7 +3419,13 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(4856, 20);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: EQ");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("EQ differs"), "EQ wording");
+        if (changes.size() == 1) {
+            CHECK_EQ(changes[0].description, std::string("EQ differs"), "EQ wording");
+            // 5 EQ bytes x 16 Timbres -- the WHOLE pool, not just the one
+            // byte that happened to differ (same "resolve the whole
+            // declared category" design as IFX above).
+            CHECK_EQ(changes[0].ranges.size(), static_cast<size_t>(5 * 16), "EQ range count covers all 16 Timbres");
+        }
     }
 
     // Timbre5's own EQ byte (file offset timbreByteOffset(4) + 48 = 4806 +
@@ -3409,7 +3434,7 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(5606, 30);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: EQ (from Timbre5, not just Timbre1)");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("EQ differs"), "EQ wording (Timbre5)");
+        if (changes.size() == 1) CHECK_EQ(changes[0].description, std::string("EQ differs"), "EQ wording (Timbre5)");
     }
 
     // Timbre1's own Volume byte (file offset timbreByteOffset(0) + 5 = 4811)
@@ -3421,7 +3446,14 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(4811, 103);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Timbre 1 Volume");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Timbre 1 Volume 0 -> 103"), "Timbre Volume wording/values");
+        if (changes.size() == 1) {
+            CHECK_EQ(changes[0].description, std::string("Timbre 1 Volume 0 -> 103"), "Timbre Volume wording/values");
+            CHECK_EQ(changes[0].ranges.size(), static_cast<size_t>(1), "Timbre Volume range count");
+            if (changes[0].ranges.size() == 1) {
+                CHECK_EQ(changes[0].ranges[0].offset, static_cast<size_t>(4811), "Timbre Volume range offset");
+                CHECK_EQ(changes[0].ranges[0].length, static_cast<size_t>(1), "Timbre Volume range length");
+            }
+        }
     }
 
     // Timbre1's own Pan byte (file offset timbreByteOffset(0) + 14 = 4820)
@@ -3429,7 +3461,13 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(4820, 64);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Mixer (Pan)");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Mixer differs"), "Mixer wording");
+        if (changes.size() == 1) {
+            CHECK_EQ(changes[0].description, std::string("Mixer differs"), "Mixer wording");
+            // Relative 3..45 (43 bytes) minus Volume's own relative 5 = 42
+            // bytes/Timbre x 16 -- confirms Volume is genuinely EXCLUDED
+            // from Mixer's own range (not just from the boolean check).
+            CHECK_EQ(changes[0].ranges.size(), static_cast<size_t>(42 * 16), "Mixer range count excludes Volume");
+        }
     }
 
     // Timbre5's own Send1 byte (file offset timbreByteOffset(4) + 15 =
@@ -3438,7 +3476,7 @@ void testDescribeCombiDivergence() {
     {
         auto changes = changesAfterPoke(5573, 40);
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Mixer (from Timbre5)");
-        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Mixer differs"), "Mixer wording (Timbre5)");
+        if (changes.size() == 1) CHECK_EQ(changes[0].description, std::string("Mixer differs"), "Mixer wording (Timbre5)");
     }
 
     // Two categories at once -- Master Volume AND IFX3 poked together --
@@ -3457,8 +3495,8 @@ void testDescribeCombiDivergence() {
         auto changes = kronos::describeCombiDivergence(*infoA, *infoB, *freshA.combiRecordBytes(0, 0), *freshB.combiRecordBytes(0, 0));
         CHECK_EQ(changes.size(), static_cast<size_t>(2), "both Master Volume and IFX3 reported together");
         if (changes.size() == 2) {
-            CHECK_EQ(changes[0], std::string("Master Volume 0 -> 50"), "first change is Master Volume (decl. order)");
-            CHECK_EQ(changes[1], std::string("IFX3 differs"), "second change is IFX3 (decl. order)");
+            CHECK_EQ(changes[0].description, std::string("Master Volume 0 -> 50"), "first change is Master Volume (decl. order)");
+            CHECK_EQ(changes[1].description, std::string("IFX3 differs"), "second change is IFX3 (decl. order)");
         }
     }
 
@@ -3479,8 +3517,43 @@ void testDescribeCombiDivergence() {
             kronos::describeCombiDivergence(*infoA, *infoB, *freshA.combiRecordBytes(0, 0), *freshB.combiRecordBytes(0, 0));
         CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Timbre 1's reference");
         if (changes.size() == 1) {
-            CHECK(changes[0].rfind("Timbre 1: ", 0) == 0);  // starts with "Timbre 1: "
-            CHECK(changes[0].find("->") != std::string::npos);
+            CHECK(changes[0].description.rfind("Timbre 1: ", 0) == 0);  // starts with "Timbre 1: "
+            CHECK(changes[0].description.find("->") != std::string::npos);
+            CHECK_EQ(changes[0].ranges.size(), static_cast<size_t>(1), "Timbre reference range count");
+            if (changes[0].ranges.size() == 1) {
+                CHECK_EQ(changes[0].ranges[0].offset, static_cast<size_t>(4806), "Timbre reference range offset (number+bankCode)");
+                CHECK_EQ(changes[0].ranges[0].length, static_cast<size_t>(2), "Timbre reference range length");
+            }
+        }
+    }
+
+    // Timbre reference AND status changed TOGETHER -- the entry 94 bug fix:
+    // this used to be an `else if` (status only checked when the reference
+    // hadn't ALSO changed), silently swallowing a real status change
+    // whenever both happened at once. Both must now be reported as two
+    // SEPARATE entries with two SEPARATE (non-overlapping) ranges, so
+    // resolving one never touches the other.
+    {
+        kronos::PcgFile freshA, freshB;
+        std::string err;
+        freshA.loadFromMemory(buildSyntheticPcgFile(), err);
+        freshB.loadFromMemory(buildSyntheticPcgFile(), err);
+        auto bytesB = freshB.combiRecordBytes(0, 0);
+        kronos::writeTimbreProgramRef(bytesB->data(), bytesB->size(), /*timbreIndex=*/0, /*number=*/9, /*rawBankCode=*/1);
+        (*bytesB)[4806 + 2] = static_cast<uint8_t>(3 << 5);  // status External (fileA's Timbre 0 is Internal)
+        freshB.putCombiRecordBytes(0, 0, *bytesB);
+        auto infoA = freshA.decodeCombi(0, 0);
+        auto infoB = freshB.decodeCombi(0, 0);
+        auto changes =
+            kronos::describeCombiDivergence(*infoA, *infoB, *freshA.combiRecordBytes(0, 0), *freshB.combiRecordBytes(0, 0));
+        CHECK_EQ(changes.size(), static_cast<size_t>(2), "reference AND status both reported, independently");
+        if (changes.size() == 2) {
+            CHECK(changes[0].description.rfind("Timbre 1: ", 0) == 0);
+            CHECK(changes[1].description.rfind("Timbre 1 status: ", 0) == 0);
+            if (changes[0].ranges.size() == 1 && changes[1].ranges.size() == 1) {
+                CHECK_EQ(changes[0].ranges[0].offset, static_cast<size_t>(4806), "reference range offset");
+                CHECK_EQ(changes[1].ranges[0].offset, static_cast<size_t>(4808), "status range offset (distinct from reference)");
+            }
         }
     }
 }

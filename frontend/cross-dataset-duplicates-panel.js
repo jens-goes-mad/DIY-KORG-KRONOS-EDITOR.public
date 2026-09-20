@@ -77,6 +77,16 @@ let compareProgramDivergences = [];
 let compareCombiDivergences = [];
 // { idA, idB, bankFilter:[sorted], programs, combis, dirtyA, dirtyB } or null
 let compareCache = null;
+// Which Combi divergence rows are expanded to show their own per-change
+// resolve rows (STATE.md entry 94) -- keyed "bank-number", same convention
+// as the Duplicates panel's own expandedDuplicateKeys. Program rows are
+// never expandable (no `changes` to show -- see PcgFile::ProgramDivergence's
+// own doc comment), so this Set only ever holds Combi keys.
+let expandedCombiKeys = new Set();
+
+function combiDivergenceKey(bank, number) {
+  return `${bank}-${number}`;
+}
 
 function sortedIds(set) {
   return [...set].sort((a, b) => a - b);
@@ -288,6 +298,41 @@ async function jumpToDivergence(isProgram, bank, number) {
   sidebar.close();
 }
 
+// Resolves ONE specific Combi divergence change (STATE.md entry 94, direct
+// request) by copying its exact raw bytes from one dataset's record into
+// the other's. `direction` is "a-to-b" (the "→" button: A's value
+// overwrites B) or "b-to-a" (the "←" button: B's value overwrites A) --
+// "A"/"B" here are ALWAYS this sidebar's own compareDatasetIdA/B, i.e. the
+// LEFT/RIGHT columns of the comparison table -- NOT whichever Norton pane
+// currently shows which side (those can be independently swapped, see
+// app.js's swapPanes()). `description` must be the EXACT string the
+// resolve button's own row is currently showing -- the bridge re-derives
+// the byte ranges fresh from that text (see EditorBridge::
+// resolveCombiDivergenceChange()'s own doc comment for why a fresh
+// recompute, not a cached range, is used).
+async function resolveCombiChange(bank, number, description, direction) {
+  const result = await window.resolveCombiDivergenceChange(compareDatasetIdA, compareDatasetIdB, bank, number, description, direction);
+  if (!result.ok) {
+    showToast(`Resolve failed: ${result.error}`, { isError: true });
+    return;
+  }
+
+  // If either Norton pane currently shows the dataset that was actually
+  // written to, refresh its library view -- the same "did a write land
+  // somewhere already visible" check every other cross-pane write in this
+  // app already does (e.g. app.js's onDropProgram).
+  for (const pane of Object.values(panes)) {
+    if (pane.getCurrentDatasetId() === result.resolvedDatasetId) await pane.refreshLibrary();
+  }
+
+  // Re-run the SAME comparison rather than hand-editing the cached result --
+  // this one resolved change (and the whole Combi row, once nothing about
+  // it diverges any more) disappears naturally from the fresh list, no
+  // manual array surgery needed, and can never drift out of sync with what
+  // the datasets actually contain now.
+  await runCompare();
+}
+
 function buildFiltersView(bodyEl) {
   const datasetsHeading = document.createElement("h3");
   datasetsHeading.className = "sidebar-section-heading";
@@ -473,19 +518,73 @@ function buildCompareFiltersView(bodyEl) {
   bodyEl.appendChild(compareBtn);
 }
 
+// One expanded Combi divergence's own per-change resolve rows (STATE.md
+// entry 94, direct request) -- one row per `changes` entry, each with a
+// "←"/"→" button that copies that SPECIFIC change's raw bytes one way or
+// the other. `nameAHeader`/`nameBHeader` (already the short basenames
+// buildCompareResultsView() computed) go into the button tooltips so
+// "which file am I about to overwrite" reads as a real filename, not just
+// "A"/"B" -- those letters mean this table's own left/right column, not
+// either Norton pane, which is worth a real name to avoid confusing the two.
+function buildCombiChangeRows(tbody, d, nameAHeader, nameBHeader) {
+  for (const description of d.changes) {
+    const tr = document.createElement("tr");
+    tr.className = "cross-dataset-dup-change-row";
+
+    // colspan over the ID + NameA columns (per direct request) -- the
+    // description text is this row's whole point and gets the room; only
+    // the actions cell (NameB's own column) stays separate.
+    const descTd = document.createElement("td");
+    descTd.colSpan = 2;
+    descTd.textContent = description;
+    tr.appendChild(descTd);
+
+    const actionsTd = document.createElement("td");
+    actionsTd.className = "cross-dataset-dup-change-actions";
+    const leftBtn = document.createElement("button");
+    leftBtn.type = "button";
+    leftBtn.className = "button is-small cross-dataset-dup-resolve-button";
+    leftBtn.textContent = "←";
+    leftBtn.title = `Copy "${nameBHeader}"'s value into "${nameAHeader}"`;
+    leftBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      resolveCombiChange(d.bank, d.number, description, "b-to-a");
+    });
+    const rightBtn = document.createElement("button");
+    rightBtn.type = "button";
+    rightBtn.className = "button is-small cross-dataset-dup-resolve-button";
+    rightBtn.textContent = "→";
+    rightBtn.title = `Copy "${nameAHeader}"'s value into "${nameBHeader}"`;
+    rightBtn.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      resolveCombiChange(d.bank, d.number, description, "a-to-b");
+    });
+    actionsTd.append(leftBtn, rightBtn);
+    tr.appendChild(actionsTd);
+
+    tbody.appendChild(tr);
+  }
+}
+
 // Shared table renderer for both the Programs and Combis divergence
-// sections below -- `isProgram` picks jumpToDivergence()'s target type and
-// whether formatBankNumber() gets a bankType suffix at all (Combis have
-// none). Combi rows additionally carry `d.changes` (STATE.md entry 92, see
-// EditorBridge::findDivergentCombisAcrossDatasets()'s own doc comment) --
-// a readable "what actually changed" breakdown ("Master Volume 127 -> 124",
-// "IFX2 differs", ...) shown as its own sub-row directly under the entry it
-// describes, always visible (not collapsed) since that breakdown is the
-// whole point of this tool ("impossible to resolve conflicts because the
-// reason is unknown" -- the reported problem this exists to fix). Program
-// rows have no `changes` field yet (see PcgFile::ProgramDivergence's own
-// doc comment for why: Programs have no confirmed internal field layout in
-// this repo, unlike Combis) -- the sub-row is simply omitted for those.
+// sections below -- `isProgram` picks whether formatBankNumber() gets a
+// bankType suffix at all (Combis have none), and which click interaction a
+// row gets:
+//   - Program rows have no `changes` to show (Programs have no confirmed
+//     internal field layout in this repo yet -- see PcgFile::
+//     ProgramDivergence's own doc comment) -- UNCHANGED from before this
+//     entry: a single click jumps both panes (jumpToDivergence()).
+//   - Combi rows (STATE.md entry 94, direct request): a single click
+//     toggles an inline expand showing one resolve row per `changes`
+//     entry (buildCombiChangeRows() above), same "click a row to expand
+//     it inline" interaction/coloring this app's Setlist row editors
+//     already use (accordion-* CSS classes, style.css); a DOUBLE click
+//     jumps both panes instead (the single-click behavior every row used
+//     to have). The two coexist via a short delay on the single click,
+//     cancelled if a dblclick follows -- the standard way to let both
+//     gestures share one element without the browser's own
+//     click-click-then-dblclick sequence firing the single-click action
+//     twice first.
 function buildDivergenceTable(bodyEl, { heading, rows, isProgram, nameAHeader, nameBHeader, emptyMessage }) {
   const h = document.createElement("h3");
   h.className = "sidebar-section-heading";
@@ -509,31 +608,62 @@ function buildDivergenceTable(bodyEl, { heading, rows, isProgram, nameAHeader, n
     tr.className = "cross-dataset-dup-row";
     tr.tabIndex = 0;
 
+    const key = combiDivergenceKey(d.bank, d.number);
+    const isExpanded = !isProgram && expandedCombiKeys.has(key);
+    if (isExpanded) tr.classList.add("is-open");
+
     const idTd = document.createElement("td");
-    idTd.textContent = formatBankNumber({ isProgram, bank: d.bank, number: d.number }, isProgram ? d.bankType : null);
+    // Small expand/collapse hint, Combi rows only -- same chevron
+    // convention (▸/▾) this app's Setlist accordion sections already use.
+    const idLabel = formatBankNumber({ isProgram, bank: d.bank, number: d.number }, isProgram ? d.bankType : null);
+    idTd.textContent = isProgram ? idLabel : `${isExpanded ? "▾" : "▸"} ${idLabel}`;
     const aTd = document.createElement("td");
     aTd.textContent = d.nameA;
     const bTd = document.createElement("td");
     bTd.textContent = d.nameB;
     tr.append(idTd, aTd, bTd);
 
-    tr.addEventListener("click", () => jumpToDivergence(isProgram, d.bank, d.number));
-    tr.addEventListener("keydown", (evt) => {
-      if (evt.key === "Enter" || evt.key === " ") {
-        evt.preventDefault();
-        jumpToDivergence(isProgram, d.bank, d.number);
-      }
-    });
+    if (isProgram) {
+      // Unchanged from before entry 94 -- nothing to expand for a Program
+      // row, so a single click still jumps both panes directly.
+      tr.addEventListener("click", () => jumpToDivergence(true, d.bank, d.number));
+      tr.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter" || evt.key === " ") {
+          evt.preventDefault();
+          jumpToDivergence(true, d.bank, d.number);
+        }
+      });
+    } else {
+      let pendingExpandTimer = null;
+      tr.addEventListener("click", () => {
+        if (pendingExpandTimer) return;  // a dblclick may still follow -- don't double-fire
+        pendingExpandTimer = setTimeout(() => {
+          pendingExpandTimer = null;
+          if (expandedCombiKeys.has(key)) expandedCombiKeys.delete(key);
+          else expandedCombiKeys.add(key);
+          sidebar.update();
+        }, 220);
+      });
+      tr.addEventListener("dblclick", () => {
+        if (pendingExpandTimer) {
+          clearTimeout(pendingExpandTimer);
+          pendingExpandTimer = null;
+        }
+        jumpToDivergence(false, d.bank, d.number);
+      });
+      tr.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter" || evt.key === " ") {
+          evt.preventDefault();
+          if (expandedCombiKeys.has(key)) expandedCombiKeys.delete(key);
+          else expandedCombiKeys.add(key);
+          sidebar.update();
+        }
+      });
+    }
     tbody.appendChild(tr);
 
-    if (d.changes && d.changes.length > 0) {
-      const changesTr = document.createElement("tr");
-      changesTr.className = "cross-dataset-dup-changes-row";
-      const changesTd = document.createElement("td");
-      changesTd.colSpan = 3;
-      changesTd.textContent = d.changes.join(" · ");
-      changesTr.appendChild(changesTd);
-      tbody.appendChild(changesTr);
+    if (isExpanded && d.changes && d.changes.length > 0) {
+      buildCombiChangeRows(tbody, d, nameAHeader, nameBHeader);
     }
   }
   table.appendChild(tbody);
@@ -564,7 +694,9 @@ function buildCompareResultsView(bodyEl) {
 
   const hint = document.createElement("div");
   hint.className = "usage-note";
-  hint.textContent = "Click a row to open A in the left pane and B in the right pane, both jumped to that slot.";
+  hint.textContent =
+    "Programs: click a row to open A in the left pane and B in the right pane, both jumped to that slot. " +
+    "Combis: click a row to see exactly what changed and resolve it with ←/→; double-click to jump both panes instead.";
   bodyEl.appendChild(hint);
 
   buildDivergenceTable(bodyEl, {

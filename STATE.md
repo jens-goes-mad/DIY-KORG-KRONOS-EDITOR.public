@@ -6354,3 +6354,141 @@ CLEAN UP -- noted 2026-08-15:
         divergence found in the two test backups; further per-field
         decoding waits for an actual need, matching this project's own
         "don't build for hypothetical needs" norm.
+
+  94. **BUILT (2026-09-20)**: resolving a Combi divergence for real, per
+      direct RFC spec -- entries 92/93 could only ever DESCRIBE what
+      changed; this makes it actually FIXABLE. "Double click still jumps
+      both panes like before; a single click expands the row inline (same
+      interaction/coloring as this app's Setlist row editors) into one row
+      per `changes` entry, each with a "←"/"→" button -- ← copies the
+      RIGHT column's raw bytes into the LEFT, → the reverse. 'Left'/'right'
+      always mean this sidebar's own A/B columns, never whichever Norton
+      pane currently shows which side (those can be independently
+      swapped)." A resolved change is deleted from the list; if the
+      written-to dataset is visible in a Norton pane, that pane refreshes.
+      - **Backend, the real enabling change**: `describeCombiDivergence()`
+        (CombiDecoder.h/.cpp) now returns `vector<CombiChange>` --
+        `{description, ranges: [{offset, length}]}` -- instead of bare
+        strings. Every entry's `ranges` is EXACTLY the bytes its own
+        detection logic already scans (no new tracking needed): a named
+        field's own 1-2 bytes; a coarse category's WHOLE declared section
+        (e.g. resolving "EQ differs" copies all 16 Timbres' own EQ bytes,
+        not just whichever one(s) actually differ -- these categories only
+        ever detected "differs somewhere", never narrowed further, so
+        that's the only honest resolve granularity available); the
+        catch-all "Other section differs" gets the ENTIRE record (the only
+        accurate answer when nothing more specific was ever identified).
+        `PcgFile::CombiDivergence::changes` (the JS-facing field) is
+        unchanged (`vector<string>`) -- populated by pulling `.description`
+        out of the richer result, so display-only consumers need zero
+        changes; a NEW `EditorBridge::resolveCombiDivergenceChange()`
+        recomputes `describeCombiDivergence()` FRESH (always in the same
+        A,B order the frontend's list was fetched in -- descriptions are
+        directional text, e.g. "111 -> 103", so recomputing in the wrong
+        order would silently mismatch every string) to look the requested
+        change back up by its exact description text, then copies its
+        ranges from source into a mutable copy of the target record and
+        writes it via the already-public `putCombiRecordBytes()`. No new
+        PcgFile method needed -- everything this required was already
+        public.
+      - **Real bug found and fixed while restructuring this**: the
+        Timbre reference/status check used to be `if (refChanged) {...}
+        else if (statusChanged) {...}` -- a Timbre whose reference AND
+        status BOTH changed in the same comparison silently reported only
+        the reference, making the status change invisible and (now that
+        resolving is real) unresolvable. Changed to two independent `if`s,
+        each with its own distinct byte range, so both surface and either
+        can be resolved without touching the other.
+      - **Verified**: existing `describeCombiDivergence()` call sites in
+        `pcg_file_test.cpp` updated to read `.description`; every relevant
+        sub-case ALSO gained a direct assertion on its own `.ranges` (exact
+        offset/length for named fields; correct pooled-range COUNT for the
+        coarse categories, confirming Volume is genuinely excluded from
+        Mixer's own range, not just from its boolean check) -- a wrong
+        range would silently corrupt data on resolve, so these are load-
+        bearing, not decorative. New case: reference AND status changed
+        together, confirming both now report independently with distinct,
+        non-overlapping ranges (the bug fix above). Then verified the
+        WHOLE resolve mechanism against the two real backups
+        (`K1_20260418.PCG`/`K2_20260401.PCG`) with a throwaway `clang++`
+        smoke test, entirely in-memory: found U-A 097's real change,
+        applied its range A-to-B, confirmed the target now matches the
+        source EXACTLY within that range and NOTHING else changed, and
+        that a fresh `describeCombiDivergence()` call afterward reports
+        ZERO remaining changes for that slot. A second smoke test drove
+        the REAL write path (`putCombiRecordBytes()`, not a manual byte
+        poke) end-to-end: confirmed the file's own `isDirty()` flips
+        false->true, a fresh re-decode from the file's own retained data
+        (not the local mutated copy) shows the resolved state, and --
+        confirmed directly via `md5` before/after -- the real `.PCG` file
+        on disk is completely untouched (this project's write model keeps
+        every edit in memory until an explicit Save, exactly as intended;
+        this was checked, not assumed, before running write tests against
+        real backups). Full `pcg_file_test`/`kronos_editor` (incl. private
+        submodule) rebuild clean, zero warnings, `ctest` green throughout.
+      - **Frontend**: `cross-dataset-duplicates-panel.js`'s Combi
+        divergence rows gained click/dblclick disambiguation (a short
+        delay on the single-click handler, cancelled if a `dblclick`
+        follows -- the standard way two gestures share one element without
+        the browser's own click-click-then-dblclick sequence firing the
+        single-click action twice first) and a chevron (▸/▾) hinting the
+        expand state; expanding renders `buildCombiChangeRows()` --one row
+        per change, description + "←"/"→" (tooltips name the actual
+        dataset file, not bare "A"/"B", so it's clear which file is about
+        to be overwritten). `resolveCombiChange()` calls the new bridge
+        method, refreshes any Norton pane currently showing the
+        WRITTEN-TO dataset (`pane.refreshLibrary()`, the same "did a write
+        land somewhere visible" pattern `app.js`'s own `onDropProgram`
+        already uses), then re-runs the SAME comparison rather than
+        hand-editing the cached list -- the resolved change (and the whole
+        Combi row, once nothing about it diverges any more) disappears
+        naturally from the fresh result, never at risk of drifting out of
+        sync with what the datasets actually contain. Program rows are
+        UNCHANGED (single click still jumps both panes) -- they have no
+        `changes` to expand.
+      - **CSS**: new `.cross-dataset-dup-change-row`/`-actions`/
+        `-resolve-button` classes use `--accent` (the Setlist accordion's
+        own blue), not `--editor-accent` (this app's orange "is-link
+        pressed" convention used elsewhere in this same file), per direct
+        request to match the Setlist editors' own look.
+      - **Not done, deliberately**: no `mock_bridge.js` fake for the new
+        bridge call, consistent with every other Duplicates-family
+        function in this app (STATE.md entry 89's own finding, still
+        holding); no confirm dialog before a resolve -- applies
+        immediately, matching every other write in this app (Resolve
+        Duplicates, Reset entry, drag-and-drop, ...); no busy/disabled
+        state on the ←/→ buttons while a resolve is in flight -- checked
+        first that no existing resolve button elsewhere in this app has
+        one either, so this stays consistent rather than introducing a new
+        convention for just one feature.
+
+  95. **UI POLISH (2026-09-20)**: entry 94's resolve rows, refined per
+      direct request -- pure CSS/JS, no backend changes.
+      - Sidebar 50px wider (`min(470px, 90vw)`, was 420px) -- scoped to
+        `#crossDatasetDuplicatesPanelRoot .sidebar-panel` specifically, NOT
+        the shared `.sidebar-panel` shell also used by MIDI Settings and
+        the Duplicates resolve-picker (those stay at the base 420px).
+      - The main divergence row gets an `.is-open` class while expanded --
+        orange title text + a left orange border on its first cell + (via
+        the expanded change rows themselves) a gray/brown row background,
+        composed from the SAME tokens the Setlist row-editor system
+        already defines (`--editor-accent`, `--panel`) per direct request
+        to reuse that CSS, rather than a byte-for-byte copy of any single
+        existing rule (the exact split asked for -- orange TEXT on a
+        gray/brown background -- differs from the Setlist's own
+        `.table tr.is-selected`, which is solid-orange-background with
+        white text). Caught a real contrast bug while composing it:
+        hovering an already-open row would have shown orange text (from
+        `.is-open`) on the hover rule's own orange background -- same
+        specificity, so source order alone decided it, and `.is-open`
+        being later would have won, reading as illegible orange-on-orange.
+        Fixed with an explicit `.is-open:hover` restoring the hover rule's
+        own dark text.
+      - Each change row: `colspan="2"` merges the ID + NameA columns into
+        one cell for the description text (per direct request), leaving
+        only the actions cell separate.
+      - The actions cell (and its two buttons) now stretch to the row's
+        own full height (`height: 100%` + `align-items: stretch`) rather
+        than sitting at their own natural content height -- matters once a
+        longer description wraps to two lines and the row grows taller
+        than the buttons' own intrinsic size would otherwise be.

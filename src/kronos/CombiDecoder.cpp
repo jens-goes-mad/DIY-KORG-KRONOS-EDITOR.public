@@ -1,5 +1,7 @@
 #include "CombiDecoder.h"
 
+#include <algorithm>
+
 namespace kronos {
 
 // Byte ranges/offsets below are all CONFIRMED against docs/external/KORG/
@@ -179,28 +181,37 @@ int decodeCombiTimbreVolume(const uint8_t* record, size_t recordSize, int timbre
     return record[offset];
 }
 
-std::vector<std::string> describeCombiDivergence(const CombiInfo& a, const CombiInfo& b, const std::vector<uint8_t>& recordA,
+std::vector<CombiChange> describeCombiDivergence(const CombiInfo& a, const CombiInfo& b, const std::vector<uint8_t>& recordA,
                                                    const std::vector<uint8_t>& recordB) {
-    std::vector<std::string> changes;
+    std::vector<CombiChange> changes;
 
-    // Named, with values -- Timbre reference/status (already fully decoded)
-    // and each Timbre's own Volume.
+    // Named, with values -- Timbre reference, status, and Volume. Reference
+    // and status are checked INDEPENDENTLY (entry 94 fix -- this used to be
+    // an `else if`, so a Timbre whose reference AND status both changed in
+    // the same comparison silently reported only the reference, leaving the
+    // status change invisible and unresolvable). Each still maps to its own
+    // distinct byte range (ref = the 2 number/bankCode bytes; status = the
+    // 1 byte right after), so resolving one never touches the other.
     for (size_t i = 0; i < a.timbres.size() && i < b.timbres.size(); ++i) {
         const TimbreRef& ta = a.timbres[i];
         const TimbreRef& tb = b.timbres[i];
-        const bool refChanged = ta.isDefault != tb.isDefault || ta.number != tb.number || ta.rawBankCode != tb.rawBankCode;
-        if (refChanged) {
-            changes.push_back("Timbre " + std::to_string(i + 1) + ": " + describeTimbreRef(ta) + " -> " + describeTimbreRef(tb));
-        } else if (ta.status != tb.status) {
-            changes.push_back("Timbre " + std::to_string(i + 1) + " status: " + timbreStatusName(ta.status) + " -> " +
-                               timbreStatusName(tb.status));
+        const size_t timbreBase = timbreByteOffset(static_cast<int>(i));
+        if (ta.isDefault != tb.isDefault || ta.number != tb.number || ta.rawBankCode != tb.rawBankCode) {
+            changes.push_back({"Timbre " + std::to_string(i + 1) + ": " + describeTimbreRef(ta) + " -> " + describeTimbreRef(tb),
+                                {{timbreBase, 2}}});
+        }
+        if (ta.status != tb.status) {
+            changes.push_back({"Timbre " + std::to_string(i + 1) + " status: " + timbreStatusName(ta.status) + " -> " +
+                                    timbreStatusName(tb.status),
+                                {{timbreBase + 2, 1}}});
         }
 
         const int timbreVolumeA = decodeCombiTimbreVolume(recordA.data(), recordA.size(), static_cast<int>(i));
         const int timbreVolumeB = decodeCombiTimbreVolume(recordB.data(), recordB.size(), static_cast<int>(i));
         if (timbreVolumeA >= 0 && timbreVolumeB >= 0 && timbreVolumeA != timbreVolumeB) {
-            changes.push_back("Timbre " + std::to_string(i + 1) + " Volume " + std::to_string(timbreVolumeA) + " -> " +
-                               std::to_string(timbreVolumeB));
+            changes.push_back({"Timbre " + std::to_string(i + 1) + " Volume " + std::to_string(timbreVolumeA) + " -> " +
+                                    std::to_string(timbreVolumeB),
+                                {{timbreBase + kTimbreVolumeRelativeOffset, 1}}});
         }
     }
 
@@ -208,54 +219,69 @@ std::vector<std::string> describeCombiDivergence(const CombiInfo& a, const Combi
     const int volumeA = decodeCombiMasterVolume(recordA.data(), recordA.size());
     const int volumeB = decodeCombiMasterVolume(recordB.data(), recordB.size());
     if (volumeA >= 0 && volumeB >= 0 && volumeA != volumeB) {
-        changes.push_back("Master Volume " + std::to_string(volumeA) + " -> " + std::to_string(volumeB));
+        changes.push_back({"Master Volume " + std::to_string(volumeA) + " -> " + std::to_string(volumeB),
+                            {{kMasterVolumeOffset, 1}}});
     }
 
     // Coarse, name only -- IFX1..12, MFX, TFX. See describeCombiDivergence()'s
     // own doc comment in CombiDecoder.h for exactly what each covers and why.
+    // Each entry's range is the WHOLE declared section (not just whichever
+    // byte(s) actually differ within it -- these categories never tracked
+    // that, by design).
     for (int slot = 0; slot < kIfxCount; ++slot) {
         const size_t start = kIfxBase + static_cast<size_t>(slot) * kIfxStride;
         if (combiRangeDiffers(recordA, recordB, start, start + kIfxStride - 1)) {
-            changes.push_back("IFX" + std::to_string(slot + 1) + " differs");
+            changes.push_back({"IFX" + std::to_string(slot + 1) + " differs", {{start, kIfxStride}}});
         }
     }
-    if (combiRangeDiffers(recordA, recordB, kMfxRangeStart, kMfxRangeEnd)) changes.push_back("MFX differs");
-    if (combiRangeDiffers(recordA, recordB, kTfxRangeStart, kTfxRangeEnd)) changes.push_back("TFX differs");
+    if (combiRangeDiffers(recordA, recordB, kMfxRangeStart, kMfxRangeEnd)) {
+        changes.push_back({"MFX differs", {{kMfxRangeStart, kMfxRangeEnd - kMfxRangeStart + 1}}});
+    }
+    if (combiRangeDiffers(recordA, recordB, kTfxRangeStart, kTfxRangeEnd)) {
+        changes.push_back({"TFX differs", {{kTfxRangeStart, kTfxRangeEnd - kTfxRangeStart + 1}}});
+    }
 
     // Coarse, name only -- EQ, pooled across all 16 Timbres (fires once if
-    // ANY Timbre's own Track EQ bytes differ anywhere).
-    bool eqDiffers = false;
-    for (int t = 0; t < kTimbreCount && !eqDiffers; ++t) {
-        const size_t base = timbreByteOffset(t);
-        for (size_t rel : kTimbreEqRelativeOffsets) {
-            if (combiRangeDiffers(recordA, recordB, base + rel, base + rel)) {
-                eqDiffers = true;
-                break;
+    // ANY Timbre's own Track EQ bytes differ anywhere; range covers ALL 16
+    // Timbres' own EQ bytes, not just the one(s) that actually differ).
+    {
+        bool eqDiffers = false;
+        std::vector<CombiChangeRange> eqRanges;
+        for (int t = 0; t < kTimbreCount; ++t) {
+            const size_t base = timbreByteOffset(t);
+            for (size_t rel : kTimbreEqRelativeOffsets) {
+                eqRanges.push_back({base + rel, 1});
+                if (combiRangeDiffers(recordA, recordB, base + rel, base + rel)) eqDiffers = true;
             }
         }
+        if (eqDiffers) changes.push_back({"EQ differs", std::move(eqRanges)});
     }
-    if (eqDiffers) changes.push_back("EQ differs");
 
     // Coarse, name only -- Mixer, pooled across all 16 Timbres (everything
     // between a Timbre's own reference/status block and its EQ bytes,
     // EXCLUDING Volume -- see kTimbreMixerRelativeStart/End's own comment).
-    bool mixerDiffers = false;
-    for (int t = 0; t < kTimbreCount && !mixerDiffers; ++t) {
-        const size_t base = timbreByteOffset(t);
-        for (size_t rel = kTimbreMixerRelativeStart; rel <= kTimbreMixerRelativeEnd; ++rel) {
-            if (rel == kTimbreVolumeRelativeOffset) continue;
-            if (combiRangeDiffers(recordA, recordB, base + rel, base + rel)) {
-                mixerDiffers = true;
-                break;
+    {
+        bool mixerDiffers = false;
+        std::vector<CombiChangeRange> mixerRanges;
+        for (int t = 0; t < kTimbreCount; ++t) {
+            const size_t base = timbreByteOffset(t);
+            for (size_t rel = kTimbreMixerRelativeStart; rel <= kTimbreMixerRelativeEnd; ++rel) {
+                if (rel == kTimbreVolumeRelativeOffset) continue;
+                mixerRanges.push_back({base + rel, 1});
+                if (combiRangeDiffers(recordA, recordB, base + rel, base + rel)) mixerDiffers = true;
             }
         }
+        if (mixerDiffers) changes.push_back({"Mixer differs", std::move(mixerRanges)});
     }
-    if (mixerDiffers) changes.push_back("Mixer differs");
 
     // Catch-all: the two records ARE known to differ (contentHash), but
     // nothing above caught it -- surface that rather than silently dropping
-    // a real divergence just because it isn't categorized yet.
-    if (changes.empty() && a.contentHash != b.contentHash) changes.push_back("Other section differs");
+    // a real divergence just because it isn't categorized yet. Its own
+    // range is the ENTIRE record -- the only honest answer when nothing
+    // more specific was ever identified; resolving it is a full overwrite.
+    if (changes.empty() && a.contentHash != b.contentHash) {
+        changes.push_back({"Other section differs", {{0, std::max(recordA.size(), recordB.size())}}});
+    }
 
     return changes;
 }
