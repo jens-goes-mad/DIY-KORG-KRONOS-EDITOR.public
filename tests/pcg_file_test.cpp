@@ -3232,6 +3232,259 @@ void testFindDuplicateProgramsAcrossFiles() {
     CHECK_EQ(withNullFile.size(), static_cast<size_t>(4), "a null file entry is silently skipped");
 }
 
+// PcgFile::findDivergentProgramsAcrossFiles()/findDivergentCombisAcrossFiles()
+// -- the position-matched 2-file diff, inverse question from the cross-file
+// duplicate finder above. Two independent loads of buildSyntheticPcgFile()
+// start byte-identical everywhere (so the baseline check below expects zero
+// divergences); one Program and one Combi slot are then mutated in fileB
+// via putProgramRecordBytes()/putCombiRecordBytes() (real writes, not a
+// hand-built fixture) to create controlled, real divergences.
+void testFindDivergentAcrossFiles() {
+    kronos::PcgFile fileA, fileB;
+    std::string error;
+    CHECK(fileA.loadFromMemory(buildSyntheticPcgFile(), error));
+    CHECK(fileB.loadFromMemory(buildSyntheticPcgFile(), error));
+
+    // Baseline: both files are byte-identical everywhere they were just
+    // loaded from the exact same bytes -- zero divergences anywhere.
+    auto baselinePrograms = kronos::PcgFile::findDivergentProgramsAcrossFiles(fileA, fileB, {});
+    CHECK_EQ(baselinePrograms.size(), static_cast<size_t>(0), "two identical loads have no Program divergences");
+    auto baselineCombis = kronos::PcgFile::findDivergentCombisAcrossFiles(fileA, fileB);
+    CHECK_EQ(baselineCombis.size(), static_cast<size_t>(0), "two identical loads have no Combi divergences");
+
+    // Mutate fileB's bank0/number2 ("Unique Program") to a different name,
+    // in place, at the exact same slot -- a real, controlled divergence.
+    // Clears the whole 24-byte name field first (pushNameRecord()'s own
+    // "4-byte-prefix + 24-byte space/NUL-padded name field" convention,
+    // shared by PBK1/CBK1 alike) before writing the new, shorter name --
+    // otherwise stale tail bytes from "Unique Program" would survive past
+    // "Edited"'s own 6 bytes and corrupt the decoded name.
+    auto record = fileB.programRecordBytes(0, 2);
+    CHECK(record.has_value());
+    if (record) {
+        for (size_t i = 4; i < 4 + 24 && i < record->size(); ++i) (*record)[i] = 0;
+        for (size_t i = 0; i < 6; ++i) (*record)[4 + i] = static_cast<uint8_t>("Edited"[i]);
+        CHECK(fileB.putProgramRecordBytes(0, 2, *record));
+    }
+
+    // Mutate fileB's bank0/number0 Combi ("Test Combi") the same way --
+    // only the name field, leaving the rest of the (much larger) Combi
+    // record -- its real Timbre-to-Program reference bytes -- untouched.
+    auto combiRecord = fileB.combiRecordBytes(0, 0);
+    CHECK(combiRecord.has_value());
+    if (combiRecord) {
+        for (size_t i = 4; i < 4 + 24 && i < combiRecord->size(); ++i) (*combiRecord)[i] = 0;
+        for (size_t i = 0; i < 6; ++i) (*combiRecord)[4 + i] = static_cast<uint8_t>("Edited"[i]);
+        CHECK(fileB.putCombiRecordBytes(0, 0, *combiRecord));
+    }
+
+    auto programDivergences = kronos::PcgFile::findDivergentProgramsAcrossFiles(fileA, fileB, {});
+    CHECK_EQ(programDivergences.size(), static_cast<size_t>(1), "exactly the one mutated Program slot diverges");
+    if (programDivergences.size() == 1) {
+        CHECK_EQ(programDivergences[0].bank, 0, "divergence is bank 0");
+        CHECK_EQ(programDivergences[0].number, 2, "divergence is number 2");
+        CHECK_EQ(programDivergences[0].nameA, std::string("Unique Program"), "fileA's own name is unchanged");
+        CHECK_EQ(programDivergences[0].nameB, std::string("Edited"), "fileB's name reflects the mutation");
+    }
+
+    // Every OTHER Program slot (including the byte-exact bank0/{0,1} pair
+    // and bank1's two distinct records) must NOT show up -- only the one
+    // slot that actually diverged.
+    for (const auto& d : programDivergences) {
+        CHECK(!(d.bank == 0 && d.number == 0));
+        CHECK(!(d.bank == 0 && d.number == 1));
+    }
+
+    // Bank filter: {1} excludes the bank-0 divergence entirely; {0} keeps it.
+    auto bank1Only = kronos::PcgFile::findDivergentProgramsAcrossFiles(fileA, fileB, {1});
+    CHECK_EQ(bank1Only.size(), static_cast<size_t>(0), "bank filter {1} excludes the bank-0 divergence");
+    auto bank0Only = kronos::PcgFile::findDivergentProgramsAcrossFiles(fileA, fileB, {0});
+    CHECK_EQ(bank0Only.size(), static_cast<size_t>(1), "bank filter {0} keeps the bank-0 divergence");
+
+    auto combiDivergences = kronos::PcgFile::findDivergentCombisAcrossFiles(fileA, fileB);
+    CHECK_EQ(combiDivergences.size(), static_cast<size_t>(1), "exactly the one mutated Combi slot diverges");
+    if (combiDivergences.size() == 1) {
+        CHECK_EQ(combiDivergences[0].bank, 0, "divergence is bank 0");
+        CHECK_EQ(combiDivergences[0].number, 0, "divergence is number 0");
+        CHECK_EQ(combiDivergences[0].nameA, std::string("Test Combi"), "fileA's own name is unchanged");
+        CHECK_EQ(combiDivergences[0].nameB, std::string("Edited"), "fileB's name reflects the mutation");
+        // Only the NAME changed -- none of describeCombiDivergence()'s own
+        // named/coarse categories cover the name field, so this must fall
+        // through to exactly the catch-all, not an empty list (the two
+        // records really do differ) and not a false-positive category.
+        CHECK_EQ(combiDivergences[0].changes.size(), static_cast<size_t>(1), "only the catch-all fires for a name-only change");
+        if (combiDivergences[0].changes.size() == 1) {
+            CHECK_EQ(combiDivergences[0].changes[0], std::string("Other section differs"), "catch-all wording");
+        }
+    }
+
+    // Diverging AGAINST ITSELF: comparing a file to itself must report zero
+    // divergences (identity, not accidentally symmetric-but-wrong logic).
+    auto selfCompare = kronos::PcgFile::findDivergentProgramsAcrossFiles(fileB, fileB, {});
+    CHECK_EQ(selfCompare.size(), static_cast<size_t>(0), "a file never diverges from itself");
+}
+
+// CombiDecoder.h's describeCombiDivergence() -- STATE.md entry 92's readable
+// category-level Combi diff, built directly against
+// docs/external/KORG/CombiAndSongTimbreSet.txt's own confirmed offsets (see
+// that function's own doc comment). Each sub-case below reloads a FRESH
+// identical pair from buildSyntheticPcgFile() and pokes exactly ONE byte in
+// fileB's bank0/number0 Combi record, so a category firing can be
+// attributed to that one specific byte with no cross-contamination from an
+// earlier sub-case's own mutation.
+void testDescribeCombiDivergence() {
+    // Returns describeCombiDivergence()'s result after setting byte
+    // `offset` in fileB's Combi record to `newValue` (fileA stays
+    // untouched, at whatever buildSyntheticPcgFile() set that byte to --
+    // 0 for every byte this test pokes, none of which the fixture itself
+    // ever writes a non-zero value to, confirmed by inspection of
+    // buildSyntheticPcgFile()/makeCbkCombiRecord() above).
+    auto changesAfterPoke = [&](size_t offset, uint8_t newValue) {
+        kronos::PcgFile freshA, freshB;
+        std::string err;
+        freshA.loadFromMemory(buildSyntheticPcgFile(), err);
+        freshB.loadFromMemory(buildSyntheticPcgFile(), err);
+        auto bytesB = freshB.combiRecordBytes(0, 0);
+        (*bytesB)[offset] = newValue;
+        freshB.putCombiRecordBytes(0, 0, *bytesB);
+        auto infoA = freshA.decodeCombi(0, 0);
+        auto infoB = freshB.decodeCombi(0, 0);
+        auto bytesA = freshA.combiRecordBytes(0, 0);
+        auto bytesB2 = freshB.combiRecordBytes(0, 0);
+        return kronos::describeCombiDivergence(*infoA, *infoB, *bytesA, *bytesB2);
+    };
+
+    // Master Volume (file offset 1192) -- named, with the real before/after
+    // values, not just "differs".
+    {
+        auto changes = changesAfterPoke(1192, 100);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Master Volume");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Master Volume 0 -> 100"), "Master Volume wording/values");
+    }
+
+    // IFX1's own first byte (Effect Type, file offset 92) -- named-only
+    // category, no value. Must NOT also trip IFX2/MFX/TFX/EQ.
+    {
+        auto changes = changesAfterPoke(92, 5);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: IFX1");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("IFX1 differs"), "IFX1 wording");
+    }
+
+    // IFX2's own last byte (file offset 92 + 74*2 - 1 = 239) -- confirms the
+    // per-slot stride is right, not just IFX1's own start.
+    {
+        auto changes = changesAfterPoke(239, 7);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: IFX2");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("IFX2 differs"), "IFX2 wording");
+    }
+
+    // One byte past IFX12's own end (file offset 980, the confirmed MFX
+    // range start) must land in MFX, NOT spill into IFX12 -- a boundary-off-
+    // by-one check on kIfxCount/kIfxStride's own arithmetic.
+    {
+        auto changes = changesAfterPoke(980, 9);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: MFX, not IFX12");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("MFX differs"), "MFX wording");
+    }
+
+    // TFX range start (file offset 1120) -- and confirms it does NOT also
+    // report Master Volume (byte 1192, untouched here).
+    {
+        auto changes = changesAfterPoke(1120, 3);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: TFX, no spurious Master Volume");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("TFX differs"), "TFX wording");
+    }
+
+    // Timbre1's own "(Track EQ) Mid Gain" byte (file offset
+    // timbreByteOffset(0) + 50 = 4806 + 50 = 4856) -- pooled EQ category.
+    {
+        auto changes = changesAfterPoke(4856, 20);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: EQ");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("EQ differs"), "EQ wording");
+    }
+
+    // Timbre5's own EQ byte (file offset timbreByteOffset(4) + 48 = 4806 +
+    // 4*188 + 48 = 5606) -- confirms EQ pools across ALL 16 Timbres, not
+    // just Timbre1.
+    {
+        auto changes = changesAfterPoke(5606, 30);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: EQ (from Timbre5, not just Timbre1)");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("EQ differs"), "EQ wording (Timbre5)");
+    }
+
+    // Timbre1's own Volume byte (file offset timbreByteOffset(0) + 5 = 4811)
+    // -- named, with real values, not just "Mixer differs". This is the
+    // EXACT real-world byte entry 93 was built for: every "Other section
+    // differs" hit against two real Kronos backups turned out to be this
+    // one byte (there, 111 -> 103 specifically; the values here are
+    // arbitrary, the offset is what's under test).
+    {
+        auto changes = changesAfterPoke(4811, 103);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Timbre 1 Volume");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Timbre 1 Volume 0 -> 103"), "Timbre Volume wording/values");
+    }
+
+    // Timbre1's own Pan byte (file offset timbreByteOffset(0) + 14 = 4820)
+    // -- falls into the pooled "Mixer" category, NOT Volume and NOT EQ.
+    {
+        auto changes = changesAfterPoke(4820, 64);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Mixer (Pan)");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Mixer differs"), "Mixer wording");
+    }
+
+    // Timbre5's own Send1 byte (file offset timbreByteOffset(4) + 15 =
+    // 4806 + 752 + 15 = 5573) -- confirms Mixer pools across ALL 16
+    // Timbres too, same as EQ already does.
+    {
+        auto changes = changesAfterPoke(5573, 40);
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Mixer (from Timbre5)");
+        if (changes.size() == 1) CHECK_EQ(changes[0], std::string("Mixer differs"), "Mixer wording (Timbre5)");
+    }
+
+    // Two categories at once -- Master Volume AND IFX3 poked together --
+    // both must be reported, independently, in the same call.
+    {
+        kronos::PcgFile freshA, freshB;
+        std::string err;
+        freshA.loadFromMemory(buildSyntheticPcgFile(), err);
+        freshB.loadFromMemory(buildSyntheticPcgFile(), err);
+        auto bytesB = freshB.combiRecordBytes(0, 0);
+        (*bytesB)[1192] = 50;              // Master Volume
+        (*bytesB)[92 + 74 * 2] = 9;         // IFX3's own first byte
+        freshB.putCombiRecordBytes(0, 0, *bytesB);
+        auto infoA = freshA.decodeCombi(0, 0);
+        auto infoB = freshB.decodeCombi(0, 0);
+        auto changes = kronos::describeCombiDivergence(*infoA, *infoB, *freshA.combiRecordBytes(0, 0), *freshB.combiRecordBytes(0, 0));
+        CHECK_EQ(changes.size(), static_cast<size_t>(2), "both Master Volume and IFX3 reported together");
+        if (changes.size() == 2) {
+            CHECK_EQ(changes[0], std::string("Master Volume 0 -> 50"), "first change is Master Volume (decl. order)");
+            CHECK_EQ(changes[1], std::string("IFX3 differs"), "second change is IFX3 (decl. order)");
+        }
+    }
+
+    // Timbre reference change -- reuses the ALREADY-decoded CombiInfo
+    // (writeTimbreProgramRef() is the real write path resolveDuplicates()
+    // itself uses, not a raw byte poke, unlike every case above).
+    {
+        kronos::PcgFile freshA, freshB;
+        std::string err;
+        freshA.loadFromMemory(buildSyntheticPcgFile(), err);
+        freshB.loadFromMemory(buildSyntheticPcgFile(), err);
+        auto bytesB = freshB.combiRecordBytes(0, 0);
+        kronos::writeTimbreProgramRef(bytesB->data(), bytesB->size(), /*timbreIndex=*/0, /*number=*/9, /*rawBankCode=*/1);
+        freshB.putCombiRecordBytes(0, 0, *bytesB);
+        auto infoA = freshA.decodeCombi(0, 0);
+        auto infoB = freshB.decodeCombi(0, 0);
+        auto changes =
+            kronos::describeCombiDivergence(*infoA, *infoB, *freshA.combiRecordBytes(0, 0), *freshB.combiRecordBytes(0, 0));
+        CHECK_EQ(changes.size(), static_cast<size_t>(1), "exactly one change: Timbre 1's reference");
+        if (changes.size() == 1) {
+            CHECK(changes[0].rfind("Timbre 1: ", 0) == 0);  // starts with "Timbre 1: "
+            CHECK(changes[0].find("->") != std::string::npos);
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -3248,6 +3501,8 @@ int main() {
     testResolveDuplicatesConsolidateDifferentContent();
     testFindNameCollisions();
     testFindDuplicateProgramsAcrossFiles();
+    testFindDivergentAcrossFiles();
+    testDescribeCombiDivergence();
     testFindAndResolveDuplicateCombis();
     testResolveDuplicateCombisSelective();
     testResolveDuplicateCombisConsolidateDifferentContent();

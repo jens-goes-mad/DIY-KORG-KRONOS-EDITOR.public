@@ -68,4 +68,99 @@ size_t timbreByteOffset(int timbreIndex);
 // PcgFile::resolveDuplicates()'s Combi Timbre repointing.
 void writeTimbreProgramRef(uint8_t* record, size_t recordSize, int timbreIndex, int number, int rawBankCode);
 
+// "Total Effect > Master Volume" (docs/external/KORG/
+// CombiAndSongTimbreSet.txt, SysEx offset 1188, `00~7F` -> `0~127`) --
+// CONFIRMED via this project's own "+4 byte shift from Korg's own SysEx
+// offset to this project's real CBK1 file-record offset" rule, independently
+// re-derived TWICE already elsewhere in this project rather than assumed
+// fresh here: kTimbreBaseOffset above (4806) is exactly Korg's own
+// "Timbre1 > Program Number" SysEx offset (4802) + 4, and TimbreStatus's
+// own offset+2 (see decodeTimbreStatus()) is exactly Korg's own
+// "Timbre1 > Status" SysEx offset (4804) + 4 -- two independent hits on the
+// same +4 shift, applied here a third time: file offset 1188 + 4 = 1192.
+// Returns -1 if `record` is too short to contain this byte.
+int decodeCombiMasterVolume(const uint8_t* record, size_t recordSize);
+
+// One Timbre's own "Volume" (docs/external/KORG/CombiAndSongTimbreSet.txt:
+// "Timbre1 > Volume", SysEx offset 4807, `00~7F` -> `0~127`) -- relative
+// offset 5 from that Timbre's own start (4807-4802), added to
+// timbreByteOffset(timbreIndex) above (which already applies the confirmed
+// +4 shift). CONFIRMED directly against two real, independently-obtained
+// Kronos backups (`K1_20260418.PCG`/`K2_20260401.PCG`, added 2026-09-20
+// specifically to test this feature): every single one of that day's
+// "Other section differs" Combi divergences -- 20 of them, across entirely
+// different Combi names/banks -- turned out to be this EXACT byte
+// (Timbre1, offset 4811) going from 111 to 103, confirmed to be a real,
+// normally-distributed field (a histogram scan across all 1792 Combi
+// records in both files shows a real spread of values with 127/max the
+// common default, not a suspicious constant), not a coincidence or a
+// mis-attributed bit. `timbreIndex` is 0-15. Returns -1 if `record` is too
+// short to contain this Timbre's own Volume byte.
+int decodeCombiTimbreVolume(const uint8_t* record, size_t recordSize, int timbreIndex);
+
+// Human-readable, best-effort description of what changed between two
+// Combi records at the SAME (bank, number) slot in two different files --
+// built for the cross-dataset "Compare two files" tool (STATE.md entry 92),
+// whose whole point was "impossible to resolve conflicts because the
+// reason is unknown" (direct quote). Two tiers, per direct RFC decision
+// (2026-09-20), REFINED the same day against two real backups (entry 93)
+// once every "Other section differs" hit in that real data turned out to
+// be the exact same previously-uncategorized field (Timbre Volume):
+//   - NAMED, WITH VALUES: each Timbre's Program reference/on-off status
+//     (already fully decoded via CombiInfo::timbres, zero new byte work),
+//     "Master Volume", and each Timbre's own "Volume" (the two fields
+//     decoded above).
+//   - COARSE, NAME ONLY (no value shown): "IFX1".."IFX12" (each Insert
+//     Effect slot's own wrapper settings -- Effect Type/Channel/Switch/
+//     Panpot/Bus routing/Sends, NOT that effect's own internal parameters,
+//     which aren't decoded anywhere in this project), "MFX" (Master
+//     Effect 1+2 combined, including their shared Return/Chain settings --
+//     deliberately NOT split by 1/2, per direct decision: a Combi's two
+//     Master Effect slots are functionally paired, not independent facts
+//     worth distinguishing here), "TFX" (Total Effect 1+2 combined, same
+//     reasoning -- excludes the Master Volume byte just above, which is
+//     already reported with its own value so it isn't ALSO folded into a
+//     vaguer "TFX differs" line), "EQ" (each Timbre's own "(Track EQ)"
+//     Trim/Bypass/Frequency/Gain bytes, pooled across all 16 Timbres into
+//     one category -- fires if ANY Timbre's EQ bytes differ anywhere), and
+//     "Mixer" (entry 93: every OTHER per-Timbre byte between the Timbre's
+//     own 3-byte reference/status block and its EQ bytes -- Pan, Send1/2,
+//     Bend Range, Transpose, Detune, Delay settings, Drum Kit Patch
+//     IFX1-12, Bus Select/Rec Bus/Chord/Max-Notes bits, and the (Filter)
+//     transmit toggles -- pooled the same way EQ is, EXCLUDING the Volume
+//     byte just above so a Volume-only change isn't ALSO reported as a
+//     vaguer "Mixer differs"; none of these individual fields are decoded
+//     with their own name/value yet, but the byte RANGE they occupy is
+//     confirmed, so a change there is still attributable to "this Timbre's
+//     mixer/tuning/routing settings" instead of falling all the way
+//     through to the catch-all).
+//   - A catch-all "Other section differs" fires only if the two records'
+//     contentHash actually differs but NONE of the above caught it --
+//     this project's own "detect changes in raw data blocks we already
+//     have detected, without parsing every parameter" mandate for this
+//     pass: nothing is silently dropped, an uncategorized difference still
+//     surfaces, just without a specific name. Entry 93 confirmed this
+//     bucket can genuinely empty out in practice -- every real "Other"
+//     hit in the two test backups moved to a named line once Timbre
+//     Volume was decoded.
+//   - Deliberately NOT included this pass: a "MIDI" category. Korg's own
+//     reference table lists a per-Timbre "MIDI Channel" at the SAME byte
+//     TimbreStatus already reads (SysEx offset 4804, bits 4~0) -- but
+//     TimbreStatus's own doc comment in PcgFile.h already documents THIS
+//     project's independently-confirmed finding that those exact bits are
+//     a Timbre's own 0-based index (confirmed by watching it count 0..15
+//     across a real Combi's 16 Timbres), not a MIDI channel. Real,
+//     unresolved conflict between two sources -- flagged rather than
+//     silently picking one, per this project's own no-guessing rule; a
+//     "MIDI" category needs this settled first (a real Combi where the
+//     Timbre index count DOESN'T hold, or an independent second reference,
+//     would settle it either way).
+// `recordA`/`recordB` are that slot's own raw CBK1 record bytes in each
+// file (PcgFile::combiRecordBytes()); `a`/`b` are that slot's already-
+// decoded CombiInfo (for the Timbre-reference tier, and the contentHash
+// catch-all check) -- passed in rather than re-decoded here, since the
+// caller (PcgFile::findDivergentCombisAcrossFiles()) already has both.
+std::vector<std::string> describeCombiDivergence(const CombiInfo& a, const CombiInfo& b, const std::vector<uint8_t>& recordA,
+                                                   const std::vector<uint8_t>& recordB);
+
 }  // namespace kronos

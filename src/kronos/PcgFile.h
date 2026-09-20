@@ -568,6 +568,75 @@ public:
     static std::vector<CrossFileDuplicateGroup> findDuplicateProgramsAcrossFiles(
         const std::vector<const PcgFile*>& files, const std::vector<int>& bankFilter);
 
+    // One Program slot that BOTH files actually have at the exact same
+    // (bank, number) position, but whose content has DIFFERENT contentHash
+    // -- the inverse question from findDuplicateProgramsAcrossFiles() above,
+    // which finds the SAME content in different places; this finds the
+    // SAME place holding different content, i.e. two backups of what's
+    // presumably the same rig that have since drifted apart. `nameA`/
+    // `nameB` are that slot's own name in each file, for a two-column
+    // display -- no other fields, since resolving/reconciling a divergence
+    // isn't in scope (see findDivergentProgramsAcrossFiles()'s own doc
+    // comment for why).
+    struct ProgramDivergence {
+        int bank = 0;
+        int number = 0;
+        std::string nameA;
+        std::string nameB;
+        ProgramBankType bankType = ProgramBankType::Hd1;
+    };
+    // `changes` -- human-readable descriptions of WHAT diverged, e.g.
+    // "Master Volume 127 -> 124", "Timbre 3: U-A 042 -> U-A 108", "IFX2
+    // differs" -- see CombiDecoder.h's describeCombiDivergence() for
+    // exactly what's decoded with values vs. named-only vs. the catch-all
+    // "Other section differs". Built directly (STATE.md entry 92, per
+    // direct RFC): before this, a Combi divergence only said THAT two
+    // slots differ, never WHY, making it "impossible to resolve conflicts"
+    // (the reported problem this was built to fix). No equivalent exists
+    // for ProgramDivergence above -- Programs have no confirmed internal
+    // field layout in this repo at all yet (only name + EXi Algorithm
+    // Type), unlike Combis, which have a full offset reference
+    // (docs/external/KORG/CombiAndSongTimbreSet.txt) already sitting
+    // unused before this entry.
+    struct CombiDivergence {
+        int bank = 0;
+        int number = 0;
+        std::string nameA;
+        std::string nameB;
+        std::vector<std::string> changes;
+    };
+
+    // Compares exactly two files (not N, unlike findDuplicateProgramsAcrossFiles()
+    // above -- "diverged from EACH OTHER" only means something for a pair,
+    // there's no N-way generalization the way "duplicate somewhere" has).
+    // A slot only appears in the result if BOTH files have a Program at
+    // that exact (bank, number) -- a slot only one file has isn't a
+    // "divergence" in the sense this is built for (comparing two snapshots
+    // of what's meant to be the same setup), it's just "one file doesn't
+    // have this slot at all," which findDuplicateProgramsAcrossFiles()'s
+    // own dataset-level bank differences already cover conceptually.
+    // Deliberately NOT filtered by looksLikeEmptyProgramName() the way
+    // findDuplicateProgramsAcrossFiles() is -- an Init-Program slot in one
+    // file that's been filled with a real sound in the other IS a genuine,
+    // useful divergence signal here, not noise to hide (unlike the
+    // duplicate finder, where every untouched slot sharing the same
+    // template content would otherwise collapse into one useless group --
+    // that failure mode doesn't apply to a position-matched, pairwise
+    // comparison). `bankFilter` (empty = no restriction) matches the same
+    // meaning as findDuplicateProgramsAcrossFiles()'s own parameter.
+    // Read-only: no resolution/write action, matching STATE.md's own
+    // "cross-file Program identity has no well-defined write target" note
+    // for the duplicate finder above -- reconciling a divergence would mean
+    // picking a "winning" side and copying bytes across files, a real
+    // decision this doesn't make for the user.
+    static std::vector<ProgramDivergence> findDivergentProgramsAcrossFiles(const PcgFile& fileA, const PcgFile& fileB,
+                                                                             const std::vector<int>& bankFilter);
+
+    // Same idea as findDivergentProgramsAcrossFiles() above, for Combis --
+    // no bankFilter (Combis have no bank-type distinction to filter by, see
+    // ProgramBankType's own doc comment), otherwise identical reasoning.
+    static std::vector<CombiDivergence> findDivergentCombisAcrossFiles(const PcgFile& fileA, const PcgFile& fileB);
+
     // Re-decodes one Program directly from the retained raw file bytes,
     // independently of programs() (which was built once during load) --
     // proof that the decoder is a real, reusable, on-demand operation

@@ -6089,3 +6089,268 @@ CLEAN UP -- noted 2026-08-15:
         `evaluateJavascript`, called from `notifyDatasetsChanged()`), not a
         guess; worth the user re-confirming by hand (open a secondary
         window, close it, then open another file) now that it's fixed.
+
+  91. **BUILT (2026-09-19)**: "Compare two files" -- a new mode in the
+      cross-dataset tools sidebar (entry 89's `⧉` icon/`cross-dataset-
+      duplicates-panel.js`), the inverse question from entry 89's own
+      duplicate finder: pick exactly 2 open datasets (not N) + a bank
+      filter, and find every (bank, number) slot BOTH files actually have a
+      Program OR Combi in whose content DIFFERS between them ("same slot,
+      different content", vs. entry 89's "same content, different
+      location"). Built for comparing two snapshots of what's meant to be
+      the same rig to see what's drifted apart. Direct request; two
+      decisions made explicitly before starting (see the RFC exchange this
+      session): Setlist comparison deferred (Programs/Combis both already
+      have a `contentHash` to reuse directly; Setlist slots have none, and
+      building one wasn't going to happen without checking it against real
+      bytes first, this project's own rule), and the new mode reuses the
+      EXISTING sidebar (a mode toggle at the top) rather than a third
+      near-identical shell.
+      - **Backend**: `PcgFile::findDivergentProgramsAcrossFiles(fileA,
+        fileB, bankFilter)` / `findDivergentCombisAcrossFiles(fileA,
+        fileB)` (static, exactly 2 files -- "diverged from each other" has
+        no N-way generalization the way "duplicate somewhere" does).
+        Indexes fileB's Programs/Combis by (bank, number) for an O(1)
+        lookup per fileA entry, reports a `ProgramDivergence{bank, number,
+        nameA, nameB, bankType}` / `CombiDivergence{bank, number, nameA,
+        nameB}` wherever both files have an entry at that exact slot AND
+        their `contentHash` differs. Deliberately NOT filtered by
+        `looksLikeEmptyProgramName()` the way entry 89's duplicate finder
+        is -- an Init-Program slot in one file that's been filled with a
+        real sound in the other IS a genuine divergence signal here, not
+        noise to hide (the "one giant useless group" failure mode that
+        filter exists for doesn't apply to a position-matched pairwise
+        comparison). A slot only ONE file has at all is out of scope --
+        not a "divergence" in this tool's sense. New
+        `EditorBridge::findDivergentProgramsAcrossDatasets`/
+        `findDivergentCombisAcrossDatasets` resolve dataset ids to files
+        (either missing -> empty array, not an error) and marshal results;
+        bound in `main.cpp`.
+      - **Verified**: `testFindDivergentAcrossFiles()` (`tests/
+        pcg_file_test.cpp`) -- two identical loads of the existing
+        synthetic fixture start with zero divergences anywhere (baseline);
+        one Program slot and one Combi slot are then mutated in fileB via
+        REAL writes (`putProgramRecordBytes()`/`putCombiRecordBytes()`,
+        not a hand-built fixture) to create controlled divergences, and the
+        test confirms exactly those two slots are reported, every other
+        slot (including a byte-exact intra-file duplicate pair) is NOT,
+        the bank filter correctly includes/excludes, and a file never
+        diverges from itself. Caught and fixed a real bug in the TEST
+        ITSELF while writing it: the first mutation attempt only
+        overwrote the new name's own 6 bytes, leaving stale tail bytes
+        from the original longer name past that point, corrupting the
+        decoded name -- fixed by clearing the whole 24-byte name field
+        first (`pushNameRecord()`'s own documented convention), same
+        discipline this project applies to production code. Full
+        `pcg_file_test`/`kronos_editor` (incl. private submodule) rebuild
+        clean, zero warnings, `ctest` green.
+      - **Frontend**: `cross-dataset-duplicates-panel.js` gained a mode
+        toggle ("Find duplicates" / "Compare two files") at the top of the
+        sidebar body, reusing `refreshOpenDatasets()`'s existing
+        open-dataset list and bank-union fetch for both modes. "Compare"
+        filters view: two `<select>` dropdowns (not N checkboxes -- exactly
+        2 datasets, order matters here since A opens in the LEFT pane and
+        B in the RIGHT) + the same bank-filter-button row (Programs only,
+        Combis have no bank concept) + a "Compare" button (disabled with an
+        explanatory title if A and B are the same dataset). Results view:
+        two stacked sections (Programs, Combis), each a 3-column table (ID
+        / that dataset's own basename as the column header for each side)
+        -- reuses the shared `formatBankNumber()`/`renderBankFilterRow()`
+        helpers, no new table-rendering code. New `basenameOfPath()` (JS
+        side, mirrors the bridge's own `basenameOf()` reasoning from
+        entry 89) for the column headers, since `displayName` is a full
+        path everywhere else in this app.
+      - **Navigation, deliberately different from entry 89's own
+        click/shift+click**: a single click on a divergence row jumps BOTH
+        panes at once -- dataset A's slot into the LEFT pane, dataset B's
+        into the RIGHT, both via each pane's existing `loadDataset()`/
+        `jumpToInstrument()` -- since the whole point of this tool is a
+        live side-by-side look at what changed, and this app already has
+        two panes built for exactly that.
+      - **Caching**: same coarse, per-mode dirty-flag-snapshot pattern as
+        entry 89 (`compareCache`, keyed on the exact A/B/bankFilter
+        selection, invalidated the moment either dataset's own `dirty` flag
+        flips or either closes). A real bug was caught and fixed HERE too,
+        before it shipped: the A/B "re-default when a pick closes" logic
+        picked A's fallback first without checking against whatever B had
+        ALREADY survived as, which could silently re-collide the two onto
+        the same dataset (e.g. A closes while B=7 survives, and the first
+        remaining open dataset also happens to be 7) -- caught by testing
+        the exact scenario in isolation (`osascript -l JavaScript`, the
+        same no-`node`-here workaround used throughout this project),
+        fixed by picking each side's fallback EXCLUDING whatever the other
+        side currently holds. 6 default-picking scenarios + 6 cache-
+        invalidation scenarios verified this way, all passing after the
+        fix.
+      - **Not done, deliberately**: Setlist slot comparison (needs a new
+        Setlist-record content hash, or a field-level compare, neither
+        built/confirmed yet -- explicit follow-up, not forgotten); no
+        `mock_bridge.js` fake for either new bridge call, consistent with
+        entry 89's own finding that NONE of this app's Duplicates-family
+        bridge calls have one (plain-browser mode just shows an empty
+        result via the existing "missing binding -> nothing found"
+        convention); no resolve/reconcile action from either divergence
+        table -- read-only jump-to-both-panes is the whole feature, same
+        "no well-defined cross-file write target" reasoning entry 89's own
+        duplicate finder already documents.
+
+  92. **BUILT (2026-09-20)**: readable Combi divergence descriptions --
+      direct RFC ("Currently it is impossible to resolve conflicts because
+      reason is unknown"): entry 91's Combi divergence rows previously only
+      said THAT two slots differ, never WHY. Real capability audit done
+      first, before any design: `ProgramFields`/`ProgramInfo` in this repo
+      decode NOTHING of a Program's internals beyond name + EXi Algorithm
+      Type -- there is no offset reference for Program internals in this
+      repo at all (`Prog_HD-1.txt`/`Prog_EXi_Common.txt` exist only in the
+      private submodule's own `docs/external/KORG/`). Combis are the
+      opposite: `docs/external/KORG/CombiAndSongTimbreSet.txt` (8626 lines,
+      already in this repo, previously unused by `CombiDecoder.h` beyond
+      name + the 16 Timbre-to-Program refs) is a full SysEx-offset map of
+      the ENTIRE 7810-byte Combi record -- Master Volume, all 16 Timbres'
+      own Volume/Pan/Sends/Bus routing/EQ, Insert Effect1-12, Total/Master
+      Effect wrappers, KARMA modules, etc. Scope for this pass, per direct
+      decision: Combis only, two tiers -- a short list of NAMED fields with
+      real before/after VALUES, and coarser NAMED-ONLY categories (which
+      raw byte range differs, not what specifically inside it changed) for
+      everything else already positionally understood; full per-field
+      Program decoding stays a private-submodule concern, not attempted
+      here.
+      - **The "+4 byte shift" rule, reused rather than re-derived**: this
+        project already established (`ProgramFields::exiAlgorithmType`'s
+        own doc comment) that Korg's own SysEx-offset docs are consistently
+        4 bytes behind this project's real file-record offsets (a leading
+        4-byte marker before every field block). Applied here too, and
+        cross-checked TWICE independently before trusting it for a third
+        table: `CombiDecoder.cpp`'s existing `kTimbreBaseOffset=4806` is
+        exactly `CombiAndSongTimbreSet.txt`'s own "Timbre1 > Program
+        Number" SysEx offset (4802) + 4; `TimbreStatus`'s own `+2` is
+        exactly that same file's "Timbre1 > Status" SysEx offset (4804) +
+        4. Two independent hits on the same shift, from an ENTIRELY
+        different confirmation path (real Combi samples) than the one that
+        first found it (Program templates) -- strong enough to trust for
+        the new offsets this entry adds (Master Volume, IFX/MFX/TFX/EQ
+        ranges), not a fresh guess.
+      - **New**: `CombiDecoder.h`/`.cpp` gained
+        `decodeCombiMasterVolume()` (file offset 1192, `0~127`, one clean
+        new confirmed field) and `describeCombiDivergence(a, b, recordA,
+        recordB) -> vector<string>` --
+        - **Named, with values**: each Timbre's Program reference/on-off
+          status (zero new byte work -- `CombiInfo::timbres` was already
+          fully decoded) and Master Volume.
+        - **Named-only, no value**: `IFX1`.."IFX12"` (each Insert Effect
+          slot's own wrapper -- Effect Type/Channel/Switch/Panpot/Bus
+          routing/Sends; confirmed stride exactly 74 bytes/slot from
+          `(976-88)/12`), `MFX` (Master Effect 1+2 combined, deliberately
+          NOT split by 1/2 per direct decision -- the two slots are treated
+          as one functional pair here), `TFX` (Total Effect 1+2 combined,
+          same reasoning, EXCLUDING the Master Volume byte so it isn't
+          double-reported both as a named value AND a vague "TFX differs"),
+          `EQ` (each Timbre's own "(Track EQ)" Trim/Bypass/Frequency/Gain
+          bytes, pooled across all 16 Timbres into one category).
+        - **Catch-all**: "Other section differs" fires only if the two
+          records' `contentHash` actually differs but nothing above caught
+          it -- nothing is silently dropped, matching the direct request
+          to "detect changes in raw data blocks we already have detected"
+          without parsing every parameter.
+        - **Deliberately NOT built this pass, a real conflict flagged
+          rather than silently resolved either way**: a `MIDI` category.
+          Korg's own doc lists a per-Timbre "MIDI Channel" at the EXACT
+          SAME byte `TimbreStatus` already reads (bits 4~0 of the status
+          byte) -- but this project's OWN prior, independently-confirmed
+          finding (`TimbreStatus`'s own doc comment in `PcgFile.h`) is that
+          those bits are a Timbre's 0-based index, watched counting 0..15
+          across a real Combi's 16 Timbres, not a MIDI channel. Two sources
+          genuinely disagree; picking one silently would violate this
+          project's core method. Needs a real Combi that breaks the
+          "counts 0..15" pattern, or an independent second reference, to
+          settle either way.
+      - **`PcgFile::CombiDivergence`** gained a `changes: vector<string>`
+        field, computed inside `findDivergentCombisAcrossFiles()` (which
+        already fetches both slots' raw bytes via `combiRecordBytes()` for
+        exactly this). `ProgramDivergence` gets no equivalent field --
+        there's nothing to compute it from yet.
+        `EditorBridge::findDivergentCombisAcrossDatasets()` marshals
+        `changes` as a plain JS string array.
+      - **Verified**: `testDescribeCombiDivergence()` (new,
+        `tests/pcg_file_test.cpp`) -- 9 sub-cases, each reloading a FRESH
+        identical file pair and poking exactly ONE byte in `fileB`'s Combi
+        record for clean attribution: Master Volume (with real values),
+        IFX1's first byte, IFX2's LAST byte (confirms the 74-byte stride,
+        not just IFX1's own start), the byte immediately AFTER IFX12 (a
+        boundary check -- lands in MFX, doesn't spill into IFX12), TFX
+        start (and confirms Master Volume, untouched, does NOT also fire),
+        Timbre1's own EQ byte, Timbre5's own EQ byte (confirms EQ pools
+        across ALL 16 Timbres, not just the first), two categories poked
+        together in one call (both reported, independently), and a real
+        Timbre reference change via `writeTimbreProgramRef()` (the actual
+        write path `resolveDuplicates()` itself uses, not a raw poke).
+        Also strengthened the existing name-only-mutation divergence test
+        to assert it now returns exactly `["Other section differs"]`
+        -- extended, not just left passing by coincidence. Full
+        `pcg_file_test`/`kronos_editor` (incl. private submodule) rebuild
+        clean, zero warnings, `ctest` green.
+      - **Frontend**: `cross-dataset-duplicates-panel.js`'s Combi
+        divergence table gains a sub-row directly under each entry showing
+        `d.changes.join(" · ")`, always visible (not collapsed behind a
+        click) and NOT truncated the way the table's other cells are --
+        this text is the whole point of the tool. Program rows have no
+        `changes` field yet, so no sub-row renders for those (silently
+        omitted, not a blank row).
+
+  93. **REFINED (2026-09-20), same day as entry 92**: the owner added two
+      real Kronos backups specifically to test entry 92 against real data
+      (`K1_20260418.PCG`/`K2_20260401.PCG`, `KRONOS-SOUNDS/`, not in this
+      repo) and reported "U-A 097 shows 'Other section differs' -- try to
+      examine which sections differ, maybe we have to be a bit more fine
+      grained." Investigated with a throwaway `clang++`-compiled smoke test
+      against `PcgFile.cpp` (this project's own standard verification
+      method) rather than guessed at.
+      - **Finding**: comparing the two real files found 29 Combi
+        divergences total. EVERY ONE of the 20 that showed "Other section
+        differs" (including U-A 097 "Pianos") turned out to be the EXACT
+        SAME single byte -- Timbre1's own "Volume" field (file offset
+        4811, Korg SysEx offset 4807 -- the same `+4` shift rule entry 92
+        already established), just with different before/after VALUES per
+        Combi (confirmed genuinely per-Combi, not a suspicious shared
+        constant, by histogramming that byte across all 1792 Combi records
+        in both files: a real spread with 127/max as the common default,
+        exactly what a real Volume field looks like -- not, say, a
+        mis-attributed bit that happens to be identical everywhere).
+      - **Fix**: `CombiDecoder.h`/`.cpp` gained
+        `decodeCombiTimbreVolume(record, recordSize, timbreIndex)` (relative
+        offset 5 from that Timbre's own base) as a THIRD named-with-values
+        field alongside Timbre reference/status and Master Volume, plus a
+        new pooled coarse category, **"Mixer"** -- every OTHER per-Timbre
+        byte between its own 3-byte reference/status block and its EQ bytes
+        (Pan, Send1/2, Bend Range, Transpose, Detune, Delay settings, Drum
+        Kit Patch IFX1-12, Bus/Rec-Bus/Chord/Max-Notes bits, (Filter)
+        transmit toggles), pooled across all 16 Timbres the same way EQ
+        already is, EXCLUDING the Volume byte so a Volume-only change isn't
+        ALSO reported as a vaguer "Mixer differs".
+      - **Re-ran the same real-file probe after the fix**: all 29
+        divergences now resolve to specific, named lines -- ZERO "Other
+        section differs" remain. Every "Other" case became one or more
+        "Timbre N Volume X -> Y" lines (U-A 097 "Pianos": "Timbre 1 Volume
+        111 -> 103", confirmed exactly matching the raw byte diff). Two
+        Combis previously invisible (`bank=7 number=27` "Runaway",
+        `number=41` "I want it All") now show "Mixer differs" -- spot-
+        checked "Runaway"'s own raw bytes directly: a single bit (top bit
+        of Korg offset 4834, a packed "(Filter) Program Change/After
+        Touch/Damper/Portamento" toggle byte) flipped identically across
+        8 consecutive Timbres, a real, coherent global toggle change, not
+        noise -- correctly attributed to "Mixer" even without decoding
+        that specific bit's own name yet, exactly the tiered "coarse now,
+        precise later if needed" approach entry 92 established.
+      - **Verified**: `testDescribeCombiDivergence()` gained 3 more
+        sub-cases (Timbre Volume with real values at the exact real-world
+        offset; Timbre Pan falling into "Mixer" not "EQ"/Volume; a second
+        Timbre's own Mixer byte, confirming the pool spans all 16) -- all
+        passing, plus the full existing suite unaffected. Full
+        `pcg_file_test`/`kronos_editor` (incl. private submodule) rebuild
+        clean, zero warnings, `ctest` green.
+      - **Not done, deliberately, still open**: individual names for any
+        of the fields now folded into "Mixer" (Pan/Send/Bus/etc.) -- this
+        pass only needed ONE more named field (Volume) to clear every real
+        divergence found in the two test backups; further per-field
+        decoding waits for an actual need, matching this project's own
+        "don't build for hypothetical needs" norm.

@@ -53,14 +53,17 @@
            Public, not private-build-gated (unlike the Settings button
            below) -- every build ships this. -->
       <button class="button is-small usage-guide-button" type="button" title="Usage Guide (opens in a separate window)">ⓘ</button>
-      <!-- Cross-dataset Program duplicate finder (cross-dataset-duplicates-
-           panel.js, STATE.md entry 89) -- a GLOBAL tool (not tied to either
-           pane), so it sits in the topbar rather than inside a pane's own
-           Duplicates tab (which only ever searches ONE dataset). Public,
-           every build ships this -- unlike the Settings button below, it
-           needs no private module. -->
+      <!-- Cross-dataset tools (cross-dataset-duplicates-panel.js, STATE.md
+           entries 89 + 91) -- GLOBAL tools (not tied to either pane), so
+           this sits in the topbar rather than inside a pane's own
+           Duplicates tab (which only ever searches ONE dataset). Two modes
+           behind one icon: find byte-exact duplicate Programs across N open
+           files, or compare exactly 2 files and show every Program/Combi
+           slot that's drifted apart between them. Public, every build ships
+           this -- unlike the Settings button below, it needs no private
+           module. -->
       <button class="button is-small cross-dataset-duplicates-button" type="button"
-              title="Find duplicate Programs across all open files">⧉</button>
+              title="Cross-dataset tools: find duplicate Programs across open files, or compare two files">⧉</button>
       <div class="pane-visibility-bar">
         <div class="buttons has-addons">
           <button class="button is-small pane-visibility-button" data-visibility="left" type="button" title="Show only the left pane">Left only</button>

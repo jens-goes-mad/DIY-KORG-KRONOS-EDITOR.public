@@ -959,17 +959,19 @@ td.has-comment {
 }
 
 /* Bank-filter buttons, the pane-visibility bar (Left only/Both/Right only,
-   index.html), and the Duplicates panel's vertical sub-tab strip all reuse
-   Bulma's own `.is-link` "pressed/active" look, which defaults to Bulma's
-   blue -- switched to this app's own --editor-accent (darkorange, the same
-   color a Setlist row's own "editor is open" left-border already uses, and
-   the active category tab above) for one consistent accent color throughout,
-   per direct request (2026-08-25 addition: the Duplicates sub-tabs, so its
-   selected Programs/Combi button matches this same accent instead of
-   standing out in Bulma's default blue). Scoped to these specific `.is-link`
-   uses, not a global --bulma-link remap -- `.is-link` is reused elsewhere
-   for unrelated things (Font size/Color swatch/cross-dataset-panel/Comment
-   Apply buttons) that should stay Bulma's default blue. Text color is this
+   index.html), the Duplicates panel's vertical sub-tab strip, and the
+   cross-dataset tools sidebar's own mode toggle (Find duplicates / Compare
+   two files, 2026-09-19) all reuse Bulma's own `.is-link` "pressed/active"
+   look, which defaults to Bulma's blue -- switched to this app's own
+   --editor-accent (darkorange, the same color a Setlist row's own "editor
+   is open" left-border already uses, and the active category tab above)
+   for one consistent accent color throughout, per direct request
+   (2026-08-25 addition: the Duplicates sub-tabs, so its selected Programs/
+   Combi button matches this same accent instead of standing out in Bulma's
+   default blue). Scoped to these specific `.is-link` uses, not a global
+   --bulma-link remap -- `.is-link` is reused elsewhere for unrelated
+   things (Font size/Color swatch/cross-dataset-panel/Comment Apply
+   buttons) that should stay Bulma's default blue. Text color is this
    app's own dark background shade (already used as the sidebar
    panel's own background, see .sidebar-panel above) rather than
    white, for better contrast against a mid-brightness orange -- same idea
@@ -978,7 +980,8 @@ td.has-comment {
 */
 .bank-filter-button.is-link,
 .pane-visibility-button.is-link,
-.duplicates-subtab-button.is-link {
+.duplicates-subtab-button.is-link,
+.cross-dataset-mode-toggle .button.is-link {
   background-color: var(--editor-accent);
   border-color: var(--editor-accent);
   color: #1b1d22;
@@ -1731,4 +1734,17 @@ td.has-comment {
 .cross-dataset-dup-row:focus-visible {
   background: var(--editor-accent);
   color: #1b1d22;
+}
+
+/* "Compare two files"'s Combi divergence breakdown (STATE.md entry 92) --
+   sits directly under the row it describes, deliberately NOT clickable
+   (only the row above it jumps panes) and NOT truncated the way a normal
+   .cross-dataset-dup-table td is -- this text IS the payload, wrapping
+   beats hiding it behind an ellipsis. */
+.cross-dataset-dup-changes-row td {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: normal;
+  padding-top: 0;
+  padding-bottom: 8px;
 }

@@ -849,6 +849,49 @@ choc::value::Value EditorBridge::findDuplicateProgramsAcrossDatasets(const choc:
     return result;
 }
 
+choc::value::Value EditorBridge::findDivergentProgramsAcrossDatasets(const choc::value::ValueView& args) {
+    auto* fileA = fileOf(intArg(args, 0));
+    auto* fileB = fileOf(intArg(args, 1));
+    if (fileA == nullptr || fileB == nullptr) return choc::value::createEmptyArray();
+    const std::vector<int> bankFilter = intArrayArg(args, 2);
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& d : kronos::PcgFile::findDivergentProgramsAcrossFiles(*fileA, *fileB, bankFilter)) {
+        auto v = choc::value::createObject("ProgramDivergence");
+        v.setMember("bank", d.bank);
+        v.setMember("number", d.number);
+        v.setMember("nameA", d.nameA);
+        v.setMember("nameB", d.nameB);
+        v.setMember("bankType", static_cast<int>(d.bankType));
+        result.addArrayElement(v);
+    }
+    return result;
+}
+
+choc::value::Value EditorBridge::findDivergentCombisAcrossDatasets(const choc::value::ValueView& args) {
+    auto* fileA = fileOf(intArg(args, 0));
+    auto* fileB = fileOf(intArg(args, 1));
+    if (fileA == nullptr || fileB == nullptr) return choc::value::createEmptyArray();
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& d : kronos::PcgFile::findDivergentCombisAcrossFiles(*fileA, *fileB)) {
+        auto v = choc::value::createObject("CombiDivergence");
+        v.setMember("bank", d.bank);
+        v.setMember("number", d.number);
+        v.setMember("nameA", d.nameA);
+        v.setMember("nameB", d.nameB);
+        // Readable per-category change descriptions (STATE.md entry 92) --
+        // see PcgFile::CombiDivergence's own doc comment in PcgFile.h and
+        // CombiDecoder.h's describeCombiDivergence() for exactly what's
+        // named-with-values vs. named-only vs. the catch-all.
+        auto changes = choc::value::createEmptyArray();
+        for (const auto& change : d.changes) changes.addArrayElement(choc::value::Value(change));
+        v.setMember("changes", changes);
+        result.addArrayElement(v);
+    }
+    return result;
+}
+
 choc::value::Value EditorBridge::findProgramNameCollisions(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     auto* file = fileOf(datasetId);

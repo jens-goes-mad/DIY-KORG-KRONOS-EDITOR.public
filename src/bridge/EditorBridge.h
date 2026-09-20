@@ -243,6 +243,32 @@ public:
     // context. See STATE.md entry 89 for the feature this serves.
     choc::value::Value findDuplicateProgramsAcrossDatasets(const choc::value::ValueView& args);
 
+    // [datasetIdA, datasetIdB, bankFilter] -> [{bank, number, nameA, nameB,
+    // bankType}] -- the position-matched 2-dataset diff, inverse question
+    // from findDuplicateProgramsAcrossDatasets() above: reports every
+    // (bank, number) slot BOTH datasets actually have a Program in, whose
+    // contentHash DIFFERS between them (see PcgFile::
+    // findDivergentProgramsAcrossFiles()'s own doc comment for exactly what
+    // counts and why no empty-slot filtering applies here, unlike the
+    // duplicate finder). Either dataset id no longer open returns an empty
+    // array, not an error -- same "silently skipped" convention as the
+    // duplicate finder above, just for a required id instead of an optional
+    // list of them. Read-only: no resolve/write action, see that method's
+    // own doc comment for why.
+    choc::value::Value findDivergentProgramsAcrossDatasets(const choc::value::ValueView& args);
+
+    // [datasetIdA, datasetIdB] -> [{bank, number, nameA, nameB, changes}].
+    // Same idea as findDivergentProgramsAcrossDatasets() above, for Combis
+    // -- no bankFilter (Combis have no bank-type distinction). `changes` is
+    // a JS array of human-readable strings (e.g. "Master Volume 127 -> 124",
+    // "Timbre 3: U-A 042 -> U-A 108", "IFX2 differs") -- see
+    // PcgFile::CombiDivergence's own doc comment in PcgFile.h and
+    // CombiDecoder.h's describeCombiDivergence() for exactly what's
+    // decoded with real values vs. named-only vs. the catch-all "Other
+    // section differs". STATE.md entry 92, direct RFC: before this, a
+    // Combi divergence only said THAT two slots differ, never WHY.
+    choc::value::Value findDivergentCombisAcrossDatasets(const choc::value::ValueView& args);
+
     // [datasetId] -> [{name, variants: [{members: [ProgramInfo/CombiInfo...]}]}].
     // The inverse question from findDuplicatePrograms() above: entries
     // sharing a NAME but NOT byte-identical -- see PcgFile::

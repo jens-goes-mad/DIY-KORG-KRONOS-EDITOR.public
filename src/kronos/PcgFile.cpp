@@ -1211,6 +1211,65 @@ std::vector<PcgFile::CrossFileDuplicateGroup> PcgFile::findDuplicateProgramsAcro
     return groups;
 }
 
+std::vector<PcgFile::ProgramDivergence> PcgFile::findDivergentProgramsAcrossFiles(const PcgFile& fileA, const PcgFile& fileB,
+                                                                                    const std::vector<int>& bankFilter) {
+    // Index fileB's Programs by (bank, number) for an O(1) lookup per
+    // fileA entry, rather than an O(n*m) nested scan -- same shape as
+    // findDuplicateCombis()'s own hash-bucket approach elsewhere in this
+    // file, just keyed by position instead of content here.
+    std::unordered_map<uint64_t, const ProgramInfo*> byPositionB;
+    auto positionKey = [](int bank, int number) {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(bank)) << 32) | static_cast<uint32_t>(number);
+    };
+    for (const auto& program : fileB.programs_) byPositionB[positionKey(program.bank, program.number)] = &program;
+
+    std::vector<ProgramDivergence> result;
+    for (const auto& a : fileA.programs_) {
+        if (!bankFilter.empty() && std::find(bankFilter.begin(), bankFilter.end(), a.bank) == bankFilter.end()) continue;
+        auto it = byPositionB.find(positionKey(a.bank, a.number));
+        if (it == byPositionB.end()) continue;  // fileB has nothing at this exact slot -- not "both files have it"
+        const ProgramInfo& b = *it->second;
+        if (a.contentHash == b.contentHash) continue;  // identical -- not a divergence
+        result.push_back({a.bank, a.number, a.name, b.name, a.bankType});
+    }
+    std::sort(result.begin(), result.end(), [](const ProgramDivergence& x, const ProgramDivergence& y) {
+        return x.bank != y.bank ? x.bank < y.bank : x.number < y.number;
+    });
+    return result;
+}
+
+std::vector<PcgFile::CombiDivergence> PcgFile::findDivergentCombisAcrossFiles(const PcgFile& fileA, const PcgFile& fileB) {
+    std::unordered_map<uint64_t, const CombiInfo*> byPositionB;
+    auto positionKey = [](int bank, int number) {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(bank)) << 32) | static_cast<uint32_t>(number);
+    };
+    for (const auto& combi : fileB.combis_) byPositionB[positionKey(combi.bank, combi.number)] = &combi;
+
+    std::vector<CombiDivergence> result;
+    for (const auto& a : fileA.combis_) {
+        auto it = byPositionB.find(positionKey(a.bank, a.number));
+        if (it == byPositionB.end()) continue;
+        const CombiInfo& b = *it->second;
+        if (a.contentHash == b.contentHash) continue;
+
+        // Raw bytes for describeCombiDivergence()'s own byte-range checks
+        // (Master Volume, IFX/MFX/TFX/EQ) -- the Timbre-reference tier
+        // doesn't need them (CombiInfo::timbres is already decoded), but
+        // describeCombiDivergence() takes both records regardless. Missing
+        // bytes (shouldn't happen for a real slot both files just matched
+        // on) degrade to an empty `changes` list, not a crash.
+        auto recordA = fileA.combiRecordBytes(a.bank, a.number);
+        auto recordB = fileB.combiRecordBytes(b.bank, b.number);
+        CombiDivergence divergence{a.bank, a.number, a.name, b.name, {}};
+        if (recordA && recordB) divergence.changes = describeCombiDivergence(a, b, *recordA, *recordB);
+        result.push_back(std::move(divergence));
+    }
+    std::sort(result.begin(), result.end(), [](const CombiDivergence& x, const CombiDivergence& y) {
+        return x.bank != y.bank ? x.bank < y.bank : x.number < y.number;
+    });
+    return result;
+}
+
 PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int bankB, int numberB) {
     CombiRearrangeResult result;
 
