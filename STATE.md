@@ -6595,3 +6595,114 @@ CLEAN UP -- noted 2026-08-15:
         sub-page already gets.
       - Not committed/pushed yet as of this entry -- the question that
         prompted this was asked separately from a commit request.
+
+--- OPEN: IDEAS AND IMPROVEMENTS ---
+
+General catch-all for ideas/improvements raised for THIS (public) repo that
+aren't yet a concrete numbered entry above -- mirrors the private repo's own
+section of the same name (`private/diy-korg-kronos-editor/STATE.md`), split
+by which repo the eventual work would actually land in. Created 2026-09-22.
+
+- **KSC/KMP/KSF sample-library support -- research + a "Samples" tab
+  (raised 2026-09-22, SCOPED into a phased plan same day, real hex-
+  inspection done against real files same day, nothing built into the app
+  yet).** This project has so far deliberately stayed inside the `.PCG`/
+  `.SNG` backup format; Korg's actual sample audio lives in a completely
+  separate file family the Kronos also uses -- `.KSC`, `.KMP`
+  (multisample/keymap definitions), `.KSF` (one sample's header + raw
+  audio). A repo-wide grep this session found zero mentions of "KSC"/"KMP"/
+  "KSF" anywhere in either repo, no reference docs under `docs/external/
+  KORG/`, and the `.PCG` file's own top-level chunk directory doesn't embed
+  sample audio at all -- genuinely new format territory.
+  Real files were pointed at same day (`.../KRONOS-SOUNDS/ULTIMATE COVERS
+  narfsounds/SGC Samples/`, used by `Narf Ultimate Covers K2.PCG`) and
+  hex-inspected read-only (no repo changes) -- **overturned part of the
+  original hypothesis and confirmed the PCM encoding by ear**:
+  - **`.KSC` turned out to be plain TEXT, not a binary container** -- a
+    Korg load-script (`#KORG Script Version 1.0`, a flat filename list +
+    `#>User.0.2.<filename>` directives). The two real `.KSC` files here are
+    different THINGS, explaining the `_UserBank` name: the small one is the
+    load script; the large one is a generated post-load manifest
+    (`#>>uuid:<uuid>.MS<N>.1.0.<name>` per multisample, `.DS<N>.1.0.<name>`
+    per individual sample, a footer with the counts) -- likely the direct
+    answer to the Program-multisample-index cross-link question below, if
+    a Program's index matches this `MS<N>` numbering (not yet confirmed).
+  - **`.KMP`/`.KSF` ARE separate real files** (confirmed): each `.KMP` sits
+    next to a same-named directory of its `.KSF` files, and both use a
+    chunked binary format (4-byte tag + big-endian 4-byte length, same
+    shape this project's own `.PCG` parsing already uses) -- a real,
+    reusable structural match, not just a naming coincidence.
+  - **PCM encoding confirmed BY EAR**: a `.KSF`'s `SMD1` chunk starts with
+    a 4-byte big-endian sample-rate field (44100, correct), 6 still-unknown
+    bytes, then plain 16-bit big-endian PCM -- extracted with a throwaway
+    script, wrapped in a WAV header, and the project owner confirmed it
+    plays correctly. **No proprietary compression** -- this was Phase A/E's
+    biggest open risk and it's resolved: in-app playback via a WAV wrapper
+    + the browser's own `<audio>` element is a realistic plan, not just a
+    hopeful one.
+  - Still unknown: the 6 bytes before PCM data starts in `SMD1` (likely
+    loop points/bit depth/channels); a `.KMP`'s `RLP1` per-zone 6-byte
+    header; where key-range/velocity-range/root-key zone-mapping actually
+    lives (the real substance of a "multisample," not located in the one
+    small real file inspected so far).
+  - **Follow-up same day, real Program cross-link CONFIRMED**: the project
+    owner pointed at two real Programs expected to reference samples
+    ("30. Owner Of A Lonely Heart" -- turned out to be a different pack
+    than the one on hand, not found in these files; then "JB: Africa Drum",
+    `setlist_test_2.PCG` bank=12/USER-G number=0). A throwaway smoke test
+    against this project's OWN `PcgFile`/`ProgramDecoder` (real code, not a
+    hand-rolled parser) decoded the HD-1 oscillator's per-zone multisample
+    reference using `Prog_HD-1.txt`'s param-guide offsets (2774 -> file
+    offset 2778 via this project's already-established +4 shift): 1-byte MS
+    Type, 16-byte MS Bank UUID, 2-byte MS Number, 22-byte stride, 8 zones.
+    "JB: Africa Drum" decoded a real, well-formed UUID
+    (`9ff2d166-15a3-41d2-8e96-120b5196ff37`) + index 0 -- its KSC isn't
+    available, proving the extraction itself doesn't depend on having the
+    matching KSC on hand. Then scanned every HD-1 Program in `Narf Ultimate
+    Covers K2.PCG`: 4 embed the EXACT SAME UUID as `SGC SAMPLES.KSC`, byte
+    for byte, and their decoded indices resolve to THREE independent real
+    name matches in that KSC's own manifest -- "Rosanna Hit"->`MS44`
+    (`Rosanna Hit`), "Forum Bari Sax"->`MS17` (`BARITONE SAX`), "Disco
+    String Drop T5"/"Kashmir String Drop"->`MS6` (`Disco String HI`). **This
+    fully resolves Phase D's original "which loaded KSC did they mean"
+    ambiguity concern** -- a Program's multisample reference isn't ambiguous
+    at all, it names its own KSC by UUID directly in its bytes; resolving to
+    a real sample is just "does a currently-open KSC's UUID match," never a
+    guess.
+  Full findings and the resulting narrower open-question list live in the
+  plan file (see below) -- not duplicated further here. Existing patterns
+  reused/relevant, unaffected by the above:
+  - **Tab pattern**: every existing tab (Setlist/Combis/Programs/
+    Duplicates/Internals) is a `create<X>Panel(container, {getDatasetId,
+    log, ...})` factory returning `{onDatasetChanged(), refresh()}`, wired
+    into `pane.js`'s `switchCategory()` -- a new "Samples" tab is a new file
+    in this exact shape, no new tab infrastructure needed.
+  - **No audio playback exists anywhere in either repo** -- confirmed by
+    grep and by the private repo's own `STATE.md` stating outright "this
+    app has no live audio engine of its own." Recommended direction if
+    playback is ever built: decode PCM once in C++, wrap it in a plain WAV
+    header, let the browser's OWN `<audio>`/Web Audio playback do the work
+    -- avoids ever needing a native audio engine. The one real open gap:
+    the existing native<->JS bridge (`EditorBridge::bytesToValue()`, a JSON
+    array of numbers) has no precedent above a 4,960-byte Program record;
+    a multi-MB sample needs either a base64 data URI or reusing/extending
+    the existing embedded-resource-serving mechanism (`readResourceFile`)
+    -- not yet decided.
+  - **No multisample/oscillator field is decoded yet** in `ProgramDecoder.h`
+    -- extending it (using the private repo's `Prog_HD-1.txt` as reference,
+    verified against a real Program with a known multisample assignment) is
+    in scope for linking an already-loaded Program to a sample in an opened
+    KSC, per direct instruction this session. Flagged open question: a
+    Program's multisample index likely refers into whatever sample banks
+    happen to be loaded on the instrument at save time, which the `.PCG`
+    file itself has no record of -- resolving "this Program uses multisample
+    #N" to an actual sample may only ever be as good as "whichever KSC the
+    user happens to have open," with no way to confirm it's the right one.
+  Full five-phase breakdown (A: format reverse-engineering + a new
+  `docs/content/samples/` page, B: native `KscFile`/`KmpDecoder`/
+  `KsfDecoder`, C: the Samples tab itself, D: the Program-to-sample
+  cross-link, E: playback feasibility) lives in a Claude Code plan file, not
+  yet copied into this repo: `~/.claude/plans/hashed-drifting-sun.md` on the
+  project owner's machine. Promote this entry to real numbered STATE.md
+  entries once implementation actually starts, rather than duplicating the
+  full plan text here now.

@@ -295,21 +295,42 @@ function createCombisPanel(
           : `code ${t.rawBankCode}`;
     let ref = `${bank} ${kronosNumber(t.number)}`;
     let name = "";
+    // Whether this confirmed bank actually has any data in the CURRENT
+    // dataset -- `getProgramBankType()`'s map is built from
+    // `PcgFile::programBankTypes()`, which only ever lists banks a PBK1/
+    // MBK1 chunk was actually found for (see PcgFile.h's ProgramBankInfo
+    // doc comment), so a `undefined` here reliably means "not in this
+    // file", never "type unknown for some other reason". Confirmed real
+    // 2026-09-21 (Narf Ultimate Covers K2.PCG): 224 Timbres across 90+
+    // Combis reference USER-FF (raw code 29) even though that file's own
+    // PRG1 container only holds 18 of the 20 banks -- a partial backup
+    // export, not a numbering bug (see STATE.md). Without this check the
+    // ref rendered as a normal "U-FF" jump button that led nowhere (the
+    // Programs bank filter for it is correctly disabled, since there's
+    // genuinely no data there) with no indication why.
+    let bankPresent = false;
     if (programBank !== null) {
       const bankType = getProgramBankType(programBank);
-      if (bankType != null) ref += ` (${programBankTypeName(bankType)})`;
-      const program = findProgram(programBank, t.number);
-      if (program && program.name) name = program.name;
+      bankPresent = bankType != null;
+      if (bankPresent) {
+        ref += ` (${programBankTypeName(bankType)})`;
+        const program = findProgram(programBank, t.number);
+        if (program && program.name) name = program.name;
+      } else {
+        ref += " (not in this backup)";
+      }
     }
     if (t.status === TIMBRE_STATUS_OFF) ref += " (off)";
-    // `programBank` (not just `ref`) is returned too -- buildTimbreRow()
-    // below needs it to know both WHETHER a jump target exists (only for a
-    // confirmed bank -- an unidentified "code N" reference has no real
-    // Program bank/number to jump to) and, if so, which bank to jump to
-    // (this is a Timbre's own rawBankCode-derived index, not the same
-    // number PROGRAM_BANK_NAMES[programBank] is a label FOR -- see
+    // `programBank`/`bankPresent` (not just `ref`) are returned too --
+    // buildTimbreRow() below needs both to know WHETHER a jump target
+    // exists (only for a confirmed bank that's actually present in this
+    // dataset -- an unidentified "code N" reference, or a confirmed bank
+    // this backup simply doesn't include, has no real destination to jump
+    // to) and, if so, which bank to jump to (this is a Timbre's own
+    // rawBankCode-derived index, not the same number
+    // PROGRAM_BANK_NAMES[programBank] is a label FOR -- see
     // programBankForConfirmedTimbreCode()'s own doc comment).
-    return { ref, name, programBank };
+    return { ref, name, programBank, bankPresent };
   }
 
   function buildTimbreRow(combi) {
@@ -348,17 +369,19 @@ function createCombisPanel(
         const label = document.createElement("span");
         label.className = "timbre-label";
         label.textContent = `Timbre ${i + 1}:`;
-        const { ref, name, programBank } = formatTimbreRef(t);
+        const { ref, name, programBank, bankPresent } = formatTimbreRef(t);
         // A button, same look/behavior as the Setlist table's own Bank
         // button (pane-setlist-editor.js) -- only when `programBank` is
-        // confirmed, since an unidentified "code N" reference has no real
-        // Program bank/number to jump to. Reuses `onJumpToInstrument`, the
-        // exact same per-pane closure the Setlist table's Bank button
-        // already calls (pane.js's jumpToInstrument()) -- always jumps
-        // within THIS pane, never the opposite one, by construction (see
-        // its own doc comment in pane.js).
+        // confirmed AND actually present in this dataset (`bankPresent`),
+        // since neither an unidentified "code N" reference nor a confirmed
+        // bank this backup simply doesn't include (see formatTimbreRef()'s
+        // doc comment) has a real Program bank/number to jump to. Reuses
+        // `onJumpToInstrument`, the exact same per-pane closure the Setlist
+        // table's Bank button already calls (pane.js's jumpToInstrument())
+        // -- always jumps within THIS pane, never the opposite one, by
+        // construction (see its own doc comment in pane.js).
         let refSpan;
-        if (programBank !== null) {
+        if (programBank !== null && bankPresent) {
           refSpan = document.createElement("button");
           refSpan.type = "button";
           refSpan.className = "button is-small bank-jump-button timbre-ref";
