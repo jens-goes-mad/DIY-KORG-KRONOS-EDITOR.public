@@ -3324,6 +3324,160 @@ void testFindDivergentAcrossFiles() {
     CHECK_EQ(selfCompare.size(), static_cast<size_t>(0), "a file never diverges from itself");
 }
 
+// PcgFile::findProgramDifferencesAcrossFiles() -- the content-keyed, slot-
+// independent third cross-file comparison (STATE.md, 2026-09-25 RFC). Each
+// scenario reloads FRESH files so mutations never bleed between cases.
+void testFindProgramDifferencesAcrossFiles() {
+    using Kind = kronos::PcgFile::ProgramDifference::Kind;
+    // The synthetic fixture's Program records differ ONLY in their name field
+    // (bodies are all zero), which would make every pair "same sound,
+    // different name". Real records have full, distinct bodies, so stamp a
+    // per-slot body into bytes 28..31 to match that.
+    auto load = [](kronos::PcgFile& f) {
+        std::string error;
+        CHECK(f.loadFromMemory(buildSyntheticPcgFile(), error));
+        const auto infos = f.programs();
+        for (const auto& p : infos) {
+            auto rec = f.programRecordBytes(p.bank, p.number);
+            if (!rec) continue;
+            (*rec)[28] = static_cast<uint8_t>(0x10 + p.bank);
+            (*rec)[29] = static_cast<uint8_t>(0x20 + p.number);
+            f.putProgramRecordBytes(p.bank, p.number, *rec);
+        }
+    };
+    auto setName = [](kronos::PcgFile& f, int bank, int number, const char* name) {
+        auto rec = f.programRecordBytes(bank, number);
+        CHECK(rec.has_value());
+        if (!rec) return;
+        for (size_t i = 4; i < 28; ++i) (*rec)[i] = 0;
+        for (size_t i = 0; name[i]; ++i) (*rec)[4 + i] = static_cast<uint8_t>(name[i]);
+        CHECK(f.putProgramRecordBytes(bank, number, *rec));
+    };
+
+    // Comparison hash: ignores the header (bytes 0-3) and the Drum Track Program
+    // reference (2692-2693) always, the name only on request; a real body change
+    // still changes it.
+    {
+        std::vector<uint8_t> a(4960, 7), hdr(4960, 7), dt(4960, 7), nm(4960, 7), body(4960, 7);
+        hdr[1] = 2; hdr[3] = 9;                            // header bytes
+        dt[2692] = 0x33; dt[2693] = 0x44;                  // Drum Track Program ref
+        for (size_t i = 4; i < 28; ++i) nm[i] = 9;         // name field only
+        body[3000] = 1;                                    // genuine content
+        auto h = [](const std::vector<uint8_t>& r, bool ignoreName) {
+            return kronos::hashProgramRecordForComparison(r.data(), r.size(), ignoreName);
+        };
+        CHECK_EQ(h(a, false), h(hdr, false), "header bytes don't affect the comparison hash");
+        CHECK_EQ(h(a, false), h(dt, false), "Drum Track reference doesn't affect the comparison hash");
+        CHECK(h(a, false) != h(nm, false));
+        CHECK_EQ(h(a, true), h(nm, true), "name-only change hashes identically when ignoring the name");
+        CHECK(h(a, false) != h(body, false));
+        CHECK(h(a, true) != h(body, true));
+        CHECK(kronos::hashProgramRecord(a.data(), a.size()) != kronos::hashProgramRecord(hdr.data(), hdr.size()));
+    }
+    // A short (32-byte) record must not read past its end.
+    {
+        std::vector<uint8_t> tiny(32, 1);
+        (void)kronos::hashProgramRecordForComparison(tiny.data(), tiny.size(), true);
+    }
+
+    // Baseline + self-compare: nothing differs.
+    {
+        kronos::PcgFile a, b;
+        load(a);
+        load(b);
+        CHECK_EQ(kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {}).size(), static_cast<size_t>(0),
+                 "two identical loads have no differences");
+        CHECK_EQ(kronos::PcgFile::findProgramDifferencesAcrossFiles(b, b, {}).size(), static_cast<size_t>(0),
+                 "a file never differs from itself");
+    }
+
+    // Renamed: only the name changed -> same sound, different name (reported once).
+    {
+        kronos::PcgFile a, b;
+        load(a);
+        load(b);
+        setName(b, 0, 2, "Edited");
+        auto rows = kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {});
+        CHECK_EQ(rows.size(), static_cast<size_t>(1), "a rename is one row, not two");
+        if (rows.size() == 1) {
+            CHECK(rows[0].kind == Kind::Renamed);
+            CHECK_EQ(rows[0].aName, std::string("Unique Program"), "A side name");
+            CHECK_EQ(rows[0].bName, std::string("Edited"), "B side name");
+            CHECK(rows[0].aBank == 0 && rows[0].aNumber == 2 && rows[0].bBank == 0 && rows[0].bNumber == 2);
+        }
+        // Bank filter applies to what is listed.
+        CHECK_EQ(kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {1}).size(), static_cast<size_t>(0),
+                 "bank filter {1} hides the bank-0 row");
+        CHECK_EQ(kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {0}).size(), static_cast<size_t>(1),
+                 "bank filter {0} keeps it");
+    }
+
+    // ModifiedTwin: same name, content changed outside the name field.
+    {
+        kronos::PcgFile a, b;
+        load(a);
+        load(b);
+        auto rec = b.programRecordBytes(1, 0);
+        CHECK(rec.has_value());
+        if (rec) {
+            (*rec)[30] ^= 0x55;
+            CHECK(b.putProgramRecordBytes(1, 0, *rec));
+        }
+        auto rows = kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {});
+        CHECK_EQ(rows.size(), static_cast<size_t>(1), "one modified twin");
+        if (rows.size() == 1) {
+            CHECK(rows[0].kind == Kind::ModifiedTwin);
+            CHECK_EQ(rows[0].aName, rows[0].bName, "twins share the name");
+        }
+    }
+
+    // Moved: identical content sits at a different slot in B.
+    {
+        kronos::PcgFile a, b;
+        load(a);
+        load(b);
+        auto unique = a.programRecordBytes(0, 2);  // "Unique Program"
+        CHECK(unique.has_value());
+        if (unique) CHECK(b.putProgramRecordBytes(1, 1, *unique));  // overwrites B's bank1/1
+        auto rows = kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {});
+        int moved = 0, onlyA = 0, other = 0;
+        for (const auto& r : rows) {
+            if (r.kind == Kind::Moved) {
+                ++moved;
+                CHECK(r.aBank == 0 && r.aNumber == 2 && r.bBank == 1 && r.bNumber == 1);
+            } else if (r.kind == Kind::OnlyInA) {
+                ++onlyA;  // A's "Bank1 Program1" no longer exists in B
+            } else {
+                ++other;
+            }
+        }
+        CHECK_EQ(moved, 1, "one Moved row (reported once, not from both sides)");
+        CHECK_EQ(onlyA, 1, "the overwritten Program is only in A");
+        CHECK_EQ(other, 0, "nothing else");
+    }
+
+    // OnlyInB: a brand-new Program in a slot that was empty in A; empty slots alone are not rows.
+    {
+        kronos::PcgFile a, b;
+        load(a);
+        load(b);
+        auto rec = b.programRecordBytes(0, 2);
+        CHECK(rec.has_value());
+        if (rec) {
+            (*rec)[30] ^= 0x33;
+            CHECK(b.putProgramRecordBytes(0, 3, *rec));  // slot 3 was empty
+        }
+        setName(b, 0, 3, "Brand New");
+        auto rows = kronos::PcgFile::findProgramDifferencesAcrossFiles(a, b, {});
+        CHECK_EQ(rows.size(), static_cast<size_t>(1), "only the new Program; untouched empty slots are skipped");
+        if (rows.size() == 1) {
+            CHECK(rows[0].kind == Kind::OnlyInB);
+            CHECK(rows[0].aBank == -1 && rows[0].bBank == 0 && rows[0].bNumber == 3);
+            CHECK_EQ(rows[0].bName, std::string("Brand New"), "B name");
+        }
+    }
+}
+
 // CombiDecoder.h's describeCombiDivergence() -- STATE.md entry 92's readable
 // category-level Combi diff, built directly against
 // docs/external/KORG/CombiAndSongTimbreSet.txt's own confirmed offsets (see
@@ -3575,6 +3729,7 @@ int main() {
     testFindNameCollisions();
     testFindDuplicateProgramsAcrossFiles();
     testFindDivergentAcrossFiles();
+    testFindProgramDifferencesAcrossFiles();
     testDescribeCombiDivergence();
     testFindAndResolveDuplicateCombis();
     testResolveDuplicateCombisSelective();

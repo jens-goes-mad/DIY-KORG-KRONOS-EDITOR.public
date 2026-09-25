@@ -52,7 +52,8 @@ built internally, see [App architecture & components](/components).
 - **[Cross-dataset tools](/guide/cross-dataset)**: finds duplicate Programs across any
   number of *open files* (not just within one), and compares exactly two files to find
   every Program/Combi that's diverged between them -- with a click-to-resolve breakdown
-  of exactly what changed, for Combis.
+  of exactly what changed, for Combis -- and matches Programs by content regardless of
+  slot, to see what one file has that the other lacks.
 - **Cross-links everywhere**: click any bank/number reference to jump straight to it (see
   [Jumping between panes](#jumping-to-a-program-combi-or-set-list-slot) below).
 - **Internals**: a read-only view of exactly which chunks/banks a loaded backup actually
@@ -113,9 +114,10 @@ pane's data changes; it's a display toggle only, same as the swap button.
 
 ### Cross-dataset tools (⧉)
 
-The **⧉** button, also in the top-right corner, opens a sidebar with two tools that work
+The **⧉** button, also in the top-right corner, opens a sidebar with three tools that work
 across every open file at once, independent of either pane -- finding duplicate Programs
-across files, and comparing exactly two files to find what's diverged between them. See
+across files, comparing exactly two files to find what's diverged between them, and
+finding which Programs differ between two files regardless of slot. See
 [Cross-dataset tools](/guide/cross-dataset) for the full picture.
 
 ## Browsing Programs and Combis
@@ -211,4 +213,4 @@ back in the order you built.
 - **[Combi](/guide/combi)** -- browsing, rearranging, cross-dataset copy.
 - **[Programs](/guide/prog)** -- browsing, swapping, duplicates, resetting a slot.
 - **[Cross-dataset tools](/guide/cross-dataset)** -- duplicates across files, comparing
-  and resolving divergence between two files.
+  and resolving divergence between two files, finding differences regardless of slot.

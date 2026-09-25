@@ -869,6 +869,37 @@ choc::value::Value EditorBridge::findDivergentProgramsAcrossDatasets(const choc:
     return result;
 }
 
+choc::value::Value EditorBridge::findProgramDifferencesAcrossDatasets(const choc::value::ValueView& args) {
+    using Kind = kronos::PcgFile::ProgramDifference::Kind;
+    auto* fileA = fileOf(intArg(args, 0));
+    auto* fileB = fileOf(intArg(args, 1));
+    if (fileA == nullptr || fileB == nullptr) return choc::value::createEmptyArray();
+    const std::vector<int> bankFilter = intArrayArg(args, 2);
+
+    auto result = choc::value::createEmptyArray();
+    for (const auto& d : kronos::PcgFile::findProgramDifferencesAcrossFiles(*fileA, *fileB, bankFilter)) {
+        const char* kind = "onlyInA";
+        switch (d.kind) {
+            case Kind::OnlyInA: kind = "onlyInA"; break;
+            case Kind::OnlyInB: kind = "onlyInB"; break;
+            case Kind::Renamed: kind = "renamed"; break;
+            case Kind::ModifiedTwin: kind = "modifiedTwin"; break;
+            case Kind::Moved: kind = "moved"; break;
+        }
+        auto v = choc::value::createObject("ProgramDifference");
+        v.setMember("kind", kind);
+        v.setMember("aBank", d.aBank);
+        v.setMember("aNumber", d.aNumber);
+        v.setMember("aName", d.aName);
+        v.setMember("bBank", d.bBank);
+        v.setMember("bNumber", d.bNumber);
+        v.setMember("bName", d.bName);
+        v.setMember("bankType", static_cast<int>(d.bankType));
+        result.addArrayElement(v);
+    }
+    return result;
+}
+
 choc::value::Value EditorBridge::findDivergentCombisAcrossDatasets(const choc::value::ValueView& args) {
     auto* fileA = fileOf(intArg(args, 0));
     auto* fileB = fileOf(intArg(args, 1));

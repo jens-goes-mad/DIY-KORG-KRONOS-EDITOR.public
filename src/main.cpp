@@ -154,6 +154,9 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
     view.bind("findDivergentProgramsAcrossDatasets", [&bridge](const choc::value::ValueView& args) {
         return bridge.findDivergentProgramsAcrossDatasets(args);
     });
+    view.bind("findProgramDifferencesAcrossDatasets", [&bridge](const choc::value::ValueView& args) {
+        return bridge.findProgramDifferencesAcrossDatasets(args);
+    });
     view.bind("findDivergentCombisAcrossDatasets", [&bridge](const choc::value::ValueView& args) {
         return bridge.findDivergentCombisAcrossDatasets(args);
     });

@@ -6596,6 +6596,204 @@ CLEAN UP -- noted 2026-08-15:
       - Not committed/pushed yet as of this entry -- the question that
         prompted this was asked separately from a commit request.
 
+  99. **"FIND DIFFERENCES" -- third cross-file mode, Programs only
+      (2026-09-25, from the RFC logged under IDEAS below).** Built per the
+      approved plan: a content-keyed, slot-independent set difference
+      between two open files, for two backups of "mostly the same rig"
+      (the project owner's two Kronos: ~90% shared patches, different
+      slots, ~10% edited). Complements "Find duplicates" (only what
+      matches) and "Compare two files" (same slot only).
+      - `hashProgramRecordIgnoringName()` (ProgramDecoder) -- FNV-1a
+        skipping the 24-byte name field (bytes 4..27), so a rename-only
+        change is detectable ("same sound, different name" -- the owner's
+        addition to the RFC). Bytes 0-3 stay in the hash: checked on real
+        files (Narf K1X vs K2) that they don't vary between otherwise-
+        identical Programs at different slots (638 cross-file groups, 0
+        with differing bytes 0-3).
+      - `PcgFile::findProgramDifferencesAcrossFiles()` -- classifies each
+        non-empty Program (looksLikeEmptyProgramName skipped) against the
+        other file, strongest match first: identical at the same slot (not
+        listed) / Moved (identical, different slot) / Renamed (same
+        content ignoring name) / ModifiedTwin (same name, different
+        content) / OnlyInA / OnlyInB. Presence-based; same slot wins, else
+        lowest (bank, number); each pair reported once. bankFilter limits
+        what is LISTED, the whole other file is always searched.
+      - Bridge `findProgramDifferencesAcrossDatasets` -> string `kind` +
+        per-side coordinates (-1 / "" on a side with no partner); bound in
+        main.cpp.
+      - UI: third mode in `cross-dataset-duplicates-panel.js`, SHARING
+        compare's A/B picks and bank filter (`buildCompareFiltersView` now
+        takes a `forDifferences` flag rather than duplicating it; the cache
+        check is generalized with an optional cache argument). Sections:
+        Only in A/B, Renamed, Modified twins, Moved (collapsed by default,
+        `diffShowMoved`). Row click jumps each pane to ITS OWN slot
+        (`jumpToDifference`), since the sides differ, unlike
+        `jumpToDivergence`.
+      - Verified: `pcg_file_test` "All checks passed" including the new
+        `testFindProgramDifferencesAcrossFiles` (masked-hash unit case;
+        baseline/self-compare = 0 rows; Renamed reported once + bank
+        filter; ModifiedTwin; Moved reported once from one side; OnlyInB
+        with untouched empty slots ignored). The synthetic fixture's
+        Program bodies are all zero (records differ only by name), which
+        made every pair look "renamed" until per-slot body bytes were
+        stamped -- a fixture artifact, not a logic bug. Real-file smoke
+        runs: the owner's own K1_20260418.PCG vs K2_20260401.PCG report 0
+        differences (their 2,560 Programs are identical slot for slot --
+        a clean no-false-positive check); Narf K1X vs K2: 12 Renamed, 1555
+        ModifiedTwin, 256 OnlyInB, 0 Moved.
+      - **Finding worth knowing**: in the Narf pair, same-named factory
+        Programs (e.g. "KRONOS German Grand") differ in ~86 of 4960 bytes,
+        mostly rotating bit-patterns (`40 20 10 08 04 02 81`) in unused
+        regions plus header byte 3 -- so identical-looking Programs saved
+        from different instrument states are often NOT byte-identical, and
+        "Modified twin" can mean a trivially small (even garbage-byte)
+        difference. A "how many bytes differ" hint per twin would help
+        triage; not built (no field-level decode of Programs exists in
+        this repo). The UI build and this panel's layout (three toggle
+        buttons in the sidebar) were NOT run in the real app in this
+        session -- the JS was syntax-checked only; needs a real UI pass.
+      - Docs synced: in-app guide, `docs/content/guide/cross-dataset/`,
+        `docs/content/guide/_index.md`. Not committed as of this entry.
+
+  100. **CROSS DATASET ANALYSIS REVISED (2026-09-26, per direct report after
+      trying entry 99 on real files).** Reported: the sidebar got stuck when
+      a third dataset was opened, its dropdowns didn't refresh on open/
+      unload, "Find duplicates" found nothing for K1_20260418.PCG + INIT.PCG,
+      and "Find differences" showed nothing.
+      - **Root cause of the "nothing found" reports (verified on the real
+        files, not guessed)**: cross-file matching used `contentHash` -- a
+        hash of the WHOLE record -- but a Program record carries bytes that
+        depend on WHERE it sits / which instrument saved it: (a) bytes 0-3,
+        the record header (slot 0 of each bank holds bank-level metadata
+        there -- 0000 0000, 0000 0001, 0000 0002... counting up per bank --
+        other slots hold stale leftovers), and (b) bytes 2692-2693, "Drum
+        Track > Program Number/Bank" (Prog_HD-1.txt / Prog_EXi_Common.txt
+        offsets 2688/2689 + the +4 shift): a REFERENCE to another Program
+        slot. Same-named Programs in K1 vs INIT differed in exactly those
+        bytes and nothing else in 1,244 of 1,711 pairs. So slot-shifted
+        identical sounds never matched, and entry 99's own finding ("only
+        the header byte 3 varies") was wrong -- its check only compared
+        same-bank groups. Corrected here.
+      - Fix: `hashProgramRecordForComparison(record, size, ignoreName)`
+        (ProgramDecoder) skips those bytes (and the name on request);
+        `findDuplicateProgramsAcrossFiles()` and `findProgramDifferencesAcrossFiles()`
+        use it (computed on demand; `ProgramInfo::contentHash` and all
+        in-file features are unchanged). Replaces the short-lived
+        `hashProgramRecordIgnoringName`. Real-file result, K1 vs INIT:
+        duplicates 0 -> 1,201 groups; differences now 466 only-in-A, 255
+        only-in-B, 4 renamed, 458 modified twins, 1,257 moved. K1 vs K2
+        still 0 (no false positives). `pcg_file_test` passes incl. new hash
+        unit cases (header/Drum Track ref/name/body).
+      - UI (`cross-dataset-duplicates-panel.js`, restructured): title "Cross
+        Dataset analysis"; ONE screen -- mode toggle, two dataset dropdowns
+        (A/B, with a "(select a dataset)" placeholder), a Find button
+        (disabled unless two DIFFERENT datasets are picked), result inline
+        below (no results view / "new search" button); bank filter removed
+        from every mode. Duplicates now takes the A/B pair (the N-dataset
+        checkbox list and its bank buttons are gone). The dropdowns
+        subscribe to datasets.js's `onDatasetsChanged()` so they follow
+        files opening/closing live, results are dropped when a picked
+        dataset closes/changes/goes dirty, and `run()` clears its busy flag
+        in a `finally` so a bridge error can't leave "Searching..." stuck.
+        "Compare two files" kept working on the shared layout, otherwise
+        untouched (its own redesign is still to be discussed).
+      - NOT verified in the running app: the panel was syntax-checked and
+        the app rebuilt, but not clicked through. The "stuck when a third
+        dataset is opened" and the empty "Find differences" result could not
+        be reproduced without the UI -- the native side returned rows for
+        the same files, so a stale-state cause in the old panel (dropdowns
+        only refreshed at sidebar open; A/B defaults; the busy flag) is the
+        working theory, addressed by the rewrite but unconfirmed.
+      - Docs synced (in-app guide, cross-dataset guide page). Not committed.
+
+  101. **CROSS DATASET ANALYSIS: "Compare COMBI" mode, mode buttons renamed
+      (2026-09-26, per direct request).** Toggle is now `Duplicates |
+      Differences | Compare PROG | Compare COMBI`; the old combined "Compare
+      two files" is split (results keys `comparePrograms` / `compareCombis`,
+      each running only its own bridge call). Triggered by a real test: K1_
+      20260418.PCG vs K2_20260401.PCG Combis slot by slot -- 1,792 slots in
+      both, 1,763 identical, 29 diverged (all bank 7 / USER-A..G), mostly a
+      few Timbre volumes; #094 gained a Timbre 3; #100/#101 are different
+      songs in the two files ("Tainted Love"/"Your Song", "Just a Girl"/"Blue
+      on Black") with every IFX/MFX/TFX/EQ/Mixer block differing.
+      - Combi rows gain a **Changes** column: a high-level summary built
+        from `describeCombiDivergence()`'s strings -- Volume (master +
+        per-Timbre, counted), Timbres, IFX with which slots, MFX, TFX, EQ,
+        Mixer, Other. `summarizeCombiChanges()` (pure JS in the panel;
+        checked in JavaScriptCore against cases taken from the real output,
+        e.g. #014 -> "Volume x2, IFX 3, EQ").
+      - **Different-song rule**: name differs AND >= 4 changes ("more than
+        3") -> the row reads "Different song", the section header counts
+        them, and the expanded view shows one note ("N changes, not listed")
+        instead of every difference (no per-change resolve buttons for such
+        a row). `DIFFERENT_SONG_MIN_CHANGES` in the panel. Detection is in
+        the frontend only (display rule; the bridge still returns every
+        change).
+      - Category names kept as before (no new native decoding): the user's
+        "IFX1 1..16" is IFX1-12 in this format. Not run in the real app;
+        docs synced. Not committed.
+
+  102. **CROSS DATASET ANALYSIS FIXES (2026-09-26, per direct report after
+      trying entry 101).** Reported: "Differences" threw `... is not a
+      function`; on Compare COMBI the opened row was not orange, the change
+      rows did not stretch to the table width, "Changes" should just be a
+      count / "Different song", all sidebar tables should share one CSS, and
+      the sidebar should be 100px wider.
+      - **"Differences" error = a stale binary, not a code bug.** The app
+        was being run from `build/kronos_editor` (dated Sep 21); only
+        `build-release/` had been rebuilt after entries 99-101, so the new
+        bridge binding `findProgramDifferencesAcrossDatasets` did not exist
+        in the running binary. `build/` rebuilt (binding confirmed present
+        via `strings`). This very likely also explains the earlier "Find
+        differences shows nothing" / stuck-sidebar reports in entry 100 --
+        the call threw inside `run()` -- so those were probably never the
+        stale-state theory written there. Lesson: rebuild BOTH `build/` and
+        `build-release/` (or state which one is run) after any bridge change.
+      - Orange when opened: `.cross-dataset-dup-row.is-open` now also
+        colours its `<td>`s (Bulma's `.table td` colour beat the colour
+        inherited from the row) and gives them the `--panel` background.
+      - Rows not stretching: `.cross-dataset-dup-change-actions` was
+        `display: flex` ON a `<td>`, which removes it from the table's column
+        layout (its colspan is ignored). It is a normal table cell again,
+        with the flex row in an inner `div`. The description now spans 3
+        columns and the ←/→ buttons sit under "Changes" (4th column).
+      - "Changes" column = the number of changes, or "Different song"
+        (`changesLabel()`); the category summarizer added in entry 101
+        (`summarizeCombiChanges()`) is removed. The breakdown lines still
+        name Volume / Timbres / IFX1-12 / MFX / TFX / EQ / Mixer.
+      - One table implementation for the whole sidebar: `buildResultTable()`
+        (header via textContent -- file names were going through innerHTML),
+        `buildResultRow()`, `onActivate()`, used by Duplicates, Differences
+        and both Compare tables (shared class list `table is-fullwidth
+        is-hoverable is-narrow cross-dataset-dup-table`).
+      - Sidebar width 470 -> 570px (`#crossDatasetDuplicatesPanelRoot`).
+      - Syntax-checked only; NOT clicked through in the running app. Docs
+        synced. Not committed.
+
+  103. **CROSS DATASET ANALYSIS: results-only scrolling + collapsible
+      sections (2026-09-26, per direct request; "Differences works perfect"
+      after the rebuild in entry 102).**
+      - Only the result area scrolls: in `#crossDatasetDuplicatesPanelRoot`
+        the panel body is a non-scrolling flex column (mode toggle,
+        dropdowns, Find fixed) and the results live in a new
+        `.cross-dataset-results` wrapper (flex 1, `overflow-y: auto`).
+        Scoped to this sidebar; the shared `.sidebar-panel-body` (MIDI
+        Settings, Duplicates resolve-picker) is unchanged.
+      - Every result heading is collapsible (`buildCollapsibleHeading()`,
+        click or Enter/Space, "▾"/"▸" prefix, `aria-expanded`): the summary
+        lines ("1183 difference(s) + 1257 moved", "N duplicate group(s)",
+        "N Program/Combi divergence(s)" -- collapsing one hides everything
+        under it) and each Differences section ("Only in <file> (466)",
+        Renamed, Modified twins, Moved). State lives in `sectionOverrides`
+        (key -> collapsed), so it survives the re-renders; default is
+        expanded except "Moved" (as before, now via the same mechanism,
+        replacing the old Show/Hide button and `diffShowMoved`). Empty
+        sections get a plain, non-interactive heading. The Compare tables'
+        own redundant "Programs"/"Combis" heading was dropped (the summary
+        heading covers it).
+      - Syntax-checked, both build dirs rebuilt; NOT clicked through in the
+        running app. Docs synced. Not committed.
+
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 
 General catch-all for ideas/improvements raised for THIS (public) repo that
@@ -6698,11 +6896,114 @@ by which repo the eventual work would actually land in. Created 2026-09-22.
     file itself has no record of -- resolving "this Program uses multisample
     #N" to an actual sample may only ever be as good as "whichever KSC the
     user happens to have open," with no way to confirm it's the right one.
-  Full five-phase breakdown (A: format reverse-engineering + a new
-  `docs/content/samples/` page, B: native `KscFile`/`KmpDecoder`/
-  `KsfDecoder`, C: the Samples tab itself, D: the Program-to-sample
-  cross-link, E: playback feasibility) lives in a Claude Code plan file, not
-  yet copied into this repo: `~/.claude/plans/hashed-drifting-sun.md` on the
-  project owner's machine. Promote this entry to real numbered STATE.md
-  entries once implementation actually starts, rather than duplicating the
-  full plan text here now.
+  Full phase breakdown (A: format reverse-engineering + a new `docs/content/
+  samples/` page, B: native `KscFile`/`KmpDecoder`/`KsfDecoder`, C: the
+  Samples tab itself, D: the Program-to-sample cross-link, D.5: mark
+  Programs with a missing sample [see below], E: playback feasibility)
+  lives in a Claude Code plan file, not yet copied into this repo:
+  `~/.claude/plans/hashed-drifting-sun.md` on the project owner's machine.
+  Promote this entry to real numbered STATE.md entries once implementation
+  actually starts, rather than duplicating the full plan text here now.
+  - **Follow-up, same day (2026-09-22): new Phase D.5, "mark Programs with
+    a missing sample reference," scoped as a concrete near-term deliverable
+    that ships ahead of the full Samples tab.** Direct instruction: the
+    editor must never bulk-load actual sample audio, only lightweight
+    references -- enables later on-demand playback without ever preloading/
+    caching PCM wholesale, and confirms no KSC/KMP/KSF encoder will ever be
+    built (permanently read-only, nothing gets written back). Key design:
+    a session-local "registry" built by registering a `.KSC` -- cheapest
+    tier parses the plain-text `_UserBank`-style manifest directly (zero
+    binary parsing, zero `.KSF` bytes touched); a Program is "missing" if
+    none of its decoded (UUID, index) zone references resolve against any
+    registered KSC. Grounded against the real Programs list UI
+    (`frontend/pane-program-editor.js`'s `createProgramsPanel()`): existing
+    precedent for a cell whose content depends on the row's OWN persisted
+    fields (the SGX-2 Type-cell button, `refCell()`'s unavailable state),
+    but this would be the **first case of row content depending on
+    session-local external state** (the registry) rather than persisted
+    data -- flagged as genuinely new territory, not just "add a column."
+    Note this also RESOLVES the "may only ever be as good as whichever KSC
+    the user happens to have open" caveat stated above, from the earlier
+    entry's own follow-up the same day (a Program's multisample reference
+    embeds its own KSC's UUID directly -- confirmed against 4 real Narf
+    Programs, 3 independent real name matches). Full definitions, the
+    two-tier registry design, and 4 new open questions (persistence,
+    fallback-tier ordering assumption, computed-field placement, Combi
+    propagation) are in the plan file, not duplicated here.
+  - **RFC, same day (2026-09-22), project owner's own framing: "this opens
+    a can of worms with new ideas and features again."** Four threads,
+    captured as an RFC (open questions raised, not all resolved) rather
+    than a committed design:
+    1. Session persistence for reopening datasets/KSCs across restarts --
+       confirmed this app persists NOTHING across restarts today (no
+       `localStorage`, no prefs file, not even window geometry), so this
+       is the app's first-ever persistence layer, not a small addition.
+    2. A directory-as-bundle open-dialog UX (open a folder, auto-pair its
+       one `.PCG` with any `.KSC`s inside, manual multi-select as
+       fallback) -- confirmed today's native dialog is single-file-only
+       (`canChooseDirectories`/`allowsMultipleSelection` both `false`,
+       `src/platform/NativeFileDialog.cpp`), and that OS-level drag-and-
+       drop-to-open was built once then DELIBERATELY REMOVED (2026-08-03)
+       once the native dialog proved reliable -- route through the native
+       dialog's own flags, don't resurrect drag-and-drop.
+    3. Registry scope: one global pool (project owner's own answer),
+       confirmed to cost nothing extra architecturally -- `frontend/
+       datasets.js` already is exactly this shape for loaded `.PCG` files
+       (pane-agnostic cache + broadcast fed by a native-side global
+       registry), a KSC registry should mirror it directly.
+    4. **The sharpest catch, raised directly by the project owner**: is a
+       KSC's UUID even STABLE -- does loading the identical sample
+       collection onto a Kronos generate the same UUID every time, or a
+       fresh one per load/per unit? If unstable, the exact-UUID matching
+       this whole feature relies on could miss a real match just because
+       the same library was reloaded, or loaded onto a different unit.
+       Cannot be answered without real hardware testing (load the same
+       collection twice, diff the resulting UUID). The project owner's own
+       proposed fallback -- "this will open a DIFF for KSCs, too" (a
+       fuzzy/secondary match beneath exact-UUID, sibling to the existing
+       Combi-divergence diff work) -- is logged as a real follow-on idea,
+       not designed further until the stability question is answered.
+
+- **RFC (2026-09-25): a third cross-file comparison -- "find all different
+  Programs regardless of slot" (raised, not scoped into phases, nothing
+  built).** Background from the project owner: two real Kronos units (a
+  default one and a special edition) share ~90% of the same patches but
+  differ in slot location AND in ~10% of content. Today's two cross-file
+  tools each cover half of this and neither answers it: "Find duplicates"
+  (`findDuplicateProgramsAcrossFiles()`) reports byte-identical content at
+  ANY slot but only ever shows what matches; "Compare two files"
+  (`findDivergentProgramsAcrossFiles()`) is strictly position-matched
+  (same bank+number, different content), so a shifted-but-identical
+  Program looks like two unrelated divergences and a slot only one file
+  has is dropped by design. The missing question is a content-keyed SET
+  DIFFERENCE: what does A have that B lacks by content, and vice versa.
+  Proposed shape (recommendation, not decided): index each file's
+  Programs by `contentHash`, drop empty/Init slots via the existing
+  `looksLikeEmptyProgramName()`, then classify every Program as (1)
+  identical elsewhere (same content, any slot -- optionally listed as
+  "moved" when the slot differs), (2) "modified twin" (no content match,
+  but the other file has a Program of the same name), or (3) unique to
+  its side. Output = "Only in A", "Only in B", "Modified twins (same
+  name, different content)", with "Moved" collapsed by default. Read-only
+  first, jump-to-row via the existing `jumpToDivergence`-style mechanism.
+  Cost is trivial (two hash maps over ~2,560 Programs per file).
+  Known catches to decide before building: (a) `contentHash` covers the
+  raw record INCLUDING the name (offset 4), so a rename-only difference
+  reads as "different" -- a name-masked second hash would separate
+  "renamed" from "edited"; (b) sample-based Programs embed their KSC's
+  UUID, so if the two units assign different UUIDs to the same library
+  (the open UUID-stability question in the KSC entry above) otherwise
+  identical Programs will read as modified -- this comparison would be
+  the first real victim of that, and a natural place for a UUID-masked
+  hash; (c) Combis are NOT slot-independent -- their Timbre refs encode
+  Program SLOT numbers, so the same Combi over shifted Programs differs
+  byte-wise; a true slot-independent Combi comparison would have to
+  compare Timbres by the referenced Program's CONTENT, a separate,
+  larger design, so scope here is Programs only; (d) Programs have no
+  confirmed field-level diff in the public repo (no offset map), so
+  "modified twins" can only say THAT they differ, not WHY, unlike Combi
+  divergence -- the private repo's `Prog_HD-1.txt`/`Prog_EXi*.txt` are
+  the eventual source for a "what changed" description.
+  **Scope decision (2026-09-25, project owner): Programs only first. IMPLEMENTED -- see entry 99.**
+  Combis are deliberately out of scope for this comparison until the
+  Program version exists and has been used on the real two-Kronos case.

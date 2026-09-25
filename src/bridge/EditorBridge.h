@@ -257,6 +257,16 @@ public:
     // own doc comment for why.
     choc::value::Value findDivergentProgramsAcrossDatasets(const choc::value::ValueView& args);
 
+    // [datasetIdA, datasetIdB, bankFilter] -> [{kind, aBank, aNumber, aName,
+    // bBank, bNumber, bName, bankType}] -- the slot-independent, content-
+    // keyed third comparison (PcgFile::findProgramDifferencesAcrossFiles()'s
+    // own doc comment has the full classification rules). `kind` is a
+    // string: "onlyInA" | "onlyInB" | "renamed" | "modifiedTwin" | "moved".
+    // A side with no partner (the "only" rows) reports -1 / "" for its
+    // bank/number/name. Either dataset id no longer open returns an empty
+    // array, same convention as its siblings above. Read-only.
+    choc::value::Value findProgramDifferencesAcrossDatasets(const choc::value::ValueView& args);
+
     // [datasetIdA, datasetIdB] -> [{bank, number, nameA, nameB, changes}].
     // Same idea as findDivergentProgramsAcrossDatasets() above, for Combis
     // -- no bankFilter (Combis have no bank-type distinction). `changes` is

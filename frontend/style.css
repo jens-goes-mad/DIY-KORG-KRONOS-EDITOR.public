@@ -1774,17 +1774,27 @@ td.has-comment {
   padding-bottom: 4px;
 }
 
+/* The actions <td> must stay a real table cell -- display:flex on a <td> takes
+   it out of the table's column layout, so the change row stopped stretching
+   to the table's full width (reported 2026-09-26). The flex row is the inner
+   wrapper instead. */
 .cross-dataset-dup-change-actions {
+  padding: 0 !important;
+  text-align: right;
+  vertical-align: middle;
+}
+.cross-dataset-dup-change-actions-inner {
   display: flex;
   gap: 4px;
   justify-content: flex-end;
-  align-items: stretch;  /* buttons stretch to the actions cell's own full height, see .cross-dataset-dup-resolve-button below */
+  align-items: stretch;
   height: 100%;
 }
 
 .cross-dataset-dup-resolve-button {
   min-width: 2em;
-  height: 100%;  /* per direct request: col 3 (the button cell) matches the row's own full height, not just its own content's */
+  height: auto;
+  align-self: stretch;  /* buttons fill the row's own height (per direct request) */
   padding-left: 6px;
   padding-right: 6px;
 }
@@ -1796,11 +1806,39 @@ td.has-comment {
 
 /* This sidebar specifically, not the shared .sidebar-panel shell (also
    used by MIDI Settings and the Duplicates resolve-picker, which stay at
-   the base 420px) -- 50px wider per direct request, since this one's own
-   Combi divergence table (description text + two buttons) is the most
-   cramped user of that shell. */
+   the base 420px) -- 150px wider (470 -> 570 on 2026-09-26, per direct
+   request, on top of the earlier +50), since its tables (four columns for
+   Combis) are the most cramped users of that shell. */
 #crossDatasetDuplicatesPanelRoot .sidebar-panel {
-  width: min(470px, 90vw);
+  width: min(570px, 90vw);
+}
+
+/* Only the result area scrolls (2026-09-26, per direct request): the panel
+   body becomes a flex column that does not scroll itself, so the mode toggle,
+   dropdowns and Find button stay put while .cross-dataset-results takes the
+   remaining height and scrolls. Scoped to this sidebar -- the shared
+   .sidebar-panel-body (MIDI Settings, Duplicates resolve-picker) keeps
+   scrolling as a whole. */
+#crossDatasetDuplicatesPanelRoot .sidebar-panel-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#crossDatasetDuplicatesPanelRoot .sidebar-panel-body > * {
+  flex: none;
+}
+.cross-dataset-results {
+  flex: 1 1 auto !important;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Collapsible section headings (click / Enter / Space to fold what follows). */
+.cross-dataset-collapsible-heading {
+  cursor: pointer;
+  user-select: none;
+}
+.cross-dataset-collapsible-heading:hover {
+  opacity: 1;
 }
 
 /* "When a row is opened" (STATE.md entry 95, direct request: "reuse the
@@ -1829,8 +1867,15 @@ td.has-comment {
    the first place. Switching the table to `.is-hoverable` (JS side) fixes
    both at once: hover matches every other table's own subtle gray, and an
    open row's orange title now stays visible under it too. */
-.cross-dataset-dup-row.is-open {
+/* Set on the <td>s themselves, not just the <tr>: Bulma's own `.table td`
+   colour beats a colour inherited from the row, which is why an opened row
+   did not turn orange (reported 2026-09-26). */
+.cross-dataset-dup-row.is-open,
+.cross-dataset-dup-row.is-open td {
   color: var(--editor-accent);
+}
+.cross-dataset-dup-row.is-open td {
+  background: var(--panel);
 }
 .cross-dataset-dup-row.is-open td:first-child {
   border-left: 3px solid var(--editor-accent);

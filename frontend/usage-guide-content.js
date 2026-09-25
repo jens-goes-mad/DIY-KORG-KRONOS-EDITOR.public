@@ -108,14 +108,24 @@ you started from.
 ## Cross-dataset tools (⧉)
 
 The **⧉** button in the topbar (next to Left only / Both / Right only) opens a sidebar
-with two tools that work across every open file at once, independent of either pane:
+with four tools that work on two open files at once, independent of either pane. Pick
+the two files in the **A** and **B** dropdowns (they follow files being opened/closed),
+press **Find**, and the result appears below (only that area scrolls; click any result
+heading to collapse or expand it):
 
-- **Find duplicates** -- across any number of open files, finds byte-exact duplicate
-  Programs: the same content sitting in more than one place.
-- **Compare two files** -- pick exactly two open files (A and B) and a bank filter; it
-  finds every Program *and* Combi slot both files actually have that's **diverged**
-  between them -- two backups of what's meant to be the same setup that have since
-  drifted apart.
+- **Duplicates** -- finds Programs with the same content in both files, at any slot
+  (matched by content, ignoring the slot-dependent header bytes and Drum Track reference).
+- **Compare PROG** / **Compare COMBI** -- finds every Program (or Combi) slot both files
+  actually have at the same position that's **diverged** between them -- two backups of
+  what's meant to be the same setup that have since drifted apart. A Combi row summarises
+  what changed (Volume, Timbres, IFX, MFX, TFX, EQ, Mixer) and how many things differ; a
+  Combi with a different name and more than 3 changes shows **Different song** instead.
+- **Differences** -- matches **Programs by
+  content, wherever they sit**, so a patch that just moved to another slot isn't
+  reported as a difference. It lists what's only in A, only in B, **Renamed** (the same
+  sound under a different name), **Modified twins** (same name, different content), and
+  -- collapsed by default -- **Moved** (identical, different slot). Click a row to open
+  A in the left pane and B in the right, each at its own slot. Programs only for now.
 
 For Combis specifically, a diverged row tells you *why*, not just *that* it differs.
 **Click** it to expand a breakdown of exactly what changed -- a specific value where

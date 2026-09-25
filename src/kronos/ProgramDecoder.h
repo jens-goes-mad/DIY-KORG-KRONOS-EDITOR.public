@@ -69,6 +69,17 @@ ProgramFields decodeProgramFields(const uint8_t* record, size_t recordSize, int 
 // ProgramInfo::contentHash's doc comment in PcgFile.h.
 uint64_t hashProgramRecord(const uint8_t* record, size_t recordSize);
 
+// Location-independent comparison hash for CROSS-FILE Program comparisons
+// (PcgFile::findDuplicateProgramsAcrossFiles(), findProgramDifferencesAcrossFiles()):
+// like hashProgramRecord() but skips the header bytes 0-3 and the Drum Track
+// Program Number/Bank reference (bytes 2692-2693), which change with a
+// Program's slot / the saving instrument rather than with the sound -- so the
+// same sound at a different slot or in another instrument's backup hashes
+// identically. `ignoreName` also skips the name field (same sound, different
+// name). Not a replacement for hashProgramRecord(): in-file features keep
+// using ProgramInfo::contentHash (byte-exact).
+uint64_t hashProgramRecordForComparison(const uint8_t* record, size_t recordSize, bool ignoreName);
+
 // Result of classifying one Program bank's type -- see ProgramBankType's
 // doc comment in PcgFile.h for why this must be read per-file rather than
 // looked up in a fixed table.

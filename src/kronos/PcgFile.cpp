@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "CombiDecoder.h"
 #include "ProgramDecoder.h"
@@ -1173,7 +1174,13 @@ std::vector<PcgFile::CrossFileDuplicateGroup> PcgFile::findDuplicateProgramsAcro
                 std::find(bankFilter.begin(), bankFilter.end(), program.bank) == bankFilter.end()) {
                 continue;
             }
-            byHash[program.contentHash].push_back({fileIndex, program.bank, program.number, program.name, program.bankType});
+            // Location-independent hash, NOT program.contentHash: the same
+            // sound in another file/slot differs in header bytes and the
+            // Drum Track Program reference (see hashProgramRecordForComparison()).
+            auto bytes = file->programRecordBytes(program.bank, program.number);
+            if (!bytes) continue;
+            byHash[hashProgramRecordForComparison(bytes->data(), bytes->size(), /*ignoreName=*/false)].push_back(
+                {fileIndex, program.bank, program.number, program.name, program.bankType});
         }
     }
 
@@ -1234,6 +1241,121 @@ std::vector<PcgFile::ProgramDivergence> PcgFile::findDivergentProgramsAcrossFile
     }
     std::sort(result.begin(), result.end(), [](const ProgramDivergence& x, const ProgramDivergence& y) {
         return x.bank != y.bank ? x.bank < y.bank : x.number < y.number;
+    });
+    return result;
+}
+
+namespace {
+
+struct DiffEntry {
+    int bank = 0;
+    int number = 0;
+    std::string name;
+    uint64_t exactHash = 0;
+    uint64_t maskedHash = 0;
+    ProgramBankType bankType = ProgramBankType::Hd1;
+};
+
+}  // namespace
+
+std::vector<PcgFile::ProgramDifference> PcgFile::findProgramDifferencesAcrossFiles(const PcgFile& fileA, const PcgFile& fileB,
+                                                                                     const std::vector<int>& bankFilter) {
+    using Kind = ProgramDifference::Kind;
+    auto positionKey = [](int bank, int number) {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(bank)) << 32) | static_cast<uint32_t>(number);
+    };
+    auto collect = [](const PcgFile& file) {
+        std::vector<DiffEntry> entries;
+        for (const auto& p : file.programs_) {
+            if (looksLikeEmptyProgramName(p.name)) continue;
+            auto bytes = file.programRecordBytes(p.bank, p.number);
+            if (!bytes) continue;
+            entries.push_back({p.bank, p.number, p.name,
+                               hashProgramRecordForComparison(bytes->data(), bytes->size(), /*ignoreName=*/false),
+                               hashProgramRecordForComparison(bytes->data(), bytes->size(), /*ignoreName=*/true), p.bankType});
+        }
+        std::sort(entries.begin(), entries.end(), [](const DiffEntry& x, const DiffEntry& y) {
+            return x.bank != y.bank ? x.bank < y.bank : x.number < y.number;
+        });
+        return entries;
+    };
+    const std::vector<DiffEntry> entriesA = collect(fileA);
+    const std::vector<DiffEntry> entriesB = collect(fileB);
+
+    // Candidate lists per key, already in (bank, number) order.
+    struct Index {
+        std::unordered_map<uint64_t, std::vector<const DiffEntry*>> exact, masked;
+        std::unordered_map<std::string, std::vector<const DiffEntry*>> byName;
+    };
+    auto buildIndex = [](const std::vector<DiffEntry>& entries) {
+        Index index;
+        for (const auto& e : entries) {
+            index.exact[e.exactHash].push_back(&e);
+            index.masked[e.maskedHash].push_back(&e);
+            index.byName[e.name].push_back(&e);
+        }
+        return index;
+    };
+    const Index indexA = buildIndex(entriesA);
+    const Index indexB = buildIndex(entriesB);
+
+    // Same slot wins, else the lowest (candidates are sorted).
+    auto pick = [&](const std::vector<const DiffEntry*>& candidates, const DiffEntry& self) -> const DiffEntry* {
+        for (const DiffEntry* c : candidates)
+            if (c->bank == self.bank && c->number == self.number) return c;
+        return candidates.empty() ? nullptr : candidates.front();
+    };
+
+    std::vector<ProgramDifference> result;
+    std::unordered_set<std::string> seenPairs;  // "aBank/aNumber/bBank/bNumber" -- a pair is reported once
+    auto pairKey = [](const ProgramDifference& d) {
+        return std::to_string(d.aBank) + "/" + std::to_string(d.aNumber) + "/" + std::to_string(d.bBank) + "/" +
+               std::to_string(d.bNumber);
+    };
+
+    auto classify = [&](const std::vector<DiffEntry>& mine, const Index& other, bool mineIsA) {
+        for (const DiffEntry& e : mine) {
+            if (!bankFilter.empty() && std::find(bankFilter.begin(), bankFilter.end(), e.bank) == bankFilter.end()) continue;
+
+            Kind kind = mineIsA ? Kind::OnlyInA : Kind::OnlyInB;
+            const DiffEntry* partner = nullptr;
+            if (auto it = other.exact.find(e.exactHash); it != other.exact.end()) {
+                partner = pick(it->second, e);
+                if (partner->bank == e.bank && partner->number == e.number) continue;  // identical, same slot
+                kind = Kind::Moved;
+            } else if (auto it2 = other.masked.find(e.maskedHash); it2 != other.masked.end()) {
+                partner = pick(it2->second, e);
+                kind = Kind::Renamed;
+            } else if (auto it3 = other.byName.find(e.name); it3 != other.byName.end()) {
+                partner = pick(it3->second, e);
+                kind = Kind::ModifiedTwin;
+            }
+
+            ProgramDifference d;
+            d.kind = kind;
+            d.bankType = e.bankType;
+            if (mineIsA) {
+                d.aBank = e.bank; d.aNumber = e.number; d.aName = e.name;
+                if (partner) { d.bBank = partner->bank; d.bNumber = partner->number; d.bName = partner->name; }
+            } else if (partner) {
+                d.aBank = partner->bank; d.aNumber = partner->number; d.aName = partner->name;
+                d.bBank = e.bank; d.bNumber = e.number; d.bName = e.name;
+            } else {
+                d.bBank = e.bank; d.bNumber = e.number; d.bName = e.name;
+            }
+            if (partner && !seenPairs.insert(pairKey(d)).second) continue;  // already reported from A's side
+            result.push_back(std::move(d));
+        }
+    };
+    classify(entriesA, indexB, /*mineIsA=*/true);
+    classify(entriesB, indexA, /*mineIsA=*/false);
+
+    std::sort(result.begin(), result.end(), [](const ProgramDifference& x, const ProgramDifference& y) {
+        if (x.kind != y.kind) return static_cast<int>(x.kind) < static_cast<int>(y.kind);
+        int xb = x.aBank >= 0 ? x.aBank : x.bBank, yb = y.aBank >= 0 ? y.aBank : y.bBank;
+        if (xb != yb) return xb < yb;
+        int xn = x.aBank >= 0 ? x.aNumber : x.bNumber, yn = y.aBank >= 0 ? y.aNumber : y.bNumber;
+        return xn < yn;
     });
     return result;
 }

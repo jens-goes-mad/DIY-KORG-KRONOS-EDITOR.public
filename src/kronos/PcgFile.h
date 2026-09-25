@@ -637,6 +637,42 @@ public:
     // ProgramBankType's own doc comment), otherwise identical reasoning.
     static std::vector<CombiDivergence> findDivergentCombisAcrossFiles(const PcgFile& fileA, const PcgFile& fileB);
 
+    // The third cross-file Program comparison (STATE.md, 2026-09-25 RFC): a
+    // content-keyed SET DIFFERENCE regardless of slot, for two backups of
+    // "mostly the same rig" whose Programs have moved around and drifted.
+    // Complements findDuplicateProgramsAcrossFiles() (only what matches) and
+    // findDivergentProgramsAcrossFiles() (strictly same-slot). Each non-empty
+    // Program is classified against the OTHER file, strongest match first:
+    //   same content at the same (bank, number)          -> identical, NOT listed
+    //   same content, different slot only               -> Moved
+    //   same content ignoring the name field            -> Renamed
+    //   same name, different content                    -> ModifiedTwin
+    //   nothing                                          -> OnlyInA / OnlyInB
+    // Presence-based (set semantics): duplicate copies within one file do not
+    // count as differences. When several partners match, the same slot wins,
+    // else the lowest (bank, number). A pair is reported once (from A's
+    // side); B's side only adds pairs A's side didn't already cover, plus
+    // OnlyInB. Empty/Init slots are skipped (looksLikeEmptyProgramName).
+    // "Same content" means hashProgramRecordForComparison() (ProgramDecoder.h):
+    // location-independent -- the record header and the Drum Track Program
+    // reference are ignored, so the same sound in another instrument's backup
+    // or slot layout matches. findDuplicateProgramsAcrossFiles() uses the same
+    // hash (name included).
+    // `bankFilter` (empty = none) restricts which banks are LISTED, on
+    // whichever side is being iterated; partners are searched in the whole
+    // other file. Read-only.
+    struct ProgramDifference {
+        enum class Kind { OnlyInA, OnlyInB, Renamed, ModifiedTwin, Moved };
+        Kind kind = Kind::OnlyInA;
+        // -1 on the side that has no partner (Only* rows).
+        int aBank = -1, aNumber = -1;
+        int bBank = -1, bNumber = -1;
+        std::string aName, bName;
+        ProgramBankType bankType = ProgramBankType::Hd1;
+    };
+    static std::vector<ProgramDifference> findProgramDifferencesAcrossFiles(const PcgFile& fileA, const PcgFile& fileB,
+                                                                            const std::vector<int>& bankFilter);
+
     // Re-decodes one Program directly from the retained raw file bytes,
     // independently of programs() (which was built once during load) --
     // proof that the decoder is a real, reusable, on-demand operation

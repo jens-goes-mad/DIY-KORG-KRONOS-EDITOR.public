@@ -50,6 +50,33 @@ uint64_t hashProgramRecord(const uint8_t* record, size_t recordSize) {
     return hash;
 }
 
+// Same FNV-1a as hashProgramRecord(), skipping the bytes whose value depends
+// on WHERE a Program sits or which instrument saved it rather than on the
+// sound (2026-09-26, checked against real backups -- K1_20260418.PCG vs
+// INIT.PCG: the same Program at another slot differed in exactly these bytes
+// and nothing else in 1,244 of 1,711 same-name pairs):
+//  - bytes 0-3, the record header: slot 0 of a bank carries bank-level
+//    metadata there (0000 0000, 0000 0001, 0000 0002 ... counting up by bank),
+//    other slots hold stale leftover bytes. Never sound data.
+//  - bytes 2692-2693, "Drum Track > Program Number/Bank": a REFERENCE to
+//    another Program slot (Prog_HD-1.txt / Prog_EXi_Common.txt offsets
+//    2688/2689, + this format's +4 shift), which differs whenever two
+//    instruments lay their Programs out differently.
+// `ignoreName` additionally skips the 24-byte name field (bytes 4..27).
+uint64_t hashProgramRecordForComparison(const uint8_t* record, size_t recordSize, bool ignoreName) {
+    constexpr size_t kHeaderBytes = 4;
+    constexpr size_t kDrumTrackRefOffset = 2692;  // 2 bytes: Program Number, Program Bank
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < recordSize; ++i) {
+        if (i < kHeaderBytes) continue;
+        if (i == kDrumTrackRefOffset || i == kDrumTrackRefOffset + 1) continue;
+        if (ignoreName && i >= kNameOffset && i < kNameOffset + kNameLength) continue;
+        hash ^= record[i];
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
 // Expected per-record stride for each bank type. CORRECTED 2026-08-13
 // (docs/content/format/index.md §5.5): this used to claim EXi records are
 // 3706 bytes (docs/external/README.md's Synthify-Kronos-PCG-File-
