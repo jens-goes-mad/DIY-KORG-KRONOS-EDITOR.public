@@ -748,6 +748,33 @@ independent EXi engines. Only EXi1 is currently decoded
 noted here but not wired into the parser yet, same "don't build for
 hypothetical needs" convention as everywhere else in this project.
 
+### 5.7 Slot-dependent bytes inside a Program record -- CONFIRMED 2026-09-26
+
+A whole-record hash of a Program (`ProgramInfo::contentHash`) is *not* a reliable "same sound"
+test across two files: the same Program at another slot, or in another instrument's backup,
+differs in a few bytes that describe *where it sits* rather than *what it sounds like*. Found
+by comparing same-named Programs in `K1_20260418.PCG` against a factory-state `INIT.PCG`
+(1,711 names occurring once in each file): in **1,244** of those pairs the *only* differing
+bytes were the two below, and the layout behind them was checked against the two real files'
+own record headers.
+
+| File offset | Meaning | Evidence |
+|---|---|---|
+| **0-3** | The record header (the 4-byte marker before the name, see `kNameOffset` above). Slot 0 of each bank carries small counter-like values that change with the bank (`0000 0001`, `0000 0002`, ..., `0002 0000`, `0002 0001`, ...); other slots hold `0000 0000` or stale leftover bytes (e.g. `db 00 a0 f8`). Never sound data. | Header dumped for slots 0 and 1 of every bank in `INIT.PCG`. Exact meaning not decoded. |
+| **2692-2693** | **Drum Track > Program Number / Program Bank** -- a *reference* to another Program slot. Prog_HD-1.txt and Prog_EXi_Common.txt both list them at SysEx offsets **2688 / 2689** (`Program Number` `00~7F`, `Program Bank` `00~1E`, `INT-A~U-GG`); + the format's usual `+4` shift = 2692 / 2693. | Same field in both engine references; the only bytes that differed in 1,244 same-sound pairs. Two instruments with different slot layouts point the Drum Track at different slots. |
+
+`hashProgramRecordForComparison()` (`src/kronos/ProgramDecoder.cpp`) hashes the record *without*
+those bytes (and, on request, without the 24-byte name field) -- used by the cross-file
+[Duplicates and Differences](/guide/cross-dataset) searches. The in-file features (duplicate
+detection, resolve) keep using the byte-exact `contentHash`.
+
+**Not yet explained:** other bytes still differ between many same-named Programs -- e.g. a
+recurring rotating bit pattern (`40 20 10 08 04 02 81`) in otherwise unused regions, and a
+block around file offsets 3916-3949 in 296 of the pairs above -- so identical-*sounding*
+Programs saved from different instrument states are often not byte-identical, and a
+"Modified twin" in the Differences search can mean a tiny (even garbage-byte) difference.
+These are not masked: without a decoded reason, hiding them would be a guess.
+
 ## 6. Combi Timbre references — CONFIRMED (Program refs), status byte CONFIRMED
 
 Each Combi record (`CMB1 > CBK1`, §5.1) has 16 Timbre slots, each optionally

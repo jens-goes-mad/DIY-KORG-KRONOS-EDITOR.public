@@ -6794,6 +6794,27 @@ CLEAN UP -- noted 2026-08-15:
       - Syntax-checked, both build dirs rebuilt; NOT clicked through in the
         running app. Docs synced. Not committed.
 
+  104. **HUGO DOCS SYNCED WITH THE CROSS DATASET ANALYSIS FEATURES
+      (2026-09-26, per direct request).** `docs/content/guide/cross-dataset/
+      index.md` rewritten from the piecemeal edits of entries 99-103 (it
+      still said "three tools"/"both tools", "press Show", and called Moved
+      "byte-identical"): now one coherent page -- the single-screen sidebar
+      (toggle, A/B dropdowns, Find, inline collapsible results, results-only
+      scrolling), Duplicates, Differences (only in A/B, renamed, modified
+      twins, moved), Compare PROG / Compare COMBI (Changes count, "Different
+      song" rule, expanded breakdown, resolve buttons). `guide/_index.md`
+      (two bullets) matches. `docs/content/format/index.md` gains section
+      5.7 (slot-dependent bytes inside a Program record: header bytes 0-3 and
+      the Drum Track Program Number/Bank at 2692-2693, with the evidence and
+      the not-yet-explained remaining differences) -- the format reference
+      had none of the entry-100 findings. Verified with a one-shot Docker
+      build (`hugomods/hugo:exts-non-root`, `hugo --minify --destination
+      <tmp>`, same image as docs/docker-compose.yml): builds clean (21
+      pages; the two WARNs are theme-level), the cross-dataset page renders
+      its four sections, all internal links resolve, and the format-section
+      deep link (`/format#57-slot-dependent-bytes-inside-a-program-record--
+      confirmed-2026-09-26`) matches the id Hugo generated. Not committed.
+
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 
 General catch-all for ideas/improvements raised for THIS (public) repo that
