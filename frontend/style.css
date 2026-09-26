@@ -1731,94 +1731,34 @@ td.has-comment {
   cursor: pointer;
 }
 
-/* The "results" view's grouped table -- .sidebar-panel is only min(420px,
-   90vw) wide (style.css above), too narrow for 3 real columns at a
-   comfortable width, so cells truncate with an ellipsis rather than
-   wrapping/overflowing; the full name/path is still available via the
-   native title tooltip a plain text overflow gives for free in most
-   browsers, good enough for a first cut. table-layout: fixed matches every
-   other real .table in this app (colgroupHtml()'s own comment, pane.js). */
-.cross-dataset-dup-table {
-  table-layout: fixed;
-}
-.cross-dataset-dup-table td {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cross-dataset-dup-group-header td {
-  color: var(--text-dim);
-  font-size: 12px;
-  font-style: italic;
-  background: transparent;
-}
-.cross-dataset-dup-row {
+/* --- Cross Dataset analysis sidebar (cross-dataset-duplicates-panel.js) ---------
+   Its tables are Tabulator (vendor/TABULATOR_VERSION.txt, default theme in
+   vendor/tabulator/tabulator.min.css) restyled here for the app's dark theme. Scoped to
+   this sidebar's own `.cross-dataset-tabulator` hosts -- nothing else in the app uses
+   Tabulator. */
+
+/* One dataset checkbox row (the Compare COMBI "hide Init Combi" toggle). */
+.cross-dataset-dup-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
   cursor: pointer;
 }
 
-/* "Compare two files"'s Combi divergence breakdown (STATE.md entry 94) --
-   one row per resolvable change, directly under the divergence row that
-   expands to show them (click to expand/collapse, same interaction as
-   this app's Setlist row editors -- see pane-setlist-editor.js's own
-   accordion sections) -- so this reuses that SAME --accent blue (not
-   --editor-accent's orange, which is this app's OWN "is-link pressed"
-   convention elsewhere, a different thing) for the hover/hint coloring,
-   per direct request ("same color/css" as the Setlist editors). NOT
-   truncated the way a normal .cross-dataset-dup-table td is -- this text
-   IS the payload, wrapping beats hiding it behind an ellipsis. */
-.cross-dataset-dup-change-row td {
-  color: var(--text-dim);
-  font-size: 12px;
-  white-space: normal;
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-/* The actions <td> must stay a real table cell -- display:flex on a <td> takes
-   it out of the table's column layout, so the change row stopped stretching
-   to the table's full width (reported 2026-09-26). The flex row is the inner
-   wrapper instead. */
-.cross-dataset-dup-change-actions {
-  padding: 0 !important;
-  text-align: right;
-  vertical-align: middle;
-}
-.cross-dataset-dup-change-actions-inner {
-  display: flex;
-  gap: 4px;
-  justify-content: flex-end;
-  align-items: stretch;
-  height: 100%;
-}
-
-.cross-dataset-dup-resolve-button {
-  min-width: 2em;
-  height: auto;
-  align-self: stretch;  /* buttons fill the row's own height (per direct request) */
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-.cross-dataset-dup-resolve-button:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-/* This sidebar specifically, not the shared .sidebar-panel shell (also
-   used by MIDI Settings and the Duplicates resolve-picker, which stay at
-   the base 420px) -- 150px wider (470 -> 570 on 2026-09-26, per direct
-   request, on top of the earlier +50), since its tables (four columns for
-   Combis) are the most cramped users of that shell. */
+/* This sidebar specifically, not the shared .sidebar-panel shell (also used by MIDI
+   Settings and the Duplicates resolve-picker, which stay at the base 420px) -- 570px
+   (per direct request: +50 then +100), since its tables are the most cramped users of
+   that shell. */
 #crossDatasetDuplicatesPanelRoot .sidebar-panel {
   width: min(570px, 90vw);
 }
 
-/* Only the result area scrolls (2026-09-26, per direct request): the panel
-   body becomes a flex column that does not scroll itself, so the mode toggle,
-   dropdowns and Find button stay put while .cross-dataset-results takes the
-   remaining height and scrolls. Scoped to this sidebar -- the shared
-   .sidebar-panel-body (MIDI Settings, Duplicates resolve-picker) keeps
-   scrolling as a whole. */
+/* Only the result area scrolls (per direct request): the panel body is a flex column
+   that does not scroll itself, so the mode toggle, dropdowns and Find button stay put
+   while .cross-dataset-results takes the remaining height and scrolls. Scoped to this
+   sidebar -- the shared .sidebar-panel-body keeps scrolling as a whole. */
 #crossDatasetDuplicatesPanelRoot .sidebar-panel-body {
   display: flex;
   flex-direction: column;
@@ -1827,62 +1767,198 @@ td.has-comment {
 #crossDatasetDuplicatesPanelRoot .sidebar-panel-body > * {
   flex: none;
 }
+/* The result pane: a non-scrolling flex column (summary, hint, category dropdown, then
+   ONE table that takes all the remaining height) -- the table's own body scrolls, so
+   its header (titles, sort arrows, filter boxes) stays put. */
 .cross-dataset-results {
+  display: flex;
   flex: 1 1 auto !important;
+  flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
 }
-/* Collapsible section headings (click / Enter / Space to fold what follows). */
-.cross-dataset-collapsible-heading {
+.cross-dataset-results > * {
+  flex: none;
+}
+.cross-dataset-results > .cross-dataset-table-fill {
+  flex: 1 1 0;
+  min-height: 140px;
+  position: relative;
+}
+/* The Tabulator host inside it (Tabulator's `height: "100%"` needs a definite height). */
+.cross-dataset-table-fill > div {
+  inset: 0;
+  position: absolute;
+}
+.cross-dataset-hint {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.cross-dataset-hint > summary {
+  color: var(--text-dim);
   cursor: pointer;
   user-select: none;
 }
-.cross-dataset-collapsible-heading:hover {
-  opacity: 1;
+.cross-dataset-hint > .usage-note {
+  margin-top: 4px;
+}
+.cross-dataset-tabulator .tabulator {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 13px;
+  color: var(--text);
+}
+.cross-dataset-tabulator .tabulator .tabulator-header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col {
+  background: transparent;
+  border-right: 1px solid var(--border);
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+  padding: 4px 6px;
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col .tabulator-col-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col.tabulator-sortable:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col .tabulator-col-sorter .tabulator-arrow {
+  border-bottom-color: var(--text-dim);
+  border-top-color: var(--text-dim);
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col[aria-sort="ascending"] .tabulator-col-sorter .tabulator-arrow {
+  border-bottom-color: var(--editor-accent);
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col[aria-sort="descending"] .tabulator-col-sorter .tabulator-arrow {
+  border-top-color: var(--editor-accent);
+}
+/* The filter box under each column title. */
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col .tabulator-header-filter input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 5px;
+}
+.cross-dataset-tabulator .tabulator .tabulator-header .tabulator-col .tabulator-header-filter input:focus {
+  border-color: var(--editor-accent);
+  outline: none;
 }
 
-/* "When a row is opened" (STATE.md entry 95, direct request: "reuse the
-   CSS from the Setlist table") -- composed from the SAME tokens the
-   Setlist row-editor system already defines (--editor-accent for "this
-   row has something open", --panel for its own expanded-content
-   background, see style.css's own .table tr.is-selected/.editor-row
-   comments above) rather than copied wholesale, since the exact visual
-   split asked for here (orange TITLE text + gray/brown ROW background,
-   not Setlist's own solid-orange-background-white-text treatment) is its
-   own composition of those same values, not a byte-for-byte reuse of a
-   single existing rule. `border-left` goes on the first cell specifically
-   (matching `.table.is-narrow .editor-row td`'s own now-commented-out
-   attempt at a per-cell border, and why `.editor-row` itself carries it
-   instead over there) -- putting it on every `<td>` would draw a broken
-   line under the button column too.
-   ENTRY 96 FIX: this table used to hand-roll its own hover (solid orange
-   background) instead of Bulma's shared `.is-hoverable` (a subtle dark
-   overlay, what the Setlist/Programs/Combis tables actually use) --
-   reported directly ("in setlist its a dark gray"). That solid orange
-   hover was ALSO why an opened row's own orange title (right above) never
-   read as changed in practice: the mouse is still sitting on the row you
-   just clicked, so it was ALWAYS also :hover at the exact moment you'd
-   look at it, and hover's orange background + orange text is illegible --
-   the very reason the (now-removed) `.is-open:hover` override existed in
-   the first place. Switching the table to `.is-hoverable` (JS side) fixes
-   both at once: hover matches every other table's own subtle gray, and an
-   open row's orange title now stays visible under it too. */
-/* Set on the <td>s themselves, not just the <tr>: Bulma's own `.table td`
-   colour beats a colour inherited from the row, which is why an opened row
-   did not turn orange (reported 2026-09-26). */
-.cross-dataset-dup-row.is-open,
-.cross-dataset-dup-row.is-open td {
+.cross-dataset-tabulator .tabulator .tabulator-tableholder {
+  overflow-x: hidden;
+}
+/* Tabulator paints .tabulator-table white (#fff) with dark text by default -- the rows
+   are transparent, so without this the whole body shows white. */
+.cross-dataset-tabulator .tabulator .tabulator-tableholder .tabulator-table {
+  background: transparent;
+  color: var(--text);
+}
+.cross-dataset-tabulator .tabulator .tabulator-row,
+.cross-dataset-tabulator .tabulator .tabulator-row.tabulator-row-even {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+.cross-dataset-tabulator .tabulator .tabulator-row .tabulator-cell {
+  border-right: none;
+  padding: 4px 6px;
+}
+.cross-dataset-tabulator .tabulator .tabulator-row.tabulator-selectable:hover,
+.cross-dataset-tabulator .tabulator .tabulator-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.cross-dataset-tabulator .tabulator .tabulator-row:focus-visible {
+  outline: 1px solid var(--editor-accent);
+  outline-offset: -1px;
+}
+.cross-dataset-tabulator .tabulator .tabulator-placeholder span {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: normal;
+}
+
+/* "N copies" header of a duplicate group (not clickable, not collapsible). */
+.cross-dataset-tabulator .tabulator .tabulator-row.tabulator-group {
+  background: transparent;
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+  border-right: none;
+  color: var(--text-dim);
+  cursor: default;
+  font-size: 12px;
+  font-style: italic;
+  font-weight: normal;
+  padding: 4px 6px;
+}
+.cross-dataset-tabulator .tabulator .tabulator-row.tabulator-group:hover {
+  background: transparent;
+  cursor: default;
+}
+/* Tabulator draws a fold arrow on every group header; these are not collapsible. */
+.cross-dataset-tabulator .tabulator .tabulator-row.tabulator-group .tabulator-arrow {
+  display: none;
+}
+
+/* An opened Combi row (title text orange, panel background, orange left bar --
+   the same "this row has something open" convention as the Setlist row editors,
+   STATE.md entry 95). Both the row and its cells, so nothing overrides the colour. */
+.cross-dataset-tabulator .tabulator .tabulator-row.is-open,
+.cross-dataset-tabulator .tabulator .tabulator-row.is-open .tabulator-cell {
   color: var(--editor-accent);
 }
-.cross-dataset-dup-row.is-open td {
+.cross-dataset-tabulator .tabulator .tabulator-row.is-open {
   background: var(--panel);
-}
-.cross-dataset-dup-row.is-open td:first-child {
   border-left: 3px solid var(--editor-accent);
 }
-.cross-dataset-dup-change-row {
-  background: var(--panel);
+
+/* The change list inside an opened Combi row -- a normal block under the cells, so it
+   spans the table's full width. */
+.cross-dataset-detail {
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: default;
+  font-size: 12px;
+  white-space: normal;
 }
-.cross-dataset-dup-change-row td:first-child {
-  border-left: 3px solid var(--editor-accent);
+.cross-dataset-detail-line {
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 0 0 0 8px;
+}
+.cross-dataset-detail-line:last-child {
+  border-bottom: none;
+}
+.cross-dataset-detail-text {
+  align-self: center;
+  flex: 1 1 auto;
+  padding: 4px 0;
+}
+.cross-dataset-detail-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+.cross-dataset-dup-resolve-button {
+  align-self: stretch;  /* fills the line's height (per direct request) */
+  height: auto;
+  min-width: 2em;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.cross-dataset-dup-resolve-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }

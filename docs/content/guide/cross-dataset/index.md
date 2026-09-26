@@ -21,9 +21,13 @@ The **⧉** button in the topbar, next to **Left only / Both / Right only**, ope
 2. Two **dataset dropdowns**, **A** (opens in the left pane) and **B** (opens in the right
    pane). They follow files being opened or closed while the sidebar is open.
 3. A **Find** button. It stays disabled until two *different* datasets are picked.
-4. The **result**, right below. Only the result area scrolls -- the toggle, dropdowns and Find
-   button stay in place -- and every result heading (the summary line and each section)
-   collapses and expands when you click it.
+4. The **result**, right below. Every result table can be **sorted** (click a column header;
+   click again to reverse) and **filtered** (type in the box under a header) -- the sort and
+   filters survive redraws and resolving a Combi change. Each result is **one table** that
+   fills the rest of the pane: only its *rows* scroll -- the column titles, sort arrows and
+   filter boxes stay fixed at the top of the table, and so do the toggle, dropdowns and Find
+   button. A title line above it gives the count (e.g. "1201 Duplicate Group(s)"), and a folded
+   "How to read this" line explains the result.
 
 **"A" and "B" always mean this sidebar's own dropdowns -- never whichever Norton pane
 currently shows which side.** The **Left only / Both / Right only** buttons and the **⇄**
@@ -53,19 +57,21 @@ different files' own bank layouts, so there is nothing to resolve.
 For two backups of *mostly the same rig* whose Programs have moved around -- say two instruments
 sharing ~90% of the same patches at different slots. Programs are matched **by content, not by
 slot**, so a patch that only moved isn't a difference. Every Program that isn't identical at the
-same slot falls into one of these sections (strongest match first):
+same slot falls into one of these categories (strongest match first). A **dropdown** above
+the table picks which category it shows, each with its row count:
 
 - **Only in A / Only in B** -- nothing in the other file matches it, by content or by name.
+  These two categories show a single column (that file's slot and name).
 - **Renamed** -- identical to a Program in the other file *except its name*: the same sound
   under a different name.
 - **Modified twins** -- the other file has a Program with the *same name* but different
   content: the same patch, edited.
-- **Moved** -- identical content at a *different* slot in the other file. Collapsed by default
-  (click its heading) since it can be most of a large rig.
+- **Moved** -- identical content at a *different* slot in the other file. Can be most of a
+  large rig, which is why the categories are a dropdown rather than everything at once.
 
-Matching is by presence: two identical copies in A and one in B is not reported as a
-difference. **Click** a row to open A in the left pane and B in the right, each jumped to *its
-own* slot (the two usually differ; a side with no partner isn't touched). Programs only for now
+The dropdown starts on the first category that has rows. Matching is by presence: two
+identical copies in A and one in B is not reported as a difference. **Click** a row to open
+A in the left pane and B in the right, each jumped to *its own* slot (the two usually differ; a side with no partner isn't touched). Programs only for now
 -- Combis reference Programs by slot number, so comparing them regardless of slot is a separate
 problem. Read-only. A "Modified twin" can be a very small change; there's no field-level
 breakdown for Programs yet (only that they differ).
@@ -102,6 +108,10 @@ changed, in high-level areas:
   doesn't have a name for at all yet.
 
 For a "Different song" row, the expanded view is a single note instead of the list.
+
+Slots that are just **"Init Combi"** (any name containing it, case-insensitive) on *both*
+sides are untouched template slots and are **hidden by default**; the **Hide "Init Combi"
+slots** checkbox above the table shows them again.
 
 Each listed change has its own **←** / **→** button: **←** copies B's value into A, **→**
 copies A's value into B -- copying only the exact bytes that one specific change covers,

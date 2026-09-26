@@ -207,6 +207,25 @@ things Bulma *doesn't* solve for free, like column-width locking within a
 table, which Bulma has no concept of at all) is in `STATE.md`, since it's a
 still-evolving area rather than a settled architectural decision.
 
+## Tables in the Cross Dataset sidebar: Tabulator
+
+The **Cross Dataset analysis** sidebar's result tables are
+[Tabulator](https://tabulator.info) (MIT; vendored as two dist files under
+`frontend/vendor/tabulator/`, no build step, no dependencies -- see
+`frontend/vendor/TABULATOR_VERSION.txt`), adopted after the hand-rolled CSS tables kept hitting
+layout problems (a `display:flex` cell dropping out of the column layout, colours lost to
+`.table td`, fixed-layout truncation) and the sidebar needed per-column sorting and filtering.
+It gives every table sort-by-header and a filter box per column -- UI only, over the rows
+already in the page -- and the expandable Combi rows are ordinary row content added by a row
+formatter. **Tabulator is deliberately used nowhere else**: the Setlist/Programs/Combis pane
+tables (drag-and-drop, accordion editors) stay hand-written.
+
+The sidebar has a browser test harness, `frontend/cross-dataset-panel.test.html`: the bridge
+functions are stubbed with fixture data and a scripted run drives the real panel code (sorting,
+filtering, section collapse, row expansion, resolve buttons, jumps, 2,500-row rendering), then
+prints a JSON pass/fail report. Run it headless with Chrome (command in the file's header) or
+open it in any browser.
+
 ## Case study: SetlistEditorCommentAndFont
 
 The first component built this way is

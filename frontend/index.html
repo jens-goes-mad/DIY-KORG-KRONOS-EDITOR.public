@@ -28,6 +28,7 @@
        the stacking only becomes visible when testing in a plain browser
        tab narrower than that (mock_bridge.js's no-build testing mode). -->
   <link rel="stylesheet" href="vendor/bulma.min.css" />
+  <link rel="stylesheet" href="vendor/tabulator/tabulator.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -145,6 +146,9 @@
        (some callers, e.g. midi-settings-panel.js, invoke it at their own
        top-level eval time, not lazily inside a function, so it must
        already exist by then). -->
+  <!-- Tabulator (vendor/TABULATOR_VERSION.txt) -- ONLY used by the Cross Dataset
+       analysis sidebar's tables (cross-dataset-duplicates-panel.js). -->
+  <script src="vendor/tabulator/tabulator.min.js"></script>
   <script src="sidebar-panel.js"></script>
   <script src="datasets.js"></script>
   <!-- The shared row drag-and-drop engine -- makeRowDraggable()/

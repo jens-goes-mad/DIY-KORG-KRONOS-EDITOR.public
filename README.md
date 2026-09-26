@@ -62,6 +62,8 @@ the native window/WebView bridge, plain vanilla JS/HTML/CSS on the frontend
 (no bundler, no build step in dev -- open `frontend/index.html` in a
 browser tab with `mock_bridge.js`'s fake data and iterate without compiling
 anything), [Bulma](https://bulma.io) (vendored, CSS-only) for layout/styling,
+[Tabulator](https://tabulator.info) (vendored, MIT; used only for the Cross Dataset analysis
+sidebar's tables),
 a scoped `ctest` target plus headless `node`-runnable tests for the
 byte-level parsing logic, and GitHub Actions CI building macOS
 (arm64+Intel), Linux, and Windows on every relevant push.
@@ -164,6 +166,29 @@ between.
 
 ![DIY Kronos Editor - Duplicates](README-Duplicates.png)
 
+## Cross Dataset analysis (frozen 2026-09-26)
+
+The **⧉** button in the topbar opens one sidebar that works on **two open datasets**, A and B
+(two dropdowns, a **Find** button that needs two different datasets, the result below --
+one table fills the result area and only its rows scroll -- the column titles, sort arrows and
+filter boxes stay fixed). Four searches:
+
+- **Duplicates** -- Programs with the same content in both files, at any slot.
+- **Differences** (Programs) -- matched by content regardless of slot: *only in A*, *only in B*
+  (one column each), *renamed* (same sound, different name), *modified twins* (same name,
+  different content) and *moved* (identical, different slot) -- chosen with a dropdown above
+  the table, one category at a time.
+- **Compare PROG** / **Compare COMBI** -- slot by slot. A Combi row shows its number of changes
+  (click for the breakdown: Volume, Timbres, IFX1-12, MFX, TFX, EQ, Mixer, with ←/→ resolve
+  buttons), or **Different song** when the names differ and there are more than 3 changes.
+  Slots named "Init Combi" on both sides are hidden by default (a checkbox brings them back).
+
+Every table there is sortable (click a header) and filterable (a filter box under each
+header). Content matching ignores the bytes that depend on a Program's slot or saving instrument (the
+record header and the Drum Track Program reference), so the same sound in another backup or
+slot layout matches -- see section 5.7 of the format reference. **This sidebar's behavior is
+frozen**: change it only on explicit request. Details: [the guide page](docs/content/guide/cross-dataset/index.md).
+
 ## The KORG PCG/SNG file format
 
 Everything about the file format -- container structure, the Set List
@@ -234,6 +259,14 @@ cmake --build build
 ./build/kronos_editor
 ```
 
+Files can be given on the command line and are opened as datasets at startup -- the first
+lands in the left pane, the second in the right, any more are available from the panes'
+dataset selectors:
+
+```sh
+./build/kronos_editor ../KRONOS-SOUNDS/INIT.PCG ../KRONOS-SOUNDS/K1_20260418.PCG
+```
+
 Debug builds read `frontend/` live off disk (edit-reload friendly). Release
 builds (`-DCMAKE_BUILD_TYPE=Release`, or `-DEDITOR_EMBED_RESOURCES=ON`)
 embed `frontend/` and `resources/` into the binary via `tools/embed_resources.py`, and on
@@ -302,6 +335,7 @@ frontend/
   internals.js                 -- Internals category content: which chunks/banks a dataset contains, embedded per-pane
   mock_bridge.js              -- fake in-memory backend for plain-browser dev (no native build needed)
   vendor/bulma.min.css         -- vendored Bulma (CSS only, no JS/build-step dependency) -- see docs/content/components
+  vendor/tabulator/            -- vendored Tabulator 6.5.3 (MIT) -- ONLY the Cross Dataset analysis sidebar's tables use it
   components/kronos/          -- standalone, byte-level-tested UI pieces (see Architecture direction above)
 third_party/choc/            -- vendored from DIY-MIDI-METRONOME/EDITOR
 ```

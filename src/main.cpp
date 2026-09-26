@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -276,8 +277,27 @@ void installAppTerminateDelegate(AppTerminateContext* context) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     const std::string frontendDir = EDITOR_FRONTEND_DIR;
+
+    // Files named on the command line, e.g.
+    //     ./build/kronos_editor ../KRONOS-SOUNDS/INIT.PCG ../KRONOS-SOUNDS/K1_20260418.PCG
+    // The main window's frontend fetches this list at startup (getStartupFiles(), bound
+    // below) and opens each one as a dataset -- the first two land in the left and right
+    // pane, any more are available from the panes' dataset selectors. Paths are made
+    // absolute here (relative to the launch directory) so "./../x.PCG" and the same file
+    // named twice resolve to one dataset. Anything starting with "-" is ignored (macOS can
+    // pass launch flags such as -psn_...).
+    std::vector<std::string> startupFiles;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg.empty() || arg[0] == '-') continue;
+        std::error_code ec;
+        std::filesystem::path path = std::filesystem::absolute(arg, ec);
+        if (ec) path = arg;
+        const std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
+        startupFiles.push_back((ec ? path.lexically_normal() : canonical).string());
+    }
 
     choc::ui::setWindowsDPIAwareness();
     choc::messageloop::initialise();
@@ -388,8 +408,13 @@ int main() {
         };
 
         options.webviewIsReady = [&bridge, &ctx, extraBindings, rawInstance, &createEditorWindow, frontendDir,
-                                   &usageGuideWindow](choc::ui::WebView& view) {
+                                   &usageGuideWindow, &startupFiles](choc::ui::WebView& view) {
             bindEditorBridgeFunctions(view, bridge);
+            view.bind("getStartupFiles", [&startupFiles](const choc::value::ValueView&) {
+                auto files = choc::value::createEmptyArray();
+                for (const auto& file : startupFiles) files.addArrayElement(choc::value::Value(file));
+                return files;
+            });
 #ifdef EDITOR_RELEASE_HARDENED
             // Defence-in-depth on top of enableDebugMode = false: swallow the
             // devtools keyboard shortcuts and the native context menu on

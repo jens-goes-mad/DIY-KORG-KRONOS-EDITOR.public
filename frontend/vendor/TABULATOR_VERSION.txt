@@ -1,0 +1,17 @@
+Tabulator 6.5.3
+Source: https://cdn.jsdelivr.net/npm/tabulator-tables@6.5.3/dist/js/tabulator.min.js
+        https://cdn.jsdelivr.net/npm/tabulator-tables@6.5.3/dist/css/tabulator.min.css
+License: MIT (vendor/tabulator/LICENSE)
+
+Vendored as the two pre-built dist files (UMD build: defines the global `Tabulator`, no
+dependencies) -- plain <script>/<link> tags in index.html, no build step, same as Bulma.
+
+USED ONLY in the Cross Dataset analysis sidebar (frontend/cross-dataset-duplicates-panel.js:
+sorting, per-column header filters, expandable Combi change rows). Deliberately NOT used for
+the Setlist/Programs/Combis pane tables (drag-and-drop, accordion editors) -- those stay
+hand-written; see STATE.md's table-library RFC/entry.
+
+Styling: tabulator.min.css is the default theme; the sidebar overrides it for the app's dark
+theme in style.css (search "cross-dataset-tabulator").
+
+To update: re-download both files at a newer version tag, replace them, bump the note here.

@@ -41,6 +41,14 @@ Status: Working prototype, git repo (github.com/jens-goes-mad/
         architecture are now the deliberate direction -- see "ARCHITECTURE:
         DECODER/ENCODER REFACTOR" below, currently the
         active thread of work.
+        **Cross Dataset analysis sidebar (topbar ⧉ button) is FROZEN as of
+        2026-09-26** -- behavior agreed with the project owner ("looks
+        perfect"): two dataset dropdowns + Find + inline collapsible results
+        (only the result area scrolls); modes Duplicates | Differences |
+        Compare PROG | Compare COMBI; content matching ignores the
+        slot-dependent Program bytes (format doc section 5.7). Its tables are
+        Tabulator (sort + per-column filters, entry 106). Change it only on
+        explicit request -- see entries 99-108.
 
 --- GOAL ---
 
@@ -6815,6 +6823,135 @@ CLEAN UP -- noted 2026-08-15:
       deep link (`/format#57-slot-dependent-bytes-inside-a-program-record--
       confirmed-2026-09-26`) matches the id Hugo generated. Not committed.
 
+  105. **CROSS DATASET ANALYSIS FROZEN + THREE LAST TWEAKS (2026-09-26,
+      per direct request).** (1) "Differences": every section now starts
+      collapsed (the summary heading stays open). (2) The "Only in <file>"
+      sections show ONE column (that file's slot + name) via a `side`
+      option on `buildDifferenceSection()`. (3) Compare COMBI hides slots
+      whose name contains "Init Combi" (case-insensitive) on BOTH sides by
+      default -- `isInitCombiRow()`; a "Hide "Init Combi" slots (N)" checkbox
+      (`hideInitCombis`) brings them back, the section title counts only
+      visible rows. Logic checked in JavaScriptCore (both Init -> hidden;
+      Init vs. real name / two real names -> kept); UI not clicked through.
+      Then "frozen": recorded in the STATE block status paragraph and in a
+      new README section ("Cross Dataset analysis (frozen 2026-09-26)").
+      Docs (Hugo page, in-app guide) updated for the tweaks.
+
+  106. **TABULATOR IN THE CROSS DATASET SIDEBAR (2026-09-26, per direct
+      request: "solely in the sidebar tables, all other panes supporting
+      drag and drop are not touched").** All four modes' tables (Duplicates,
+      the Differences sections, Compare PROG, Compare COMBI) are now Tabulator
+      6.5.3 tables (MIT; vendored as `frontend/vendor/tabulator/
+      tabulator.min.{js,css}` + LICENSE, note in `vendor/TABULATOR_VERSION.txt`;
+      `<link>`/`<script>` in index.html; picked up by the release embed's
+      `GLOB_RECURSE frontend/*` automatically). Nothing else in the app uses it.
+      - New: click a header to sort (ID columns sort by bank/number, "Changes"
+        by count with "Different song" last), a filter box under every header.
+      - Behavior contract of the frozen sidebar kept: Duplicates keeps its
+        "N copies" group headers (`groupBy`, not collapsible) and click /
+        Shift+click jumps; Differences keeps one column for "Only in ..." and
+        per-side jumps; Compare PROG click jumps both panes; Compare COMBI
+        keeps click = expand the change list inside the row (row formatter),
+        double-click = jump, ←/→ resolve buttons, the "Different song" note,
+        the orange open row, the Init Combi checkbox. Rows stay keyboard
+        activatable (Enter/Space). No fixed table height: every row renders
+        and the RESULT AREA scrolls, as before (2,500 rows fine).
+      - Plumbing: `createTable()` (one place), tables destroyed before every
+        body rebuild (`destroyTables()`), per-table sort + filter state kept in
+        `tableStates` and restored on rebuild, cleared when that mode's rows are
+        replaced by a new Find (kept across a Combi resolve). `newTableHost()`
+        wraps the host because Tabulator turns its host element INTO `.tabulator`.
+        Old hand-built table helpers and their CSS removed.
+      - **Verified in a real browser** (the first time this sidebar's UI was
+        actually exercised): `frontend/cross-dataset-panel.test.html`, a harness
+        with the bridge stubbed by fixtures and a scripted run of the REAL panel
+        code, run in headless Chrome (command in its header) -- ~35 checks,
+        all pass: title/dropdowns/Find enablement, filter + sort + filter
+        restored after a rebuild, group headers, collapsed-by-default sections,
+        one- vs two-column tables, jumps (right pane / both panes / own slots),
+        Init Combi hide toggle, expand/collapse with detail stretching to the
+        table width, resolve call, dblclick, 2,500-row render + filter. Screenshots
+        reviewed. Bugs the harness/screenshots caught: `.tabulator-table` white
+        background (rows were white), Tabulator pinning its body height at
+        build time (expanding a row clipped the list by 109px -- fixed with
+        `table.redraw()` after each toggle; the harness check fails without it,
+        confirmed), and a wrong test expectation. NOT verified: the real app's
+        WKWebView (macOS CHOC) -- only Chrome; and the harness's virtual-time
+        timings are meaningless (no real-time performance number yet).
+      - Docs: README, components page (new section incl. how to run the
+        harness), guide page, in-app guide. Not committed.
+
+  107. **CROSS DATASET SIDEBAR POLISH: DIFFERENCES DROPDOWN + FILL-HEIGHT
+      TABLES (2026-09-26, per direct request: "UI needs polishing").**
+      - "Differences": the five section headings ("Only in <file>", Renamed,
+        Modified twins, Moved) are gone -- one dropdown above the table
+        ("<title> (<count>)") picks the category; the pane below it is exactly
+        ONE table. Starts on the first category that has rows (`diffCategory`,
+        remembered across redraws); each category keeps its own sort/filter
+        state. "Only in" categories are still one column.
+      - Scrolling: the result pane is now a non-scrolling flex column (summary,
+        folded hint, dropdown) and the table takes ALL remaining height
+        (`.cross-dataset-table-fill`; Tabulator `height: "100%"` on an
+        absolutely-sized host), so ITS ROWS scroll while its header -- titles,
+        sort arrows, filter boxes -- stays fixed. Applied to every mode's
+        table, not only Differences, for consistency (one table per mode).
+        Tabulator's virtual rendering now applies (2,500 rows -> a few dozen
+        DOM rows). Compare COMBI's expandable rows work inside it (`table.
+        redraw()` after each toggle; the harness checks the expanded row is tall
+        enough for its list and shrinks back).
+      - The explanatory hints are folded into a "How to read this" `<details>`
+        (closed by default) so the table gets the room. The other headings are
+        just the collapsible summary line now (section headings only existed
+        for Differences).
+      - Harness (`frontend/cross-dataset-panel.test.html`) updated: 52 checks
+        pass in headless Chrome, incl. dropdown categories/counts/columns,
+        no section headings, pane not scrolling, table reaching the pane's
+        bottom, rows scrolling while the header stays fixed, virtual rendering.
+        Screenshots reviewed. Still NOT checked in the real app's web view.
+        Docs synced (README, guide page, in-app guide). Not committed.
+
+  108. **CROSS DATASET SIDEBAR: OUTER COLLAPSIBLE REMOVED (2026-09-26, per
+      direct request: "PERFECT ... we do not need the outer collapsible any
+      longer").** With one table filling the pane there is nothing to fold, so
+      the result's summary line is plain text in every mode ("1201 Duplicate
+      Group(s)", "N Difference(s) + M Moved", "N Program Divergence(s)", "N
+      Combi Divergence(s) (K Different Songs)"): `addHeading()` replaces
+      `buildCollapsibleHeading()`; the helper, its `sectionOverrides` state and
+      the collapsible-heading CSS are deleted (entry 103's collapsible headings
+      are superseded). Harness updated (52 checks pass in headless Chrome: the
+      title is not interactive, and the filter-restore check now rebuilds by
+      leaving/re-entering the mode). Docs synced. Not committed.
+
+  109. **COMMAND-LINE FILES OPEN AS DATASETS AT STARTUP (2026-09-26, per
+      direct request: "starting the app and selecting datasets is
+      tedious").** `./build/kronos_editor a.PCG b.PCG ...` opens 1..n files.
+      - `src/main.cpp`: `main(argc, argv)` collects the arguments (skipping
+        anything starting with "-", e.g. macOS `-psn_...`), makes each
+        absolute + `weakly_canonical` (so `./../x.PCG` and the same file named
+        twice resolve to one path -> `openFileAtPath()`'s existing dedupe makes
+        one dataset), and the main window gets a new bound function
+        `getStartupFiles()` (in `webviewIsReady`, next to the bridge binds).
+      - `frontend/app.js`: at load, if `window.getStartupFiles` exists (real app
+        only; the plain-browser mock has none), each path goes through the
+        existing `window.openFile(path)` and then the new shared
+        `showOpenedDataset(result)` -- the same "first empty pane takes it
+        (A before B), otherwise only the selectors know" logic the Open button
+        uses, now factored out of that handler. A failing path shows an error
+        toast and the rest still open; the topbar shows "Loading <file>...".
+        Nothing on the native side opens files itself, so no threading/timing
+        concerns -- the frontend pulls once it is ready.
+      - Verified: built (both dirs), launched `build/kronos_editor INIT.PCG
+        K1_20260418.PCG INIT.PCG` from the repo root with RELATIVE paths and
+        screenshotted the real window: INIT.PCG open in the left pane, the
+        second file loading (36MB, takes a few seconds), the status bar
+        reporting the loaded dataset's duplicate counts. Only the first file
+        was seen fully loaded in that capture (my launched instance was closed
+        before a second capture showed the right pane); the second-file-in-the-
+        right-pane and the "same file twice opens once" behavior rest on the
+        existing `showOpenedDataset`/dedupe logic, not on a screenshot. The
+        macOS `.app` bundle path (`open ... --args`) is untried. Docs: README +
+        building page. Not committed.
+
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 
 General catch-all for ideas/improvements raised for THIS (public) repo that
@@ -7028,3 +7165,33 @@ by which repo the eventual work would actually land in. Created 2026-09-22.
   **Scope decision (2026-09-25, project owner): Programs only first. IMPLEMENTED -- see entry 99.**
   Combis are deliberately out of scope for this comparison until the
   Program version exists and has been used on the real two-Kronos case.
+
+- **RFC (2026-09-26): a real JavaScript table for the result sections
+  (IMPLEMENTED the same day as Tabulator -- see entry 106).** Motivation from the project owner: the hand-rolled CSS
+  tables have caused repeated layout trouble (entries 102-103: a `display:flex`
+  `<td>` dropping out of the column layout, colours lost to Bulma's `.table td`,
+  fixed-layout truncation), and the result sections need column search /
+  filter / sort -- UI only, over the result arrays already in the page (no
+  extra store) -- while still supporting collapsible "editor rows" (the Combi
+  change breakdown with its resolve buttons; the Setlist row editors are the
+  same idea).
+  Constraints found in this repo: no build step, plain `<script>` tags and
+  vendored files (`frontend/vendor/`: Bulma CSS, lit-html ESM), offline, runs
+  in the CHOC WebView, embedded/obfuscated into release builds (size matters),
+  dark theme + `--editor-accent`, ~2,500-row Program lists.
+  Candidates (from general knowledge as of early 2026 -- verify versions,
+  licenses and sizes before adopting): **Tabulator** (MIT, no dependencies,
+  sort + header filters + virtual DOM, custom row content via `rowFormatter`,
+  Bulma theme) -- recommended for a pilot; **DataTables** (mature child rows,
+  Bulma integration; historically jQuery-based); **TanStack Table core**
+  (headless, sort/filter/expanded state supplied, we render with the already-
+  vendored lit-html -- no CSS-table layout at all, most code); **AG Grid
+  Community** (master/detail is a paid Enterprise feature -- out); Grid.js /
+  Simple-DataTables (light, no detail rows).
+  Proposed spike (behavior of the frozen sidebar must not change): Tabulator in
+  the "Only in A" section and the Compare COMBI table with an expandable
+  change row; acceptance = sort, per-column filter, click-to-jump, expand with
+  working ←/→ buttons, dark/orange theme, 2,500 rows scroll smoothly, one
+  vendored file. Open: expandable rows under virtual scrolling need a height
+  re-measure; whether the Setlist/Programs/Combis pane tables (drag-and-drop,
+  accordion editors) are ever in scope -- not for the pilot.

@@ -1,0 +1,354 @@
+<!doctype html>
+<!--
+  Browser harness for the Cross Dataset analysis sidebar (cross-dataset-duplicates-panel.js)
+  and its Tabulator tables (vendor/TABULATOR_VERSION.txt) -- no native app, no CHOC: the
+  bridge functions the panel calls are stubbed with fixture data, and a scripted run
+  exercises the real panel code, checks the DOM, and prints a JSON report into #out.
+
+  Run headless (macOS, from frontend/):
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu \
+      --virtual-time-budget=60000 --dump-dom "file://$PWD/cross-dataset-panel.test.html" | grep -o '<pre id="out">[^<]*'
+  Add `#combi` / `#differences` / `#duplicates` to the URL to leave the sidebar in that state
+  (for --screenshot=...). Open it in any browser to watch it.
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cross Dataset panel test</title>
+  <link rel="stylesheet" href="vendor/bulma.min.css" />
+  <link rel="stylesheet" href="vendor/tabulator/tabulator.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="panes"><div class="pane" data-pane="A"></div><div class="pane" data-pane="B"></div></div>
+  <div id="crossDatasetDuplicatesPanelRoot"></div>
+  <pre id="out">running...</pre>
+
+  <script src="vendor/tabulator/tabulator.min.js"></script>
+  <script src="sidebar-panel.js"></script>
+  <script src="datasets.js"></script>
+  <script>
+    // ---- stubs for what the panel takes from the rest of the app -----------------------
+    const jumps = [];
+    const resolves = [];
+    function showToast() {}
+    function formatBankNumber(e, t) {
+      return (e.isProgram ? "P" : "C") + String(e.bank).padStart(2, "0") + "-" + String(e.number).padStart(3, "0");
+    }
+    function makePane(name) {
+      let current = null;
+      return {
+        getCurrentDatasetId: () => current,
+        loadDataset: async (id) => { current = id; },
+        jumpToInstrument: (target) => jumps.push({ pane: name, ...target }),
+      };
+    }
+    const panes = { A: makePane("A"), B: makePane("B") };
+
+    const datasets = [
+      { datasetId: 1, displayName: "/x/K1_20260418.PCG", setlistCount: 1, dirty: false },
+      { datasetId: 2, displayName: "/x/INIT.PCG", setlistCount: 1, dirty: false },
+    ];
+    window.listDatasets = async () => datasets.map((d) => ({ ...d }));
+
+    const member = (id, file, bank, number, name) => ({ datasetId: id, filename: file, bank, number, name, bankType: 0 });
+    let dupGroups = [
+      { members: [member(1, "K1.PCG", 0, 0, "Berlin Grand"), member(2, "INIT.PCG", 13, 0, "Berlin Grand")] },
+      { members: [member(1, "K1.PCG", 0, 2, "Berlin Dark"), member(2, "INIT.PCG", 13, 2, "Berlin Dark")] },
+      { members: [member(1, "K1.PCG", 5, 7, "Cello"), member(2, "INIT.PCG", 1, 3, "Cello")] },
+    ];
+    const diff = (kind, a, b) => ({
+      kind, aBank: a ? a[0] : -1, aNumber: a ? a[1] : -1, aName: a ? a[2] : "",
+      bBank: b ? b[0] : -1, bNumber: b ? b[1] : -1, bName: b ? b[2] : "", bankType: 0,
+    });
+    const diffRows = [
+      diff("onlyInA", [1, 91, "Space Voice"]), diff("onlyInA", [4, 0, "ANRIFF"]), diff("onlyInA", [4, 1, "FDB1"]),
+      diff("onlyInB", null, [6, 0, "Jazz Dry Kit"]), diff("onlyInB", null, [6, 1, "Jazz Amb Kit"]),
+      diff("renamed", [2, 50, "Cat On aMoJo"], [0, 50, "Cat On aMoJo V2"]),
+      diff("modifiedTwin", [0, 1, "Berlin Brite"], [13, 1, "Berlin Brite"]),
+      diff("moved", [0, 0, "Berlin Grand"], [13, 0, "Berlin Grand"]), diff("moved", [0, 2, "Berlin Dark"], [13, 2, "Berlin Dark"]),
+    ];
+    const progDiv = [
+      { bank: 3, number: 5, nameA: "Strings", nameB: "Strings 2", bankType: 0 },
+      { bank: 1, number: 9, nameA: "Bass", nameB: "Bass", bankType: 0 },
+    ];
+    const combiDiv = [
+      { bank: 7, number: 1, nameA: "Separate Ways", nameB: "Separate Ways", changes: ["Timbre 2 Volume 88 -> 90", "Timbre 3 Volume 77 -> 75"] },
+      { bank: 7, number: 14, nameA: "KARMA Org", nameB: "KARMA Org", changes: ["Timbre 3 Volume 115 -> 100", "Timbre 5 Volume 120 -> 83", "IFX3 differs", "EQ differs"] },
+      { bank: 7, number: 100, nameA: "Tainted Love", nameB: "Your Song", changes: ["a", "b", "c", "d", "e"] },
+      { bank: 2, number: 3, nameA: "Init Combi", nameB: "INIT COMBI", changes: ["Master Volume 100 -> 90"] },
+    ];
+    window.findDuplicateProgramsAcrossDatasets = async () => dupGroups;
+    window.findProgramDifferencesAcrossDatasets = async () => diffRows;
+    window.findDivergentProgramsAcrossDatasets = async () => progDiv;
+    window.findDivergentCombisAcrossDatasets = async () => combiDiv;
+    window.resolveCombiDivergenceChange = async (...args) => { resolves.push(args); return { ok: true, resolvedDatasetId: 2 }; };
+  </script>
+  <script src="cross-dataset-duplicates-panel.js"></script>
+  <script>
+    // ---- scripted run -----------------------------------------------------------------
+    const report = { checks: [], failed: 0, timings: {} };
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+    function check(label, ok, extra) {
+      report.checks.push({ label, ok: !!ok, ...(extra !== undefined ? { extra } : {}) });
+      if (!ok) report.failed++;
+    }
+    const body = () => $(".sidebar-panel-body");
+    const modeButton = (text) => $$(".cross-dataset-mode-toggle .button").find((b) => b.textContent === text);
+    const findButton = () => $$(".sidebar-panel-body > button").find((b) => /Find|Searching/.test(b.textContent));
+    const dataRows = (root = document) => $$(".tabulator-row:not(.tabulator-group)", root);
+    const tables = () => $$(".cross-dataset-tabulator");
+    const headings = () => $$(".sidebar-section-heading");
+    const heading = (startsWith) => headings().find((h) => h.textContent.replace(/^[▾▸] /, "").startsWith(startsWith));
+    const cellTexts = (row) => $$(".tabulator-cell", row).map((c) => c.textContent);
+    async function selectMode(text) { modeButton(text).click(); await wait(60); }
+    async function find() { findButton().click(); await wait(400); }
+    function typeFilter(tableEl, colIndex, value) {
+      const input = $$(".tabulator-header-filter input", tableEl)[colIndex];
+      input.value = value;
+      for (const type of ["input", "keyup", "change", "search"]) input.dispatchEvent(new Event(type, { bubbles: true }));
+    }
+    function clickHeader(tableEl, colIndex) { $$(".tabulator-col", tableEl)[colIndex].querySelector(".tabulator-col-content").click(); }
+
+    (async () => {
+      try {
+        await refreshDatasets();
+        window.toggleCrossDatasetDuplicatesPanel();
+        await wait(300);
+
+        // --- controls ---------------------------------------------------------------
+        check("title", $(".sidebar-panel-title").textContent === "Cross Dataset analysis");
+        check("four mode buttons", $$(".cross-dataset-mode-toggle .button").map((b) => b.textContent).join("|") === "Duplicates|Differences|Compare PROG|Compare COMBI");
+        const selects = $$(".sidebar-panel-body select");
+        check("two dropdowns with placeholder + 2 datasets", selects.length === 2 && selects.every((s) => s.options.length === 3));
+        check("Find enabled for two different datasets", !findButton().disabled);
+        selects[1].value = selects[0].value;
+        selects[1].dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(60);
+        check("Find disabled when both dropdowns pick the same dataset", findButton().disabled);
+        selects[1].value = "";
+        selects[1].dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(60);
+        check("Find disabled when a dropdown is empty", findButton().disabled);
+        const s2 = $$(".sidebar-panel-body select")[1];
+        s2.value = "2";
+        s2.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(60);
+
+        // --- Duplicates ------------------------------------------------------------
+        await find();
+        check("duplicates: 6 rows", dataRows().length === 6, dataRows().length);
+        check("duplicates: 3 group headers 'N copies'", $$(".tabulator-group").length === 3 && $$(".tabulator-group").every((g) => /2 copies/.test(g.textContent)));
+        check("duplicates: header filters present", $$(".tabulator-header-filter input").length === 3);
+        typeFilter(tables()[0], 0, "cello");
+        await wait(200);
+        check("duplicates: filter 'cello' leaves 2 rows", dataRows().length === 2, dataRows().length);
+        // the title is plain text now (nothing to fold)
+        check("duplicates: plain heading '3 Duplicate Group(s)', not interactive",
+          !!heading("3 Duplicate Group(s)") && !$(".sidebar-section-heading[role=button]") && !$(".sidebar-section-heading[tabindex]"),
+          headings().map((h) => h.textContent).join(" / "));
+        heading("3 Duplicate").click();
+        await wait(100);
+        check("duplicates: clicking the title does nothing (table stays)", tables().length === 1);
+        // leave the mode and come back: the table is rebuilt from scratch, the filter must come back
+        await selectMode("Differences");
+        await selectMode("Duplicates");
+        await wait(300);
+        check("duplicates: filter restored after rebuild", dataRows().length === 2 && $$(".tabulator-header-filter input")[0].value === "cello", $$(".tabulator-header-filter input")[0].value);
+        typeFilter(tables()[0], 0, "");
+        await wait(200);
+        clickHeader(tables()[0], 2);  // sort by ID
+        await wait(200);
+        const idsAsc = dataRows().map((r) => cellTexts(r)[2]);
+        check("duplicates: ID sort ascending (by bank/number)", idsAsc[0] === "P00-000", idsAsc.join(","));
+        clickHeader(tables()[0], 2);
+        await wait(200);
+        const idsDesc = dataRows().map((r) => cellTexts(r)[2]);
+        check("duplicates: ID sort descending", idsDesc[0] === "P13-002", idsDesc.join(","));
+        dataRows()[0].click();
+        await wait(100);
+        check("duplicates: row click jumps the RIGHT pane", jumps.length === 1 && jumps[0].pane === "B", JSON.stringify(jumps));
+        jumps.length = 0;
+        window.toggleCrossDatasetDuplicatesPanel(); await wait(300);  // a jump closes the sidebar; reopen it
+
+        // --- Differences -----------------------------------------------------------
+        await selectMode("Differences");
+        await find();
+        check("differences: summary heading", !!heading("7 Difference(s) + 2 Moved"), headings().map((h) => h.textContent).join(" / "));
+        check("differences: NO section headings, one dropdown for the categories", headings().length === 1 && $$(".cross-dataset-results select").length === 1, headings().length);
+        const catSelect = $(".cross-dataset-results select");
+        check("differences: 5 categories with counts",
+          [...catSelect.options].map((o) => o.textContent).join("|") ===
+            "Only in K1_20260418.PCG (3)|Only in INIT.PCG (2)|Renamed (same sound, different name) (1)|Modified twins (same name, different content) (1)|Moved (identical, different slot) (2)",
+          [...catSelect.options].map((o) => o.textContent).join("|"));
+        check("differences: exactly ONE table, first non-empty category, ONE column", tables().length === 1 && $$(".tabulator-col", tables()[0]).length === 1 && dataRows().length === 3, `${tables().length} tables, ${dataRows().length} rows`);
+        check("differences: hint is folded by default", !$(".cross-dataset-hint").open);
+        catSelect.value = "renamed";
+        catSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(300);
+        check("differences: switching category swaps the table (two columns)", tables().length === 1 && $$(".tabulator-col", tables()[0]).length === 2 && dataRows().length === 1);
+        dataRows()[0].click();
+        await wait(100);
+        check("differences: row click jumps both panes to their own slots",
+          jumps.length === 2 && jumps.find((j) => j.pane === "A").bank === 2 && jumps.find((j) => j.pane === "B").bank === 0, JSON.stringify(jumps));
+        jumps.length = 0;
+        window.toggleCrossDatasetDuplicatesPanel(); await wait(300);  // a jump closes the sidebar; reopen it
+        check("differences: chosen category survives the reopen", $(".cross-dataset-results select").value === "renamed");
+        const sel2 = $(".cross-dataset-results select");
+        sel2.value = "moved";
+        sel2.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(300);
+        typeFilter(tables()[0], 0, "dark");
+        await wait(200);
+        check("differences: filter works inside the chosen category", dataRows().length === 1, dataRows().length);
+        const sel3 = $(".cross-dataset-results select");
+        sel3.value = "onlyInA";
+        sel3.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(300);
+        check("differences: back to a category shows all its rows again", dataRows().length === 3);
+
+        // --- layout: the table fills the pane, only ITS ROWS scroll ------------------
+        {
+          const resultsEl = $(".cross-dataset-results");
+          const tableEl = $(".tabulator", tables()[0]);
+          check("layout: the result pane itself does not scroll", resultsEl.scrollHeight <= resultsEl.clientHeight + 1, `${resultsEl.scrollHeight} vs ${resultsEl.clientHeight}`);
+          const paneBottom = resultsEl.getBoundingClientRect().bottom, tableBottom = tableEl.getBoundingClientRect().bottom;
+          check("layout: the table extends to the bottom of the pane", Math.abs(paneBottom - tableBottom) <= 4, `${Math.round(paneBottom)} vs ${Math.round(tableBottom)}`);
+          check("layout: the table has real height (>140px)", tableEl.getBoundingClientRect().height > 140, Math.round(tableEl.getBoundingClientRect().height));
+        }
+
+        // --- Compare PROG ----------------------------------------------------------
+        await selectMode("Compare PROG");
+        await find();
+        check("compare PROG: 2 rows, 3 columns", dataRows().length === 2 && $$(".tabulator-col", tables()[0]).length === 3, dataRows().length);
+        clickHeader(tables()[0], 0);
+        await wait(200);
+        check("compare PROG: ID sort ascending puts P01-009 first", cellTexts(dataRows()[0])[0] === "P01-009", cellTexts(dataRows()[0]).join("|"));
+        dataRows()[0].click();
+        await wait(100);
+        check("compare PROG: click jumps both panes to the same slot", jumps.length === 2 && jumps.every((j) => j.bank === 1 && j.number === 9), JSON.stringify(jumps));
+        jumps.length = 0;
+        window.toggleCrossDatasetDuplicatesPanel(); await wait(300);
+
+        // --- Compare COMBI ---------------------------------------------------------
+        await selectMode("Compare COMBI");
+        await find();
+        check("compare COMBI: Init Combi rows hidden by default (3 rows)", dataRows().length === 3, dataRows().length);
+        check("compare COMBI: 4 columns", $$(".tabulator-col", tables()[0]).length === 4);
+        const changeCells = dataRows().map((r) => cellTexts(r)[3]);
+        check("compare COMBI: Changes = count / Different song", changeCells.join("|") === "2|4|Different song", changeCells.join("|"));
+        const box = $$(".cross-dataset-dup-checkbox-row input")[0];
+        check("compare COMBI: hide-Init checkbox checked", box && box.checked && /\(1\)/.test(box.parentElement.textContent));
+        box.checked = false;
+        box.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(300);
+        check("compare COMBI: unchecking shows the Init Combi row", dataRows().length === 4, dataRows().length);
+        $$(".cross-dataset-dup-checkbox-row input")[0].click();
+        await wait(300);
+        check("compare COMBI: re-checking hides it again", dataRows().length === 3);
+
+        // expand a row (single click, after the dblclick window)
+        const row14 = dataRows().find((r) => /C07-014/.test(r.textContent));
+        row14.click();
+        await wait(500);
+        const openRow = dataRows().find((r) => /C07-014/.test(r.textContent));
+        check("compare COMBI: click expands the row (is-open + detail block)", openRow.classList.contains("is-open") && !!$(".cross-dataset-detail", openRow));
+        check("compare COMBI: detail lists 4 changes with ←/→ buttons", $$(".cross-dataset-detail-line", openRow).length === 4 && $$("button", openRow).length === 8);
+        const detail = $(".cross-dataset-detail", openRow);
+        const dr = detail.getBoundingClientRect(), tr = $(".tabulator", tables()[0]).getBoundingClientRect();
+        check("compare COMBI: detail stretches to the table width", Math.abs(dr.width - (tr.width - 5)) < 8, `detail ${Math.round(dr.width)} vs table ${Math.round(tr.width)}`);
+        const cs = getComputedStyle(openRow);
+        check("compare COMBI: open row is orange", /255, 140, 0/.test(cs.color), cs.color);
+        const rowOf = (n) => dataRows().find((r) => new RegExp("C07-" + n).test(r.textContent));
+        const rowFits = (n) => {
+          const r = rowOf(n), d = $(".cross-dataset-detail", r);
+          const cells = Math.max(...$$(".tabulator-cell", r).map((c) => c.offsetHeight));
+          return Math.round(r.offsetHeight - cells - (d ? d.offsetHeight : 0));
+        };
+        check("compare COMBI: the expanded row is tall enough for its change list (no clipping)", Math.abs(rowFits("014")) <= 3, rowFits("014"));
+        // resolve
+        $$("button", openRow)[0].click();
+        await wait(600);
+        check("compare COMBI: ← calls resolve b-to-a", resolves.length === 1 && resolves[0][5] === "b-to-a" && resolves[0][3] === 14, JSON.stringify(resolves));
+        // collapse it again: the body must shrink back
+        dataRows().find((r) => /C07-014/.test(r.textContent)).click();
+        await wait(500);
+        check("compare COMBI: collapsing shrinks the row back to one line", rowOf("014").offsetHeight < 40, rowOf("014").offsetHeight);
+        // different song row
+        const songRow = dataRows().find((r) => /C07-100/.test(r.textContent));
+        songRow.click();
+        await wait(500);
+        const openSong = dataRows().find((r) => /C07-100/.test(r.textContent));
+        check("compare COMBI: 'Different song' detail is a single note without buttons",
+          $$(".cross-dataset-detail-line", openSong).length === 1 && $$("button", openSong).length === 0 && /Different song/.test(openSong.textContent));
+        // dblclick jumps, does not toggle
+        const before = dataRows().length;
+        const row1 = dataRows().find((r) => /C07-001/.test(r.textContent));
+        row1.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        row1.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        row1.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        await wait(500);
+        check("compare COMBI: dblclick jumps both panes", jumps.length === 2 && jumps.every((j) => j.bank === 7 && j.number === 1), JSON.stringify(jumps));
+        jumps.length = 0;
+        window.toggleCrossDatasetDuplicatesPanel(); await wait(300);
+        await selectMode("Compare COMBI");
+        await wait(100);
+
+        // --- performance: 2,500 duplicate rows ----------------------------------------
+        dupGroups = Array.from({ length: 1250 }, (_, i) => ({
+          members: [member(1, "K1.PCG", i % 20, i % 128, "Program number " + i), member(2, "INIT.PCG", (i + 3) % 20, (i * 7) % 128, "Program number " + i)],
+        }));
+        await selectMode("Duplicates");
+        const t0 = performance.now();
+        findButton().click();
+        const started = performance.now();
+        while (performance.now() - started < 15000 && dataRows().length < 5) await wait(50);
+        report.timings.render2500RowsMs = Math.round(performance.now() - t0);
+        check("performance: 2,500-row table renders", dataRows().length > 5, dataRows().length);
+        const t1 = performance.now();
+        typeFilter(tables()[0], 0, "number 1249");
+        await wait(50);
+        while (performance.now() - t1 < 10000 && dataRows().length !== 2) await wait(20);
+        report.timings.filterMs = Math.round(performance.now() - t1);
+        check("performance: filter narrows 2,500 rows to 2", dataRows().length === 2, dataRows().length);
+        typeFilter(tables()[0], 0, "");
+        await wait(600);
+        {
+          const holder = $(".tabulator-tableholder", tables()[0]);
+          const header = $(".tabulator-header", tables()[0]);
+          check("scroll: the row area scrolls (more content than height)", holder.scrollHeight > holder.clientHeight + 50, `${holder.scrollHeight} vs ${holder.clientHeight}`);
+          const before = header.getBoundingClientRect().top;
+          holder.scrollTop = 800;
+          await wait(300);
+          check("scroll: rows moved", holder.scrollTop > 0, holder.scrollTop);
+          check("scroll: the header (titles + filter boxes) stays fixed", Math.abs(header.getBoundingClientRect().top - before) < 1 && $$(".tabulator-header-filter input", tables()[0]).length === 3);
+          check("scroll: virtual rendering (far fewer DOM rows than data)", dataRows().length < 400, dataRows().length);
+        }
+      } catch (err) {
+        check("no exception", false, String(err && err.stack ? err.stack : err));
+      }
+      // leave the sidebar in a chosen state for screenshots
+      const target = location.hash.replace("#", "");
+      if (target) {
+        dupGroups = dupGroups.slice(0, 3);
+        if (!$(".sidebar-panel-title")) window.toggleCrossDatasetDuplicatesPanel();
+        await wait(200);
+        await selectMode({ combi: "Compare COMBI", differences: "Differences", duplicates: "Duplicates", prog: "Compare PROG" }[target] || "Duplicates");
+        await find();
+        if (target === "combi") {
+          dataRows().find((r) => /C07-014/.test(r.textContent)).click();
+          await wait(500);
+        }
+        if (target === "differences") {
+          const sel = $(".cross-dataset-results select");
+          if (sel) { sel.value = "modifiedTwin"; sel.dispatchEvent(new Event("change", { bubbles: true })); await wait(300); }
+        }
+      }
+      report.summary = report.failed === 0 ? "ALL PASSED" : report.failed + " FAILED";
+      $("#out").textContent = JSON.stringify(report, null, 1);
+    })();
+  </script>
+</body>
+</html>

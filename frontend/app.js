@@ -417,6 +417,20 @@ const openFileButton = document.querySelector(".open-file-button");
 const topbarLoading = document.querySelector(".topbar-loading");
 const topbarLoadingText = document.querySelector(".topbar-loading-text");
 
+// Shows a freshly opened dataset (`result` = an open-file bridge result with ok:true):
+// the first empty pane takes it (A before B); otherwise it is only available from the
+// panes' dataset selectors. Shared by the Open button and the command-line files.
+async function showOpenedDataset(result) {
+  if (result.alreadyOpen) setStatus(`${result.displayName} is already open -- showing the existing dataset.`);
+  await refreshDatasets();  // every pane's selector learns about the (possibly new) dataset first
+  const targetPane = Object.values(panes).find((pane) => pane.isEmpty());
+  if (targetPane) {
+    await targetPane.loadDataset(result.datasetId, result.displayName);
+  } else if (!result.alreadyOpen) {
+    setStatus(`Opened ${result.displayName} -- pick it from a pane's dataset selector to view it (both panes already show something).`);
+  }
+}
+
 openFileButton.addEventListener("click", async () => {
   // Genuinely blocking today -- showOpenFileDialog()'s runModal() is
   // native-modal (expected, normal dialog behavior), and once a path comes
@@ -436,20 +450,44 @@ openFileButton.addEventListener("click", async () => {
       showToast(result.error, { isError: true });
       return;
     }
-    if (result.alreadyOpen) setStatus(`${result.displayName} is already open -- showing the existing dataset.`);
-    await refreshDatasets();  // every pane's selector learns about the (possibly new) dataset first
-    const targetPane = Object.values(panes).find((pane) => pane.isEmpty());
-    if (targetPane) {
-      await targetPane.loadDataset(result.datasetId, result.displayName);
-    } else if (!result.alreadyOpen) {
-      setStatus(`Opened ${result.displayName} -- pick it from a pane's dataset selector to view it (both panes already show something).`);
-    }
+    await showOpenedDataset(result);
   } catch (err) {
     showToast(String(err), { isError: true });
   } finally {
     topbarLoading.hidden = true;
   }
 });
+
+// Files given on the command line (`./build/kronos_editor a.PCG b.PCG ...`, see
+// src/main.cpp): opened one after another as soon as the app is up, so the first two
+// fill the left and right pane without going through the Open dialog. The native side
+// only binds getStartupFiles() in the real app -- plain-browser dev (mock_bridge.js)
+// has none, and simply opens nothing.
+(async () => {
+  if (typeof window.getStartupFiles !== "function") return;
+  let files = [];
+  try {
+    files = await window.getStartupFiles();
+  } catch (err) {
+    return;
+  }
+  for (const path of files) {
+    topbarLoadingText.textContent = `Loading ${path.split(/[\\/]/).pop()}...`;
+    topbarLoading.hidden = false;
+    try {
+      const result = await window.openFile(path);
+      if (!result.ok) {
+        showToast(`${path}: ${result.error}`, { isError: true });
+        continue;
+      }
+      await showOpenedDataset(result);
+    } catch (err) {
+      showToast(String(err), { isError: true });
+    } finally {
+      topbarLoading.hidden = true;
+    }
+  }
+})();
 
 // Called from native code (src/main.cpp's own closeRequested handler, via
 // evaluateJavascript()) the instant the user tries to close THIS window

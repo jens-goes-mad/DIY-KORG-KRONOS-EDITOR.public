@@ -99,6 +99,23 @@ devtools on, symbols intact.
   Debug build -- MSVC's multi-config generator puts each configuration in its own
   subfolder)
 
+### Opening files at startup
+
+Any `.PCG`/`.SNG` paths given as arguments are opened as datasets as soon as the app is up
+(relative paths resolve against the directory you launch from; the same file named twice
+opens once; arguments starting with `-` are ignored):
+
+```sh
+./build/kronos_editor ../KRONOS-SOUNDS/INIT.PCG ../KRONOS-SOUNDS/K1_20260418.PCG
+```
+
+The first file shows in the left pane, the second in the right; a third and later ones are
+opened too and can be picked from a pane's dataset selector. A path that can't be read shows an
+error toast and the remaining files still open. (Launching the macOS Release bundle with
+`open build/kronos_editor.app --args /absolute/path/a.PCG ...` should work the same way, but
+macOS starts a bundle with `/` as its working directory, so use absolute paths there; this
+form has not been tried yet.)
+
 ## Debugging, especially the JavaScript side
 
 The editor's UI is plain HTML/JS/CSS running inside CHOC's native webview, and there are
