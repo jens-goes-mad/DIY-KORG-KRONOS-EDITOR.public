@@ -43,7 +43,7 @@ Pieces of UI that touch raw Kronos bytes are being pulled out into their own fil
    around in a plain browser tab. No CHOC, no native build, no `mock_bridge.js` even --
    just a static file server (`python3 -m http.server`, not a build step).
 
-The real app then wires the same codec/component into `pane.js` against the actual
+The real app then wires the same codec/component into `pane-setlist-editor.js` against the actual
 loaded file -- same code path as the test harness, just fed real bytes from
 `EditorBridge` instead of a hardcoded fixture.
 
@@ -226,6 +226,16 @@ filtering, section collapse, row expansion, resolve buttons, jumps, 2,500-row re
 prints a JSON pass/fail report. Run it headless with Chrome (command in the file's header) or
 open it in any browser.
 
+The sidebar's results don't live in the sidebar: `frontend/cross-dataset-results.js` (a plain
+script shaped like `datasets.js` -- module state, getters, a change broadcast) holds the last
+result for one pair of datasets, and each pane's **Cross Dataset** filter dropdown reads it per
+dataset id (`getCrossDatasetFilterCategories()`), so a pane never cares which file was A or B.
+A result is dropped as soon as either file's `editCount` (`PcgFile::editCount()`, reported by
+`listDatasets()`) moves. Its headless test is `frontend/cross-dataset-results.test.js` (run with
+the store concatenated in front, see its header); the panes' dropdown has an end-to-end
+harness, `frontend/cross-dataset-filter.test.html`, which runs the real `index.html` on the
+mock bridge in an iframe (served over HTTP, see its header).
+
 ## Case study: SetlistEditorCommentAndFont
 
 The first component built this way is
@@ -250,13 +260,13 @@ good example of the whole loop working end to end:
    never corrupt Color, Transpose, or the handful of bits in this format that are still
    completely unexplained.
 
-This codec is also, as of the real editor panels described next, wired into `pane.js`
+This codec is also, as of the real editor panels described next, wired into `pane-setlist-editor.js`
 against the actual loaded file -- see below for how a codec goes from a standalone test
 harness to a live, writable piece of the real app.
 
 ## Case study: the Setlist editor panel -- attach, decode/encode, write back, discard
 
-A Set List slot's Color/Comment/Volume editors (`pane.js`) are the most complete example
+A Set List slot's Color/Comment/Volume editors (`pane-setlist-editor.js`) are the most complete example
 so far of the whole loop this page describes actually running live, not just in a test
 harness -- and they surface a real correctness problem (two panes editing the same raw
 bytes) that only shows up once a component is wired into a stateful app, not something
@@ -267,7 +277,7 @@ or generic.
 
 ### How a panel attaches to a row
 
-Clicking a Set List row's `#`, `Vol`, or `Song`/`Type` cell calls `pane.js`'s
+Clicking a Set List row's `#`, `Vol`, or `Song`/`Type` cell calls `pane-setlist-editor.js`'s
 `openSection(entry, type)` -- the single entry point for opening *and* for toggling a
 section that's already open (a click on an accordion header inside an open panel calls
 the exact same function). The first time any section opens for a given slot, `openSection`:
@@ -444,7 +454,7 @@ catch.
 It paid off a second time the same way, in the opposite direction -- confirmed data
 feeding back INTO the UI, not just correcting a guess. The word-wrap test group
 (Group 4, five Font sizes wrapping the same text) produced real per-size character-
-width ratios; `pane.js`'s Comment editor now scales its own font-size by those exact
+width ratios; `pane-setlist-editor.js`'s Comment editor now scales its own font-size by those exact
 ratios so what you see while editing approximates what the real device would show,
 instead of a fixed, arbitrary textarea font. Confirmed side by side against a real
 Kronos: "nearly identical" at the calibrated reference width. The scaling is

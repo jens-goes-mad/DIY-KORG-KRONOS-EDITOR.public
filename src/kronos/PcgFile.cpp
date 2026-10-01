@@ -398,16 +398,8 @@ std::string timbreBankName(int rawBankCode) {
     return "";
 }
 
-bool isConfirmedTimbreProgramBank(int programBank) {
-    for (const auto& b : kConfirmedTimbreBanks) {
-        if (b.programBankIndex == programBank) return true;
-    }
-    return false;
-}
-
-// Internal linkage -- pure implementation detail of combiUsagesForProgram()/
-// combiUsageCounts() below, not declared in PcgFile.h since nothing outside
-// this file needs the raw-code translation itself, only its effect.
+// Internal linkage -- only this file translates a Program bank INTO a raw
+// Timbre code (combiUsagesForProgram()/combiUsageCounts()/repointing below).
 //
 // The confirmed Timbre raw bank code for a PBK1 file-order Program bank
 // index, or -1 if that bank isn't independently confirmed yet -- see
@@ -419,13 +411,45 @@ static int confirmedTimbreCodeForProgramBank(int programBank) {
     return -1;
 }
 
-// Reverse of the above -- the confirmed PBK1 file-order Program bank index
-// for a Timbre's raw bank code, or -1 if that code isn't confirmed yet.
-static int programBankForConfirmedTimbreCode(int rawBankCode) {
+// Reverse of the above -- declared in PcgFile.h, see its doc comment there.
+int programBankForConfirmedTimbreCode(int rawBankCode) {
     for (const auto& b : kConfirmedTimbreBanks) {
         if (b.rawBankCode == rawBankCode) return b.programBankIndex;
     }
     return -1;
+}
+
+bool isConfirmedTimbreProgramBank(int programBank) { return confirmedTimbreCodeForProgramBank(programBank) >= 0; }
+
+// Groups records (ProgramInfo/CombiInfo) sharing a contentHash -- the one
+// implementation behind findDuplicatePrograms()/findDuplicateCombis().
+// Groups of 2+ only, each sorted by (bank, number), and the groups
+// themselves sorted by their first member: unordered_map iteration order
+// isn't deterministic run-to-run, so callers (and tests) see a stable order.
+template <class Info>
+static std::vector<std::vector<Info>> groupByContentHash(const std::vector<Info>& items) {
+    auto bySlot = [](const Info& a, const Info& b) { return a.bank != b.bank ? a.bank < b.bank : a.number < b.number; };
+    std::unordered_map<uint64_t, std::vector<Info>> byHash;
+    for (const auto& item : items) byHash[item.contentHash].push_back(item);
+
+    std::vector<std::vector<Info>> groups;
+    for (auto& [hash, group] : byHash) {
+        if (group.size() < 2) continue;
+        std::sort(group.begin(), group.end(), bySlot);
+        groups.push_back(std::move(group));
+    }
+    std::sort(groups.begin(), groups.end(), [&](const auto& a, const auto& b) { return bySlot(a.front(), b.front()); });
+    return groups;
+}
+
+// Replaces the cached entry at info's (bank, number), or appends it if that
+// slot had none -- shared by refreshProgramInfo()/refreshCombiInfo().
+template <class Info>
+static void upsertAtSlot(std::vector<Info>& items, Info info) {
+    auto it = std::find_if(items.begin(), items.end(),
+                           [&](const Info& x) { return x.bank == info.bank && x.number == info.number; });
+    if (it != items.end()) *it = std::move(info);
+    else items.push_back(std::move(info));
 }
 
 bool PcgFile::load(const std::string& path, std::string& error) {
@@ -465,6 +489,7 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
     setlists_.clear();
     sdbSongsStart_.clear();
     dirty_ = false;  // a freshly loaded file is never dirty -- see isDirty()
+    ++editCount_;    // but every byte may have changed -- bumped, never reset, see editCount()
 
     if (data.size() < 16 || std::memcmp(data.data(), "KORG", 4) != 0) {
         error = "Not a KORG PCG/SNG file (missing 'KORG' magic)";
@@ -591,9 +616,8 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
         for (uint32_t i = 0; i < numRecords; ++i) {
             size_t off = recordsStart + static_cast<size_t>(i) * bytesPerRecord;
             const uint8_t* record = &data[off];
-            CombiFields fields = decodeCombiFields(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i));
-            uint64_t combiHash = hashCombiRecord(record, bytesPerRecord);
-            combis_.push_back({fields.bank, fields.number, fields.name, fields.timbres, combiHash});
+            const CombiInfo& fields =
+                combis_.emplace_back(decodeCombiInfo(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i)));
 
             if (fields.bank >= static_cast<int>(combiBankNames.size())) combiBankNames.resize(fields.bank + 1);
             if (fields.number >= static_cast<int>(combiBankNames[fields.bank].size())) {
@@ -638,14 +662,13 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
         // cross-checked against its declared stride), not looked up in a
         // fixed table.
         ProgramBankType bankType = classifyProgramBankType(chunk.tag, bytesPerRecord).type;
-        programBankLocations_.push_back({recordsStart, numRecords, bytesPerRecord, bankType});
+        programBankLocations_.push_back({{recordsStart, numRecords, bytesPerRecord}, bankType});
 
         for (uint32_t i = 0; i < numRecords; ++i) {
             size_t off = recordsStart + static_cast<size_t>(i) * bytesPerRecord;
             const uint8_t* record = &data[off];
-            ProgramFields fields = decodeProgramFields(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i));
-            uint64_t hash = hashProgramRecord(record, bytesPerRecord);
-            programs_.push_back({fields.bank, fields.number, fields.name, hash, bankType, fields.exiAlgorithmType});
+            const ProgramInfo& fields =
+                programs_.emplace_back(decodeProgramInfo(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i), bankType));
 
             if (fields.bank >= static_cast<int>(programBankNames.size())) programBankNames.resize(fields.bank + 1);
             if (fields.number >= static_cast<int>(programBankNames[fields.bank].size())) {
@@ -759,43 +782,9 @@ std::vector<std::vector<int>> PcgFile::combiUsageCounts() const {
     return counts;
 }
 
-std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const {
-    std::unordered_map<uint64_t, std::vector<ProgramInfo>> byHash;
-    for (const auto& program : programs_) byHash[program.contentHash].push_back(program);
+std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const { return groupByContentHash(programs_); }
 
-    std::vector<std::vector<ProgramInfo>> groups;
-    for (auto& [hash, group] : byHash) {
-        if (group.size() < 2) continue;
-        std::sort(group.begin(), group.end(), [](const ProgramInfo& a, const ProgramInfo& b) {
-            return a.bank != b.bank ? a.bank < b.bank : a.number < b.number;
-        });
-        groups.push_back(std::move(group));
-    }
-    // unordered_map iteration order isn't deterministic run-to-run -- sort
-    // groups themselves so callers (and tests) see a stable order.
-    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
-        return a.front().bank != b.front().bank ? a.front().bank < b.front().bank : a.front().number < b.front().number;
-    });
-    return groups;
-}
-
-std::vector<std::vector<CombiInfo>> PcgFile::findDuplicateCombis() const {
-    std::unordered_map<uint64_t, std::vector<CombiInfo>> byHash;
-    for (const auto& combi : combis_) byHash[combi.contentHash].push_back(combi);
-
-    std::vector<std::vector<CombiInfo>> groups;
-    for (auto& [hash, group] : byHash) {
-        if (group.size() < 2) continue;
-        std::sort(group.begin(), group.end(), [](const CombiInfo& a, const CombiInfo& b) {
-            return a.bank != b.bank ? a.bank < b.bank : a.number < b.number;
-        });
-        groups.push_back(std::move(group));
-    }
-    std::sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) {
-        return a.front().bank != b.front().bank ? a.front().bank < b.front().bank : a.front().number < b.front().number;
-    });
-    return groups;
-}
+std::vector<std::vector<CombiInfo>> PcgFile::findDuplicateCombis() const { return groupByContentHash(combis_); }
 
 void PcgFile::repointOneSetlistSlot(int setlistIndex, int songIndex, int toBank, int toNumber) {
     auto bytes = songRecordBytes(setlistIndex, songIndex);
@@ -1520,86 +1509,11 @@ PcgFile::CombiRearrangeResult PcgFile::resolveDuplicateCombis(int keepBank, int 
 }
 
 PcgFile::CombiRearrangeResult PcgFile::moveCombiWithinBank(int bank, int fromNumber, int toNumber) {
+    ProgramSwapResult r = moveRecordWithinBank(/*isProgram=*/false, bank, fromNumber, toNumber);
     CombiRearrangeResult result;
-
-    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) {
-        result.error = "No such Combi bank";
-        return result;
-    }
-    const uint32_t count = combiBankLocations_[static_cast<size_t>(bank)].numRecords;
-    if (fromNumber < 0 || static_cast<uint32_t>(fromNumber) >= count || toNumber < 0 ||
-        static_cast<uint32_t>(toNumber) >= count) {
-        result.error = "Combi index out of range";
-        return result;
-    }
-    if (fromNumber == toNumber) {
-        result.ok = true;
-        return result;
-    }
-
-    auto movingBytes = combiRecordBytes(bank, fromNumber);
-    if (!movingBytes) {
-        result.error = "Couldn't read the moving Combi's record";
-        return result;
-    }
-
-    // Snapshot exactly WHO references the MOVING record's own original
-    // position, before any writes happen -- a single search-then-write
-    // repointSetlistReferences() call for this can't be placed safely
-    // anywhere in this function: the shift below reads from AND writes to
-    // enough of the [fromNumber..toNumber] range that both `fromNumber`
-    // (used as a write-target by the shift's very first step) and
-    // `toNumber` (used as a read/search-key by the shift's very last step,
-    // in EITHER direction) get reused for an unrelated record's own move.
-    // Doing the search-then-write before the shift collides with the
-    // second; doing it after collides with the first (both found the hard
-    // way, via a real 36MB file where the shifted range actually had
-    // referenced records at both ends). Capturing identities up front and
-    // applying the repoint by identity at the very end, after everything
-    // else, sidesteps this entirely -- nothing else in this function ever
-    // searches for "who references fromNumber" (the shift's own searches
-    // all use i-1/i+1 for the current i, which never equals fromNumber),
-    // so these captured slots are never touched by the shift in between.
-    auto movingReferrers = findSetlistReferences(false, bank, fromNumber);
-
-    // Same shift-the-intervening-range mechanic as reorderSong() (Set List
-    // slots), applied to Combis -- see its own doc comment for the
-    // direction reasoning. Each shifted record's own Set List referrers are
-    // repointed right after it moves, so by the time this returns every
-    // record in the range points wherever its own content actually ended
-    // up, not just the one that was dragged.
-    if (toNumber < fromNumber) {
-        for (int i = fromNumber; i > toNumber; --i) {
-            auto bytes = combiRecordBytes(bank, i - 1);
-            if (!bytes) {
-                result.error = "Couldn't read a Combi record while shifting";
-                return result;
-            }
-            putCombiRecordBytes(bank, i, *bytes);
-            result.setlistRefsRepointed += repointSetlistReferences(false, bank, i - 1, bank, i);
-        }
-    } else {
-        for (int i = fromNumber; i < toNumber; ++i) {
-            auto bytes = combiRecordBytes(bank, i + 1);
-            if (!bytes) {
-                result.error = "Couldn't read a Combi record while shifting";
-                return result;
-            }
-            putCombiRecordBytes(bank, i, *bytes);
-            result.setlistRefsRepointed += repointSetlistReferences(false, bank, i + 1, bank, i);
-        }
-    }
-
-    putCombiRecordBytes(bank, toNumber, *movingBytes);
-
-    // Apply the moving record's own repoint last, by the identities
-    // captured up front -- see this function's own comment above for why.
-    for (const auto& [setlistIndex, songIndex] : movingReferrers) {
-        repointOneSetlistSlot(setlistIndex, songIndex, bank, toNumber);
-        result.setlistRefsRepointed++;
-    }
-
-    result.ok = true;
+    result.ok = r.ok;
+    result.error = r.error;
+    result.setlistRefsRepointed = r.setlistRefsRepointed;
     return result;
 }
 
@@ -1732,8 +1646,7 @@ PcgFile::CombiRearrangeResult PcgFile::copyCombi(int srcBank, int srcNumber, int
 PcgFile::CombiRearrangeResult PcgFile::resetCombi(int bank, int number) {
     CombiRearrangeResult result;
 
-    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size()) || number < 0 ||
-        static_cast<uint32_t>(number) >= combiBankLocations_[static_cast<size_t>(bank)].numRecords) {
+    if (!recordOffset(/*isProgram=*/false, bank, number)) {
         result.error = "No such Combi";
         return result;
     }
@@ -1860,13 +1773,7 @@ PcgFile::CombiCrossDatasetAnalysis PcgFile::analyzeCombiCrossDatasetCopy(const P
             continue;
         }
 
-        const ProgramInfo* srcProgram = nullptr;
-        for (const auto& p : src.programs_) {
-            if (p.bank == programBank && p.number == t.number) {
-                srcProgram = &p;
-                break;
-            }
-        }
+        const ProgramInfo* srcProgram = src.findProgram(programBank, t.number);
         if (!srcProgram) continue;  // shouldn't happen -- a confirmed bank/number should always have a real ProgramInfo
 
         TimbreProgramDependency dep;
@@ -1893,13 +1800,7 @@ PcgFile::CombiCrossDatasetAnalysis PcgFile::analyzeCombiCrossDatasetCopy(const P
     }
 
     for (const auto& [b, n] : seenUnresolvedPrograms) {
-        const ProgramInfo* srcProgram = nullptr;
-        for (const auto& p : src.programs_) {
-            if (p.bank == b && p.number == n) {
-                srcProgram = &p;
-                break;
-            }
-        }
+        const ProgramInfo* srcProgram = src.findProgram(b, n);
         if (!srcProgram) continue;
 
         UnresolvedProgram unresolved;
@@ -1969,13 +1870,7 @@ PcgFile::CombiRearrangeResult PcgFile::applyCombiCrossDatasetCopy(const PcgFile&
         const int programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
         if (programBank < 0) continue;  // GM/unidentified -- Timbre bytes pass through unchanged below
 
-        const ProgramInfo* srcProgram = nullptr;
-        for (const auto& p : src.programs_) {
-            if (p.bank == programBank && p.number == t.number) {
-                srcProgram = &p;
-                break;
-            }
-        }
+        const ProgramInfo* srcProgram = src.findProgram(programBank, t.number);
         if (!srcProgram) continue;
 
         // Already resolved this exact source Program earlier in this same loop?
@@ -2083,7 +1978,7 @@ std::vector<PcgFile::ProgramBankTypeEntry> PcgFile::programBankTypes() const {
 }
 
 std::optional<ProgramBankType> PcgFile::programBankTypeAt(int bank) const {
-    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return std::nullopt;
+    if (bankLocation(/*isProgram=*/true, bank) == nullptr) return std::nullopt;
     return programBankLocations_[static_cast<size_t>(bank)].bankType;
 }
 
@@ -2132,17 +2027,10 @@ std::vector<PcgFile::CombiBankInfo> PcgFile::combiBankInfo() const {
 }
 
 std::optional<ProgramInfo> PcgFile::decodeProgram(int bank, int number) const {
-    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return std::nullopt;
-    const auto& loc = programBankLocations_[bank];
-    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return std::nullopt;
-
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    if (off + loc.bytesPerRecord > data_.size()) return std::nullopt;
-
-    const uint8_t* record = &data_[off];
-    ProgramFields fields = decodeProgramFields(record, loc.bytesPerRecord, bank, number);
-    uint64_t hash = hashProgramRecord(record, loc.bytesPerRecord);
-    return ProgramInfo{fields.bank, fields.number, fields.name, hash, loc.bankType, fields.exiAlgorithmType};
+    auto off = recordOffset(/*isProgram=*/true, bank, number);
+    if (!off) return std::nullopt;
+    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
+    return decodeProgramInfo(&data_[*off], loc.bytesPerRecord, bank, number, loc.bankType);
 }
 
 std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile& src, int srcBank, int srcNumber,
@@ -2174,9 +2062,8 @@ std::optional<PcgFile::ProgramCopyError> PcgFile::copyProgramFrom(const PcgFile&
     // the file even when the destination itself was a genuinely empty
     // slot; removed 2026-09-04, see this method's own doc comment in
     // PcgFile.h for why.
-    for (const auto& p : programs_) {
-        if (p.bank == dstBank && p.number == dstNumber && !looksLikeEmptyProgramName(p.name)) return ProgramCopyError::TargetSlotOccupied;
-    }
+    if (const ProgramInfo* target = findProgram(dstBank, dstNumber); target && !looksLikeEmptyProgramName(target->name))
+        return ProgramCopyError::TargetSlotOccupied;
 
     const uint8_t* srcRecord = &src.data_[srcOff];
     writeIntoData(dstOff, srcRecord, dstLoc.bytesPerRecord);
@@ -2304,17 +2191,19 @@ PcgFile::ProgramSwapResult PcgFile::swapPrograms(int bankA, int numberA, int ban
     return result;
 }
 
-PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumber, int toNumber) {
+PcgFile::ProgramSwapResult PcgFile::moveRecordWithinBank(bool isProgram, int bank, int fromNumber, int toNumber) {
+    const char* kind = isProgram ? "Program" : "Combi";
     ProgramSwapResult result;
 
-    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) {
-        result.error = "No such Program bank";
+    const BankLocation* loc = bankLocation(isProgram, bank);
+    if (loc == nullptr) {
+        result.error = std::string("No such ") + kind + " bank";
         return result;
     }
-    const uint32_t count = programBankLocations_[static_cast<size_t>(bank)].numRecords;
+    const uint32_t count = loc->numRecords;
     if (fromNumber < 0 || static_cast<uint32_t>(fromNumber) >= count || toNumber < 0 ||
         static_cast<uint32_t>(toNumber) >= count) {
-        result.error = "Program index out of range";
+        result.error = std::string(kind) + " index out of range";
         return result;
     }
     if (fromNumber == toNumber) {
@@ -2322,9 +2211,9 @@ PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumb
         return result;
     }
 
-    auto movingBytes = programRecordBytes(bank, fromNumber);
+    auto movingBytes = recordBytes(isProgram, bank, fromNumber);
     if (!movingBytes) {
-        result.error = "Couldn't read the moving Program's record";
+        result.error = std::string("Couldn't read the moving ") + kind + "'s record";
         return result;
     }
 
@@ -2333,36 +2222,37 @@ PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumb
     // moveCombiWithinBank() documents (a search-then-write for this can't
     // be placed safely anywhere in the shift loop below, which reuses
     // fromNumber/toNumber as its own read/write keys throughout).
-    auto movingSetlistReferrers = findSetlistReferences(/*isProgram=*/true, bank, fromNumber);
-    auto movingTimbreReferrers = findCombiTimbreReferences(bank, fromNumber);
+    auto movingSetlistReferrers = findSetlistReferences(isProgram, bank, fromNumber);
+    // Only a Program can be a Combi Timbre's target.
+    auto movingTimbreReferrers = isProgram ? findCombiTimbreReferences(bank, fromNumber) : std::vector<TimbreReference>{};
 
     // Same shift-the-intervening-range mechanic as moveCombiWithinBank(),
     // repointing BOTH reference kinds per shifted step.
     if (toNumber < fromNumber) {
         for (int i = fromNumber; i > toNumber; --i) {
-            auto bytes = programRecordBytes(bank, i - 1);
+            auto bytes = recordBytes(isProgram, bank, i - 1);
             if (!bytes) {
-                result.error = "Couldn't read a Program record while shifting";
+                result.error = std::string("Couldn't read a ") + kind + " record while shifting";
                 return result;
             }
-            putProgramRecordBytes(bank, i, *bytes);
-            result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, bank, i - 1, bank, i);
-            result.combiRefsRepointed += repointCombiTimbreReferences(bank, i - 1, bank, i, &result.combiRefsSkipped);
+            putRecordBytes(isProgram, bank, i, *bytes);
+            result.setlistRefsRepointed += repointSetlistReferences(isProgram, bank, i - 1, bank, i);
+            if (isProgram) result.combiRefsRepointed += repointCombiTimbreReferences(bank, i - 1, bank, i, &result.combiRefsSkipped);
         }
     } else {
         for (int i = fromNumber; i < toNumber; ++i) {
-            auto bytes = programRecordBytes(bank, i + 1);
+            auto bytes = recordBytes(isProgram, bank, i + 1);
             if (!bytes) {
-                result.error = "Couldn't read a Program record while shifting";
+                result.error = std::string("Couldn't read a ") + kind + " record while shifting";
                 return result;
             }
-            putProgramRecordBytes(bank, i, *bytes);
-            result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/true, bank, i + 1, bank, i);
-            result.combiRefsRepointed += repointCombiTimbreReferences(bank, i + 1, bank, i, &result.combiRefsSkipped);
+            putRecordBytes(isProgram, bank, i, *bytes);
+            result.setlistRefsRepointed += repointSetlistReferences(isProgram, bank, i + 1, bank, i);
+            if (isProgram) result.combiRefsRepointed += repointCombiTimbreReferences(bank, i + 1, bank, i, &result.combiRefsSkipped);
         }
     }
 
-    putProgramRecordBytes(bank, toNumber, *movingBytes);
+    putRecordBytes(isProgram, bank, toNumber, *movingBytes);
 
     // Apply the moving record's own repoints last, by the identities
     // captured up front -- see this function's own comment above for why.
@@ -2383,6 +2273,10 @@ PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumb
 
     result.ok = true;
     return result;
+}
+
+PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumber, int toNumber) {
+    return moveRecordWithinBank(/*isProgram=*/true, bank, fromNumber, toNumber);
 }
 
 PcgFile::ProgramSwapResult PcgFile::moveProgramToBank(int srcBank, int srcNumber, int dstBank, int dstNumber,
@@ -2459,102 +2353,33 @@ PcgFile::ProgramSwapResult PcgFile::moveProgramToBank(int srcBank, int srcNumber
 }
 
 void PcgFile::refreshProgramInfo(int bank, int number) {
-    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    const uint8_t* record = &data_[off];
-    ProgramFields fields = decodeProgramFields(record, loc.bytesPerRecord, bank, number);
-    uint64_t hash = hashProgramRecord(record, loc.bytesPerRecord);
-    ProgramInfo updated{fields.bank, fields.number, fields.name, hash, loc.bankType, fields.exiAlgorithmType};
-
-    auto it = std::find_if(programs_.begin(), programs_.end(),
-                            [&](const ProgramInfo& p) { return p.bank == bank && p.number == number; });
-    if (it != programs_.end()) {
-        *it = updated;
-    } else {
-        programs_.push_back(updated);
-    }
+    if (auto info = decodeProgram(bank, number)) upsertAtSlot(programs_, std::move(*info));
 }
 
 void PcgFile::refreshCombiInfo(int bank, int number) {
-    const auto& loc = combiBankLocations_[static_cast<size_t>(bank)];
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    const uint8_t* record = &data_[off];
-    CombiFields fields = decodeCombiFields(record, loc.bytesPerRecord, bank, number);
-    uint64_t hash = hashCombiRecord(record, loc.bytesPerRecord);
-    CombiInfo updated{fields.bank, fields.number, fields.name, fields.timbres, hash};
-
-    auto it = std::find_if(combis_.begin(), combis_.end(),
-                            [&](const CombiInfo& c) { return c.bank == bank && c.number == number; });
-    if (it != combis_.end()) {
-        *it = updated;
-    } else {
-        combis_.push_back(updated);
-    }
+    if (auto info = decodeCombi(bank, number)) upsertAtSlot(combis_, std::move(*info));
 }
 
 std::optional<CombiInfo> PcgFile::decodeCombi(int bank, int number) const {
-    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) return std::nullopt;
-    const auto& loc = combiBankLocations_[bank];
-    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return std::nullopt;
-
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    if (off + loc.bytesPerRecord > data_.size()) return std::nullopt;
-
-    const uint8_t* record = &data_[off];
-    CombiFields fields = decodeCombiFields(record, loc.bytesPerRecord, bank, number);
-    return CombiInfo{fields.bank, fields.number, fields.name, fields.timbres};
+    auto off = recordOffset(/*isProgram=*/false, bank, number);
+    if (!off) return std::nullopt;
+    return decodeCombiInfo(&data_[*off], combiBankLocations_[static_cast<size_t>(bank)].bytesPerRecord, bank, number);
 }
 
 std::optional<std::vector<uint8_t>> PcgFile::combiRecordBytes(int bank, int number) const {
-    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) return std::nullopt;
-    const auto& loc = combiBankLocations_[static_cast<size_t>(bank)];
-    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return std::nullopt;
-
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    if (off + loc.bytesPerRecord > data_.size()) return std::nullopt;
-
-    return std::vector<uint8_t>(data_.begin() + static_cast<long>(off),
-                                 data_.begin() + static_cast<long>(off + loc.bytesPerRecord));
+    return recordBytes(/*isProgram=*/false, bank, number);
 }
 
 bool PcgFile::putCombiRecordBytes(int bank, int number, const std::vector<uint8_t>& bytes) {
-    if (bank < 0 || bank >= static_cast<int>(combiBankLocations_.size())) return false;
-    const auto& loc = combiBankLocations_[static_cast<size_t>(bank)];
-    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return false;
-    if (bytes.size() != loc.bytesPerRecord) return false;
-
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    if (off + loc.bytesPerRecord > data_.size()) return false;
-
-    writeIntoData(off, bytes.data(), bytes.size());
-    refreshCombiInfo(bank, number);
-    return true;
+    return putRecordBytes(/*isProgram=*/false, bank, number, bytes);
 }
 
 std::optional<std::vector<uint8_t>> PcgFile::programRecordBytes(int bank, int number) const {
-    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return std::nullopt;
-    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
-    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return std::nullopt;
-
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    if (off + loc.bytesPerRecord > data_.size()) return std::nullopt;
-
-    return std::vector<uint8_t>(data_.begin() + static_cast<long>(off),
-                                 data_.begin() + static_cast<long>(off + loc.bytesPerRecord));
+    return recordBytes(/*isProgram=*/true, bank, number);
 }
 
 bool PcgFile::putProgramRecordBytes(int bank, int number, const std::vector<uint8_t>& bytes) {
-    if (bank < 0 || bank >= static_cast<int>(programBankLocations_.size())) return false;
-    const auto& loc = programBankLocations_[static_cast<size_t>(bank)];
-    if (number < 0 || static_cast<uint32_t>(number) >= loc.numRecords) return false;
-    if (bytes.size() != loc.bytesPerRecord) return false;
-
-    size_t off = loc.recordsStart + static_cast<size_t>(number) * loc.bytesPerRecord;
-    if (off + loc.bytesPerRecord > data_.size()) return false;
-
-    writeIntoData(off, bytes.data(), bytes.size());
-    refreshProgramInfo(bank, number);
-    return true;
+    return putRecordBytes(/*isProgram=*/true, bank, number, bytes);
 }
 
 std::optional<std::vector<uint8_t>> PcgFile::songRecordBytes(int setlistIndex, int songIndex) const {
@@ -2595,11 +2420,47 @@ bool PcgFile::putSongRecordBytes(int setlistIndex, int songIndex, const std::vec
     return true;
 }
 
+const PcgFile::BankLocation* PcgFile::bankLocation(bool isProgram, int bank) const {
+    if (bank < 0) return nullptr;
+    const auto b = static_cast<size_t>(bank);
+    if (isProgram) return b < programBankLocations_.size() ? &programBankLocations_[b] : nullptr;
+    return b < combiBankLocations_.size() ? &combiBankLocations_[b] : nullptr;
+}
+
+std::optional<size_t> PcgFile::recordOffset(bool isProgram, int bank, int number) const {
+    const BankLocation* loc = bankLocation(isProgram, bank);
+    if (loc == nullptr || number < 0 || static_cast<uint32_t>(number) >= loc->numRecords) return std::nullopt;
+    const size_t off = loc->recordsStart + static_cast<size_t>(number) * loc->bytesPerRecord;
+    if (off + loc->bytesPerRecord > data_.size()) return std::nullopt;
+    return off;
+}
+
+std::optional<std::vector<uint8_t>> PcgFile::recordBytes(bool isProgram, int bank, int number) const {
+    auto off = recordOffset(isProgram, bank, number);
+    if (!off) return std::nullopt;
+    const size_t size = bankLocation(isProgram, bank)->bytesPerRecord;
+    return std::vector<uint8_t>(data_.begin() + static_cast<long>(*off), data_.begin() + static_cast<long>(*off + size));
+}
+
+bool PcgFile::putRecordBytes(bool isProgram, int bank, int number, const std::vector<uint8_t>& bytes) {
+    auto off = recordOffset(isProgram, bank, number);
+    if (!off || bytes.size() != bankLocation(isProgram, bank)->bytesPerRecord) return false;
+    writeIntoData(*off, bytes.data(), bytes.size());
+    if (isProgram) refreshProgramInfo(bank, number);
+    else refreshCombiInfo(bank, number);
+    return true;
+}
+
+const ProgramInfo* PcgFile::findProgram(int bank, int number) const {
+    for (const auto& p : programs_) {
+        if (p.bank == bank && p.number == number) return &p;
+    }
+    return nullptr;
+}
+
 std::string PcgFile::resolveInstrumentName(bool isProgram, int bank, int number) const {
     if (isProgram) {
-        for (const auto& p : programs_) {
-            if (p.bank == bank && p.number == number) return p.name;
-        }
+        if (const ProgramInfo* p = findProgram(bank, number)) return p->name;
     } else {
         for (const auto& c : combis_) {
             if (c.bank == bank && c.number == number) return c.name;

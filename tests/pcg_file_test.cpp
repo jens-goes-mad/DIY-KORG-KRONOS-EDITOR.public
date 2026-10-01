@@ -321,6 +321,80 @@ void testDecodeProgramFields() {
     CHECK_EQ(algoFields.exiAlgorithmType, 2, "decodeProgramFields reads Algorithm Type from file offset 2861");
 }
 
+// classifyMultisampleBankUuid() against the UUID forms KRONOS_MIDI_SysEx.txt
+// spells out, and hd1PlayedSampleSources() against the real
+// Init-Program-HD1.raw template (Single mode, OSC1 Zone1 = Multisample from
+// 4b4f5247-...-4d530000, i.e. ROM mono) with single fields patched. The
+// Generated UUID is a real one: "SGC SAMPLES.KSC"'s own manifest UUID,
+// referenced by real Programs in "Narf Ultimate Covers K2.PCG" (see
+// ProgramDecoder.h).
+void testMultisampleBankReferences() {
+    using kronos::MultisampleBankKind;
+    const uint8_t rom[16] = {'K', 'O', 'R', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 'M', 'S', 0, 0x00};
+    const uint8_t romStereo[16] = {'K', 'O', 'R', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 'M', 'S', 0, 0x01};
+    const uint8_t oldRam[16] = {'K', 'O', 'R', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 'M', 'S', 0, 0x02};
+    const uint8_t exs1[16] = {'K', 'O', 'R', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 'M', 'S', 0, 0x04};
+    const uint8_t exs126Stereo[16] = {'K', 'O', 'R', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 'M', 'S', 0, 0xFF};
+    const uint8_t invalid0[16] = {};
+    const uint8_t invalid1[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    const uint8_t sgc[16] = {0x02, 0x1c, 0xb7, 0xe1, 0x82, 0x2b, 0x4b, 0x50,
+                             0x95, 0x5f, 0x42, 0x88, 0xf1, 0x63, 0xf8, 0xa8};
+    CHECK(kronos::classifyMultisampleBankUuid(rom) == MultisampleBankKind::Rom);
+    CHECK(kronos::classifyMultisampleBankUuid(romStereo) == MultisampleBankKind::Rom);
+    CHECK(kronos::classifyMultisampleBankUuid(oldRam) == MultisampleBankKind::OldRam);
+    CHECK(kronos::classifyMultisampleBankUuid(exs1) == MultisampleBankKind::Exs);
+    CHECK(kronos::classifyMultisampleBankUuid(exs126Stereo) == MultisampleBankKind::Exs);
+    CHECK(kronos::classifyMultisampleBankUuid(invalid0) == MultisampleBankKind::Invalid);
+    CHECK(kronos::classifyMultisampleBankUuid(invalid1) == MultisampleBankKind::Invalid);
+    CHECK(kronos::classifyMultisampleBankUuid(sgc) == MultisampleBankKind::Generated);
+
+    std::ifstream file(std::string(EDITOR_RESOURCES_DIR) + "/Init-Program-HD1.raw", std::ios::binary);
+    const std::vector<uint8_t> init((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    CHECK_EQ(static_cast<int>(init.size()), 4960, "Init-Program-HD1.raw is a real 4960-byte Program record");
+    if (init.size() != 4960) return;
+
+    constexpr size_t kMode = 2562, kOsc1 = 2778, kOsc2 = 3244, kStride = 22;
+    CHECK_EQ(static_cast<int>(init[kMode] & 0x07), 0, "Init HD-1 Program is Single mode");
+    CHECK_EQ(static_cast<int>(init[kOsc1] & 0x03), 1, "Init HD-1 OSC1 Zone1 MS Type is Multisample");
+    CHECK(kronos::classifyMultisampleBankUuid(&init[kOsc1 + 1]) == MultisampleBankKind::Rom);
+    const auto initSources = kronos::hd1PlayedSampleSources(init.data(), init.size());
+    CHECK_EQ(initSources.user || initSources.exs, false, "Init HD-1 Program (ROM multisample only) plays no user/EXs samples");
+
+    // "U" = user, "E" = EXs, "UE" = both, "" = neither.
+    auto sourcesOf = [](const std::vector<uint8_t>& r) {
+        const auto src = kronos::hd1PlayedSampleSources(r.data(), r.size());
+        return std::string(src.user ? "U" : "") + (src.exs ? "E" : "");
+    };
+    auto withUuid = [&](size_t zoneOffset, uint8_t msType, const uint8_t* uuid, uint8_t mode) {
+        std::vector<uint8_t> r = init;
+        r[kMode] = static_cast<uint8_t>((r[kMode] & ~0x07) | mode);
+        r[zoneOffset] = static_cast<uint8_t>((r[zoneOffset] & ~0x03) | msType);
+        std::copy(uuid, uuid + 16, r.begin() + static_cast<long>(zoneOffset) + 1);
+        return sourcesOf(r);
+    };
+    CHECK_EQ(withUuid(kOsc1, 1, sgc, 0), std::string("U"), "Single: OSC1 Zone1 Multisample from a Generated bank = user samples");
+    CHECK_EQ(withUuid(kOsc1 + 7 * kStride, 1, sgc, 0), std::string("U"), "Single: OSC1 Zone8 counts too");
+    CHECK_EQ(withUuid(kOsc1, 1, oldRam, 0), std::string("U"), "Single: Smp: Old RAM (Sampling-mode memory) = user samples");
+    CHECK_EQ(withUuid(kOsc1, 1, exs1, 0), std::string("E"), "Single: an EXs1 bank = Korg EXs samples");
+    CHECK_EQ(withUuid(kOsc1, 1, exs126Stereo, 0), std::string("E"), "Single: EXs126 stereo = Korg EXs samples");
+    CHECK_EQ(withUuid(kOsc1 + kStride, 0, sgc, 0), std::string(""), "an Off zone's leftover UUID does not count");
+    CHECK_EQ(withUuid(kOsc1, 2, sgc, 0), std::string(""), "a Wave Sequence zone does not count (UUID meaning unverified)");
+    CHECK_EQ(withUuid(kOsc2, 1, sgc, 0), std::string(""), "Single: stale OSC2 zone data does not count");
+    CHECK_EQ(withUuid(kOsc2, 1, sgc, 1), std::string("U"), "Double: OSC2 Zone1 from a Generated bank counts");
+    CHECK_EQ(withUuid(kOsc1, 1, sgc, 2), std::string(""), "Drums: zone multisamples are not played");
+    CHECK_EQ(withUuid(kOsc2, 1, sgc, 5), std::string(""), "Double Drums: zone multisamples are not played");
+    {
+        std::vector<uint8_t> both = init;  // OSC1 Zone1 user bank + Zone2 EXs1, both Multisample
+        both[kOsc1] = static_cast<uint8_t>((both[kOsc1] & ~0x03) | 1);
+        std::copy(sgc, sgc + 16, both.begin() + static_cast<long>(kOsc1) + 1);
+        both[kOsc1 + kStride] = static_cast<uint8_t>((both[kOsc1 + kStride] & ~0x03) | 1);
+        std::copy(exs1, exs1 + 16, both.begin() + static_cast<long>(kOsc1 + kStride) + 1);
+        CHECK_EQ(sourcesOf(both), std::string("UE"), "user and EXs zones in one Program report both");
+    }
+    const auto truncated = kronos::hd1PlayedSampleSources(init.data(), 3000);
+    CHECK_EQ(truncated.user || truncated.exs, false, "a truncated record never counts");
+}
+
 void testClassifyProgramBankType() {
     // Tag is the primary signal -- PBK1=Hd1, MBK1=Exi -- independent of stride.
     auto hd1Match = kronos::classifyProgramBankType("PBK1", 4960);
@@ -585,8 +659,12 @@ void testPcgFileEndToEnd() {
     {
         // Successful copy: "Unique Program" (bank0/number2) into the empty
         // bank0/number3.
+        const uint64_t editCountBefore = pcg.editCount();
         auto ok = pcg.copyProgramFrom(pcg, 0, 2, 0, 3);
         CHECK(!ok.has_value());  // nullopt == success
+        CHECK(pcg.isDirty());
+        CHECK(pcg.editCount() > editCountBefore);  // every write bumps it, see PcgFile::editCount()
+        const uint64_t editCountAfterCopy = pcg.editCount();
         auto copied = pcg.decodeProgram(0, 3);
         CHECK(copied.has_value());
         if (copied) {
@@ -622,6 +700,8 @@ void testPcgFileEndToEnd() {
         if (stillOriginal) {
             CHECK_EQ(stillOriginal->name, std::string("Test Program A"), "rejected occupied-slot copy leaves the destination untouched");
         }
+        // Neither rejected copy above wrote anything.
+        CHECK_EQ(pcg.editCount(), editCountAfterCopy, "rejected copies leave editCount() unchanged");
 
         // Allowed (2026-09-04, reported directly as an unwanted restriction):
         // copying a Program that's already byte-identical to another one
@@ -3718,6 +3798,7 @@ int main() {
     testDecodeProgramFields();
     testClassifyProgramBankType();
     testExiAlgorithmTypeRealTemplates();
+    testMultisampleBankReferences();
     testDecodeCombiFields();
     testHashProgramRecord();
     testPcgFileEndToEnd();

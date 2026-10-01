@@ -29,8 +29,13 @@
 // The dropdowns follow dataset open/close live: this file subscribes to
 // datasets.js's onDatasetsChanged() broadcast (fed by every refreshDatasets(),
 // i.e. any pane opening/closing a file), so they never go stale while the
-// sidebar is open, and the last result is dropped as soon as either picked
-// dataset changes (closed, or its `dirty` flag flipped).
+// sidebar is open.
+//
+// The results themselves live in cross-dataset-results.js (shared with the
+// panes' "Cross Dataset" filter dropdown), not here: this file stores each
+// search's result there and reads it back to draw. That store drops a result
+// as soon as either dataset is closed or edited (its `editCount` moved), and
+// this sidebar redraws on its broadcast.
 //
 // Read-only except the Combi resolve buttons in "Compare two files". Wrapped
 // in an IIFE, same reason every other app-level sidebar file is (STATE.md
@@ -43,37 +48,19 @@ const TITLE = "Cross Dataset analysis";
 
 let toolMode = "duplicates";  // "duplicates" | "differences" | "comparePrograms" | "compareCombis"
 
-let knownDatasets = [];       // last datasets.js broadcast: [{datasetId, displayName, setlistCount, dirty}]
+let knownDatasets = [];       // last datasets.js broadcast: [{datasetId, displayName, setlistCount, dirty, editCount}]
 let compareDatasetIdA = null; // A/B are shared by every mode (names kept from when only "Compare" had them)
 let compareDatasetIdB = null;
 let isBusy = false;
 
-// Per mode: null, or { idA, idB, dirtyA, dirtyB, ...payload }. Dropped when the
-// picked datasets change or get touched (see datasetsChanged()).
-const results = { duplicates: null, differences: null, comparePrograms: null, compareCombis: null };
 // Which Combi divergence rows are expanded to show their own per-change resolve
 // rows (STATE.md entry 94) -- keyed "bank-number".
 let expandedCombiKeys = new Set();
 // Compare COMBI hides slots that are just "Init Combi" on BOTH sides (untouched
 // template slots -- noise when comparing two backups) unless this is turned off.
+// The two Combi row rules -- isInitCombiRow() and isDifferentSong() -- live in
+// cross-dataset-results.js, shared with the panes' Compare COMBI categories.
 let hideInitCombis = true;
-
-function isInitCombiName(name) {
-  return /init combi/i.test(name);
-}
-
-// An untouched template slot on both sides: nothing to compare.
-function isInitCombiRow(d) {
-  return isInitCombiName(d.nameA) && isInitCombiName(d.nameB);
-}
-
-// A Combi with a different NAME and more than 3 changes is a different song,
-// not an edited one -- listing every differing block is just noise.
-const DIFFERENT_SONG_MIN_CHANGES = 4;
-
-function isDifferentSong(d) {
-  return d.nameA !== d.nameB && d.changes.length >= DIFFERENT_SONG_MIN_CHANGES;
-}
 
 // What the Combi table's "Changes" column shows: just how many things differ,
 // or "Different song" (see isDifferentSong()). The per-change breakdown is one
@@ -185,9 +172,9 @@ function basenameOfPath(path) {
   return idx === -1 ? path : path.slice(idx + 1);
 }
 
-function isDirty(datasets, id) {
+function editCountOf(datasets, id) {
   const d = datasets.find((x) => x.datasetId === id);
-  return d ? d.dirty : null;
+  return d ? d.editCount : null;
 }
 
 // Called for every datasets.js broadcast (a dataset opened, closed or re-listed)
@@ -209,13 +196,13 @@ function datasetsChanged(datasets) {
     const c = datasets.find((d) => d.datasetId !== compareDatasetIdA);
     compareDatasetIdB = c ? c.datasetId : null;
   }
-  for (const mode of Object.keys(results)) {
-    const r = results[mode];
-    if (!r) continue;
-    if (r.idA !== compareDatasetIdA || r.idB !== compareDatasetIdB ||
-        isDirty(datasets, r.idA) !== r.dirtyA || isDirty(datasets, r.idB) !== r.dirtyB) {
-      results[mode] = null;
-    }
+  // A result describes ONE pair -- if the picks moved (a picked file was
+  // closed), it's gone; otherwise drop it only if either file was edited.
+  const anyResult = MODES.map(([mode]) => getCrossDatasetResult(mode)).find((r) => r);
+  if (anyResult && (anyResult.idA !== compareDatasetIdA || anyResult.idB !== compareDatasetIdB)) {
+    clearCrossDatasetResults();
+  } else {
+    revalidateCrossDatasetResults(datasets);
   }
   sidebar.update();
 }
@@ -243,11 +230,11 @@ async function run(mode = toolMode, { keepTableState = false } = {}) {
     } else {
       payload = { combis: await window.findDivergentCombisAcrossDatasets(idA, idB) };
     }
-    const fresh = await window.listDatasets();  // current dirty flags, without re-broadcasting
-    results[mode] = { idA, idB, dirtyA: isDirty(fresh, idA), dirtyB: isDirty(fresh, idB), ...payload };
+    const fresh = await window.listDatasets();  // current edit counts, without re-broadcasting
     if (!keepTableState) forgetTableStates(mode);  // new rows: old sort/filter no longer describe them
+    setCrossDatasetResult(mode, { idA, idB, editCountA: editCountOf(fresh, idA), editCountB: editCountOf(fresh, idB) }, payload);
   } catch (err) {
-    results[mode] = null;
+    clearCrossDatasetResults(mode);
     showToast(`Search failed: ${err && err.message ? err.message : err}`, { isError: true });
   } finally {
     isBusy = false;
@@ -785,7 +772,7 @@ function buildDatasetSelect(bodyEl, labelText, currentId, onChange) {
   select.disabled = isBusy;
   select.addEventListener("change", () => {
     onChange(select.value === "" ? null : Number(select.value));
-    for (const mode of Object.keys(results)) results[mode] = null;  // a result describes ONE pair
+    clearCrossDatasetResults();  // a result describes ONE pair -- the panes' filters go too
     sidebar.update();
   });
   wrap.appendChild(select);
@@ -809,7 +796,7 @@ function buildBody(bodyEl) {
   findBtn.addEventListener("click", () => run());
   bodyEl.appendChild(findBtn);
 
-  const r = results[toolMode];
+  const r = getCrossDatasetResult(toolMode);
   if (!r) return;
   // Only this area scrolls; the mode toggle, dropdowns and Find button above stay put.
   const resultsEl = document.createElement("div");
@@ -827,9 +814,10 @@ window.toggleCrossDatasetDuplicatesPanel = () => {
     return;
   }
   sidebar.open({ title: TITLE, build: buildBody });
-  refreshDatasets();  // datasets.js -- re-broadcasts the current list, incl. fresh dirty flags
+  refreshDatasets();  // datasets.js -- re-broadcasts the current list, incl. fresh edit counts
 };
 
 onDatasetsChanged(datasetsChanged);
+onCrossDatasetResultsChanged(() => sidebar.update());  // e.g. a pane's edit dropped the result
 
 })();

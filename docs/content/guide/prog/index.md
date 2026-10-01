@@ -20,6 +20,29 @@ Expanding a Program row shows two lists: every **Set List slot** that references
 (see the [User Guide](/guide)'s Jumping section), so you can go straight from a Program to
 everywhere it's actually used.
 
+## Sample-based Programs
+
+A small **waveform icon** right after a Program's engine type (for example **HD-1** followed
+by the icon) shows where that Program's samples come from:
+
+- **Orange** -- it plays **user samples**: a user sample bank you load onto the Kronos from a
+  `.KSC` file, or samples recorded in Sampling mode. Such a Program only sounds right on an
+  instrument that has those samples loaded -- worth knowing before you copy it to another
+  backup.
+- **Light gray** -- it plays samples from one of **Korg's EXs expansion libraries**, which
+  have to be installed/loaded on the instrument too.
+- **No icon** -- built-in ROM samples only, or a non-sample engine (see below).
+
+If a Program uses both, the orange icon wins. Hover the icon for a short explanation. The
+same icon appears wherever that Program is referenced: the Duplicates tab, a Set List slot's
+bank button, and a Combi's Timbre list.
+
+It is read directly from the Program's own data (details in
+[The file format](/format), section 5.8), with a few known limits: only HD-1 Programs are
+checked; Programs in Drums mode (which play Drum Kits) and EXi MOD-7 Programs' own sample
+section are not covered yet; and a user bank can't be told apart from Korg's very newest
+EXs libraries (EXs127 and above) from the backup file alone.
+
 ## Copying a Program by drag-and-drop
 
 Drag one Program row onto an empty slot (same pane or a different pane's dataset) to copy

@@ -55,7 +55,7 @@ public:
     // No args -- every currently open dataset, so any UI selector (a pane, or
     // Library) can populate/refresh its options regardless of which pane (if
     // any) originally opened it.
-    choc::value::Value listDatasets(const choc::value::ValueView& args);   // [] -> [{datasetId, displayName, setlistCount}]
+    choc::value::Value listDatasets(const choc::value::ValueView& args);   // [] -> [{datasetId, displayName, setlistCount, dirty, editCount}]
 
     // Frees a loaded dataset. A no-op (still returns ok) if datasetId is
     // already gone -- callers don't need to track whether they raced another

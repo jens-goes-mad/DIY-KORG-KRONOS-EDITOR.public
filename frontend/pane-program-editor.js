@@ -29,10 +29,12 @@
 // `callbacks.getFilterText()` reads the ONE filter input shared across
 // Programs/Combis/Duplicates (typing there keeps filtering whichever tab is
 // currently showing) -- owned by the coordinator, not this panel, so it's a
-// getter rather than this panel's own state.
+// getter rather than this panel's own state. `callbacks.getSlotFilter()` is
+// the same idea for the coordinator's "Cross Dataset" dropdown: a Set of slot
+// keys to keep, or null.
 function createProgramsPanel(
   { panelTable, bankFilterRow, selectControlRow },
-  { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
+  { getDatasetId, getFilterText, getSlotFilter, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
 ) {
   let programs = [];
   let expandedProgramKey = null;  // `${bank}-${number}` of the one expanded usage row, if any
@@ -251,7 +253,7 @@ function createProgramsPanel(
 
   function render() {
     const needle = getFilterText().trim().toLowerCase();
-    const rows = filterByName(programs, needle).filter((p) => programBankFilter.has(p.bank));
+    const rows = filterBySlots(filterByName(programs, needle), getSlotFilter()).filter((p) => programBankFilter.has(p.bank));
 
     panelTable.innerHTML = "";
     const table = document.createElement("table");
@@ -297,12 +299,15 @@ function createProgramsPanel(
         });
         typeTd.appendChild(typeBtn);
       } else {
-        typeTd.textContent =
+        setLabelWithSampleIcon(
+          typeTd,
           p.bankType === 1 && p.exiAlgorithmType != null
             ? `${programBankTypeName(p.bankType)} (${exiEngineName(p.exiAlgorithmType)})`
             : p.bankType != null
               ? programBankTypeName(p.bankType)
-              : "";
+              : "",
+          programSampleKind(p)
+        );
       }
       // Row's own "more actions" menu (currently just Reset entry) -- a
       // real, always-visible column at the far right (2026-09-04, moved out
@@ -418,6 +423,9 @@ function createProgramsPanel(
     programs = datasetId == null ? [] : await window.listPrograms(datasetId);
     if (datasetId != null) log(`[Library:Programs] Loaded dataset ${datasetId}: ${programs.length} Programs.`);
     programPresentBanks = new Set(programs.map((p) => p.bank));
+    // Every write that can move a Program ends in this re-fetch, so this is
+    // where a Cross Dataset result whose file was just edited gets dropped.
+    await revalidateCrossDatasetResults();
   }
 
   // Called by the coordinator (pane.js's createLibraryPanels()) whenever the
@@ -627,9 +635,7 @@ function createDuplicatesPanel(
       for (const entry of group) {
         const entryKey = `${entry.bank}-${entry.number}`;
         const isSrc = resolvePicker.src === entryKey;
-        const label = isProgram
-          ? formatBankNumber({ isProgram: true, bank: entry.bank, number: entry.number }, entry.bankType)
-          : formatBankNumber({ isProgram: false, bank: entry.bank, number: entry.number });
+        const label = formatBankNumber({ isProgram, bank: entry.bank, number: entry.number }, entry.bankType);
 
         const tr = document.createElement("tr");
 
@@ -673,7 +679,7 @@ function createDuplicatesPanel(
         duplTd.appendChild(duplCheckbox);
 
         const slotTd = document.createElement("td");
-        slotTd.textContent = label;
+        setLabelWithSampleIcon(slotTd, label, isProgram ? programSampleKind(entry) : null);
 
         tr.append(srcTd, duplTd, slotTd);
         tbody.appendChild(tr);
@@ -810,16 +816,19 @@ function createDuplicatesPanel(
     const row = document.createElement("div");
     row.className = "bank-filter-row";
     for (const entry of group) {
-      const label = isProgram
-        ? formatBankNumber({ isProgram: true, bank: entry.bank, number: entry.number }, entry.bankType)
-        : formatBankNumber({ isProgram: false, bank: entry.bank, number: entry.number });
+      const label = formatBankNumber({ isProgram, bank: entry.bank, number: entry.number }, entry.bankType);
 
       const navBtn = document.createElement("button");
       navBtn.type = "button";
       navBtn.className = "button is-small bank-filter-button";
-      navBtn.textContent = isProgram
-        ? `${label} (Combi ${entry.combiUsageCountAvailable ? `#${entry.combiUsageCount}` : "n/a"} / Set List #${entry.setlistUsageCount})`
-        : `${label} (Set List #${entry.setlistReferenceCount})`;
+      setLabelWithSampleIcon(
+        navBtn,
+        label,
+        isProgram ? programSampleKind(entry) : null,
+        isProgram
+          ? ` (Combi ${entry.combiUsageCountAvailable ? `#${entry.combiUsageCount}` : "n/a"} / Set List #${entry.setlistUsageCount})`
+          : ` (Set List #${entry.setlistReferenceCount})`
+      );
       navBtn.title =
         `Jump to ${label}. Shift+click: opposite pane. Shift+Cmd+click: opposite pane, ` +
         "same coordinate, keep its own dataset.";
@@ -955,13 +964,11 @@ function createDuplicatesPanel(
       const cluster = document.createElement("div");
       cluster.className = "bank-filter-row name-collision-variant";
       for (const m of variant.members) {
-        const label = isProgram
-          ? formatBankNumber({ isProgram: true, bank: m.bank, number: m.number }, m.bankType)
-          : formatBankNumber({ isProgram: false, bank: m.bank, number: m.number });
+        const label = formatBankNumber({ isProgram, bank: m.bank, number: m.number }, m.bankType);
         const badge = document.createElement("button");
         badge.type = "button";
         badge.className = "button is-small bank-filter-button";
-        badge.textContent = label;
+        setLabelWithSampleIcon(badge, label, isProgram ? programSampleKind(m) : null);
         badge.title =
           `${label} -- variant ${i + 1} of ${group.variants.length} sharing the name "${group.name}". ` +
           (variant.members.length > 1

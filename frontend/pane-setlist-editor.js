@@ -966,7 +966,7 @@ function createSetlistPanel(
         const bankButton = document.createElement("button");
         bankButton.type = "button";
         bankButton.className = "button is-small bank-jump-button";  // Bulma button, same look as the topbar's Open button
-        bankButton.textContent = formatBankNumber(entry, bankType);
+        setLabelWithSampleIcon(bankButton, formatBankNumber(entry, bankType), entry.isProgram ? programSampleKind(entry) : null);
         bankButton.title =
           `Show ${entry.isProgram ? "Program" : "Combi"} ${formatBankNumber(entry, bankType)} in this pane's ` +
           "Programs/Combis view (Shift+click: show in the opposite pane instead, switching its dataset to " +

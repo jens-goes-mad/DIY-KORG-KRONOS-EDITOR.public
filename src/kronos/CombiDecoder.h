@@ -46,6 +46,12 @@ CombiFields decodeCombiFields(const uint8_t* record, size_t recordSize, int bank
 // way ProgramInfo::contentHash already is.
 uint64_t hashCombiRecord(const uint8_t* record, size_t recordSize);
 
+// The one place a CombiInfo (PcgFile.h) is built from a record's bytes --
+// decodeCombiFields() + hashCombiRecord(). Used by PcgFile's load pass,
+// decodeCombi() and refreshCombiInfo() alike (Combi counterpart of
+// ProgramDecoder.h's decodeProgramInfo()).
+CombiInfo decodeCombiInfo(const uint8_t* record, size_t recordSize, int bank, int number);
+
 // Byte offset within a Combi record where Timbre `timbreIndex`'s (0-15) own
 // 3-byte block starts (number, rawBankCode, status) -- see
 // decodeCombiFields() above for the confirmed base offset/stride this

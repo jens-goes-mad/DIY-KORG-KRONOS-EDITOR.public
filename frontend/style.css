@@ -630,6 +630,25 @@ td.has-comment {
   white-space: normal;
 }
 
+/* The small waveform glyph marking a Program by the kind of samples it
+   plays (pane.js's sampleIcon()) -- orange for user samples, light gray for
+   Korg EXs libraries. Sized in `em` so it follows its cell/button's own font
+   size; flex-shrink: 0 keeps a Bulma .button's flex layout from squeezing
+   it. */
+.sample-icon {
+  width: 1.1em;
+  height: 1.1em;
+  margin-left: 0.3em;
+  vertical-align: -0.2em;
+  flex-shrink: 0;
+}
+.sample-icon.is-user {
+  color: var(--editor-accent);
+}
+.sample-icon.is-exs {
+  color: lightgray;
+}
+
 /* Still used by library.js's refCell() -- Combi usage counts aren't
    confirmed correct for every bank yet (see docs/README.md), shown
    dimmed/italic rather than hidden. */
@@ -902,6 +921,7 @@ td.has-comment {
    attribute's UA-stylesheet styling regardless of specificity. */
 .select-control-row {
   display: flex;
+  flex-wrap: wrap;  /* half a pane wide now (.library-toolbar) -- Combis' Set List dropdown wraps below the buttons */
   gap: 4px;
   margin-bottom: 8px;
 }
@@ -912,6 +932,45 @@ td.has-comment {
 
 .select-control-button {
   min-width: 4.5em;
+}
+
+/* Programs/Combis toolbar (pane.js's createLibraryPanels()): two equal Bulma
+   columns -- name filter + None/All/Invert | "Cross Dataset" label + dropdown.
+   Bulma's column gap zeroed (same as .panes.columns above -- its padding/
+   negative-margin gap would poke out of the pane), the gap comes from flex
+   `gap` instead. Not `is-gapless`: that also pulls in Bulma's spacing helper
+   `.is-gapless { gap: 0 !important }`, which kills this `gap`. */
+.columns.library-toolbar {
+  --bulma-column-gap: 0px;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.library-toolbar-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cross-dataset-filter {
+  gap: 4px;
+}
+
+.cross-dataset-filter[hidden] {
+  display: none;
+}
+
+.cross-dataset-filter-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* A Cross Dataset filter is on -- same orange as every other "active" marker,
+   so a shortened list never reads as missing data. */
+.select.is-filtering select {
+  border-color: var(--editor-accent);
+  color: var(--editor-accent);
 }
 
 /* Combis-only Set List filter dropdown, appended into the same

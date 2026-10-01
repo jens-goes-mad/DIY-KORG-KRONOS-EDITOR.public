@@ -388,6 +388,57 @@ function filterByName(rows, needle) {
   return rows.filter((r) => (r.name || "").toLowerCase().includes(needle));
 }
 
+// The "Cross Dataset" dropdown's filter (createLibraryPanels() below): keeps
+// only the rows whose slot is in `slots` (a Set of crossDatasetSlotKey()s,
+// cross-dataset-results.js); null = no filter.
+function filterBySlots(rows, slots) {
+  if (!slots) return rows;
+  return rows.filter((r) => slots.has(crossDatasetSlotKey(r.bank, r.number)));
+}
+
+// A small waveform glyph marking a Program by the kind of sample bank it
+// plays -- the backend's ProgramInfo::usesUserSamples/usesExsSamples
+// (ProgramDecoder.h's hd1PlayedSampleSources() has the exact rule; HD-1 zone
+// multisamples only). Orange = user samples (a user sample bank loaded from
+// a .KSC, or the Sampling-mode "Old RAM"), light gray = Korg EXs expansion
+// libraries (2026-09-30, per direct request); ROM-only Programs get none,
+// and user wins when a Program plays both. Inline SVG (no reliably-rendered
+// Unicode waveform); `currentColor`, so the color comes from style.css's
+// .sample-icon.is-user / .is-exs.
+const SAMPLE_ICON_TITLES = {
+  user: "Plays user samples (a user sample bank from a .KSC, or Sampling-mode RAM)",
+  exs: "Plays Korg EXs expansion samples",
+};
+
+// "user" | "exs" | null for a Program-shaped object (a ProgramInfo, or a Set
+// List entry carrying the same two flags) -- the one place that decides
+// which icon a Program gets.
+function programSampleKind(p) {
+  if (!p) return null;
+  return p.usesUserSamples ? "user" : p.usesExsSamples ? "exs" : null;
+}
+
+function sampleIcon(kind) {
+  const title = SAMPLE_ICON_TITLES[kind];
+  const tpl = document.createElement("template");
+  tpl.innerHTML =
+    `<svg class="sample-icon is-${kind}" viewBox="0 0 16 16" role="img" aria-label="${title}">` +
+    `<title>${title}</title>` +
+    '<path d="M1 8h2l1.5-4 2 8 2-10 2 12 1.5-6H15" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return tpl.content.firstChild;
+}
+
+// Sets `el`'s content to `text`, then sampleIcon(sampleKind) when there is
+// one, then `suffix`. The icon always sits right after the engine type (per
+// direct request 2026-09-30: "HD-1 <icon>") -- `text` ends with it ("HD-1",
+// or a formatBankNumber() label like "U-G 000 (HD-1)"), and anything that
+// must follow the icon ("(off)", Duplicates' usage counts) goes in `suffix`.
+function setLabelWithSampleIcon(el, text, sampleKind, suffix = "") {
+  if (sampleKind) el.replaceChildren(document.createTextNode(text), sampleIcon(sampleKind), document.createTextNode(suffix));
+  else el.textContent = text + suffix;
+}
+
 function bankCell(isProgram, bank, number, bankType) {
   const td = document.createElement("td");
   td.textContent = formatBankNumber({ isProgram, bank, number }, bankType);
@@ -467,11 +518,24 @@ function createLibraryPanels(
     onSetlistRefsRepointed,
   }
 ) {
+  // Toolbar: two equal columns -- the name filter + None/All/Invert on the
+  // left, the "Cross Dataset" filter on the right (see refreshCrossDatasetFilter()).
+  // `is-mobile`: Bulma stacks columns by WINDOW width, not this pane's. Plain
+  // `.column`s (equal flex shares) rather than `is-half`, so the left one
+  // fills the row by itself when the right one is hidden (Duplicates tab).
   root.innerHTML = `
-    <input class="filter-input library-filter input is-small" type="text" placeholder="Filter / search..." />
-    <div class="select-control-area">
-      <div class="select-control-row" data-select-control="programs"></div>
-      <div class="select-control-row" data-select-control="combis" hidden></div>
+    <div class="columns is-mobile library-toolbar">
+      <div class="column library-toolbar-column">
+        <input class="filter-input library-filter input is-small" type="text" placeholder="Filter / search..." />
+        <div class="select-control-area">
+          <div class="select-control-row" data-select-control="programs"></div>
+          <div class="select-control-row" data-select-control="combis" hidden></div>
+        </div>
+      </div>
+      <div class="column library-toolbar-column cross-dataset-filter">
+        <label class="cross-dataset-filter-label">Cross Dataset</label>
+        <div class="select is-small is-fullwidth"><select class="cross-dataset-filter-select"></select></div>
+      </div>
     </div>
     <div class="bank-filter-area">
       <div class="bank-filter-row" data-bank-filter="programs"></div>
@@ -522,9 +586,95 @@ function createLibraryPanels(
   let currentTab = "programs";
   const getFilterText = () => filterInput.value;
 
+  // "Cross Dataset" filter (right toolbar column): narrows the Programs/Combis
+  // list to one category of the last Cross Dataset find -- seen from THIS
+  // pane's dataset (cross-dataset-results.js's getCrossDatasetFilterCategories()).
+  // One pick per tab (a category key, or null = no filter), reset on a new
+  // dataset, dropped when the result it came from is gone. Enabled only while
+  // a stored result includes this pane's dataset. Hidden on Duplicates.
+  const crossDatasetColumn = root.querySelector(".cross-dataset-filter");
+  const crossDatasetSelect = root.querySelector(".cross-dataset-filter-select");
+  const crossDatasetPicks = { programs: null, combis: null };
+
+  // [{ group, items: [{ key, label, slots }] }] for `tab`, or null.
+  function crossDatasetGroups(tab) {
+    const datasetId = getDatasetId();
+    return datasetId == null ? null : getCrossDatasetFilterCategories(datasetId, tab);
+  }
+
+  function crossDatasetItem(tab, key) {
+    const groups = crossDatasetGroups(tab) || [];
+    for (const g of groups) {
+      const item = g.items.find((it) => it.key === key);
+      if (item) return item;
+    }
+    return null;
+  }
+
+  // The slot Set `tab`'s current pick keeps, or null (no filter).
+  function getSlotFilter(tab) {
+    const key = crossDatasetPicks[tab];
+    const item = key ? crossDatasetItem(tab, key) : null;
+    return item ? item.slots : null;
+  }
+
+  // Forgets every pick whose category no longer exists (result dropped, or
+  // this pane now shows a file outside the compared pair).
+  function dropStaleCrossDatasetPicks() {
+    for (const tab of Object.keys(crossDatasetPicks)) {
+      if (crossDatasetPicks[tab] && !crossDatasetItem(tab, crossDatasetPicks[tab])) crossDatasetPicks[tab] = null;
+    }
+  }
+
+  // Redraws the dropdown for the current tab.
+  function refreshCrossDatasetFilter() {
+    crossDatasetColumn.hidden = currentTab === "duplicates";
+    if (currentTab === "duplicates") return;
+    const groups = crossDatasetGroups(currentTab);
+    crossDatasetSelect.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "(no filter)";
+    crossDatasetSelect.appendChild(none);
+    // A mode with several categories is an <optgroup>; a one-category mode (group: null) a plain option.
+    for (const g of groups || []) {
+      const parent = g.group ? document.createElement("optgroup") : crossDatasetSelect;
+      if (g.group) parent.label = g.group;
+      for (const it of g.items) {
+        const opt = document.createElement("option");
+        opt.value = it.key;
+        opt.textContent = `${it.label} (${it.slots.size})`;
+        opt.disabled = it.slots.size === 0;
+        parent.appendChild(opt);
+      }
+      if (g.group) crossDatasetSelect.appendChild(parent);
+    }
+    crossDatasetSelect.value = crossDatasetPicks[currentTab] || "";
+    const usable = !!groups && groups.length > 0;
+    crossDatasetSelect.disabled = !usable;
+    const modesForTab = currentTab === "programs" ? "Duplicates, Differences or Compare PROG" : "Compare COMBI";
+    crossDatasetSelect.title = usable
+      ? ""
+      : `Run a Cross Dataset ${modesForTab} find (top bar) that includes this file.`;
+    // Orange outline while a filter is on, so a shortened list never looks like missing data.
+    crossDatasetSelect.parentElement.classList.toggle("is-filtering", !!getSlotFilter(currentTab));
+  }
+
+  crossDatasetSelect.addEventListener("change", () => {
+    crossDatasetPicks[currentTab] = crossDatasetSelect.value || null;
+    refreshCrossDatasetFilter();
+    renderCurrentTab();
+  });
+
+  onCrossDatasetResultsChanged(() => {
+    dropStaleCrossDatasetPicks();
+    refreshCrossDatasetFilter();
+    renderCurrentTab();
+  });
+
   const programsPanel = createProgramsPanel(
     { panelTable: panelTables.programs, bankFilterRow: bankFilterRows.programs, selectControlRow: selectControlRows.programs },
-    { getDatasetId, getFilterText, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
+    { getDatasetId, getFilterText, getSlotFilter: () => getSlotFilter("programs"), getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
   );
 
   const duplicatesPanel = createDuplicatesPanel(
@@ -545,6 +695,7 @@ function createLibraryPanels(
     {
       getDatasetId,
       getFilterText,
+      getSlotFilter: () => getSlotFilter("combis"),
       getProgramBankType,
       findProgram: programsPanel.findProgram,
       onJumpToSetlist,
@@ -577,6 +728,7 @@ function createLibraryPanels(
     Object.entries(selectControlRows).forEach(([rowName, el]) => {
       el.hidden = rowName !== currentTab;
     });
+    refreshCrossDatasetFilter();
     renderCurrentTab();
   }
 
@@ -594,6 +746,8 @@ function createLibraryPanels(
   //   keeps whatever the user had filtered to.
   async function load({ resetFilters = false } = {}) {
     if (resetFilters) {
+      crossDatasetPicks.programs = null;
+      crossDatasetPicks.combis = null;
       await programsPanel.onDatasetChanged();
       await combisPanel.onDatasetChanged();
       await duplicatesPanel.onDatasetChanged();
@@ -602,6 +756,7 @@ function createLibraryPanels(
       await combisPanel.refresh();
       await duplicatesPanel.refresh();
     }
+    refreshCrossDatasetFilter();  // the dataset may have changed -- enabled state + categories follow it
     renderCurrentTab();
   }
 
@@ -631,9 +786,16 @@ function createLibraryPanels(
   // jumpToEntry(), which expands that exact entry's usage/Timbre row and
   // scrolls it into view, same as clicking the row directly. Clears any
   // active text filter first (shared across tabs, see this function's own
-  // top-of-file comment) so it can't hide the entry being jumped to.
+  // top-of-file comment) so it can't hide the entry being jumped to -- and
+  // the Cross Dataset filter too, but only if it would hide that entry.
   function jumpToEntry(isProgram, bank, number) {
     filterInput.value = "";
+    const tab = isProgram ? "programs" : "combis";
+    const slots = getSlotFilter(tab);
+    if (slots && !slots.has(crossDatasetSlotKey(bank, number))) {
+      crossDatasetPicks[tab] = null;
+      refreshCrossDatasetFilter();
+    }
     if (isProgram) programsPanel.jumpToEntry(bank, number);
     else combisPanel.jumpToEntry(bank, number);
   }

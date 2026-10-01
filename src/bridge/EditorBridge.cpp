@@ -255,6 +255,10 @@ choc::value::Value EditorBridge::programToValue(const kronos::ProgramInfo& progr
     // engine name and whether to show it at all, same "C++ decodes, JS
     // presents" split as every other formatted field in this bridge.
     v.setMember("exiAlgorithmType", program.exiAlgorithmType);
+    // See ProgramInfo::usesUserSamples/usesExsSamples -- drive the
+    // frontend's sample (waveform) icon.
+    v.setMember("usesUserSamples", program.usesUserSamples);
+    v.setMember("usesExsSamples", program.usesExsSamples);
     return v;
 }
 
@@ -269,9 +273,9 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
     // name but with NO PBK1 file-order index (kronos::timbreBankName()'s
     // own doc comment -- e.g. GM, permanently indexless), and "" again for
     // a code that DOES have a confirmed index: for that last case,
-    // library.js's formatTimbreRef() derives the name from
-    // rawBankCode/PROGRAM_BANK_NAMES itself rather than reading it from
-    // here, so there's exactly one place that name is spelled out. "" from
+    // pane-combi-editor.js's formatTimbreRef() derives the name from
+    // programBank (below)/PROGRAM_BANK_NAMES itself rather than reading it
+    // from here, so there's exactly one place that name is spelled out. "" from
     // the first case falls back to showing the numeric code honestly
     // instead of a guessed name.
     auto timbres = choc::value::createEmptyArray();
@@ -280,6 +284,9 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
         tv.setMember("number", t.number);
         tv.setMember("rawBankCode", t.rawBankCode);
         tv.setMember("bankName", kronos::timbreBankName(t.rawBankCode));
+        // PBK1 Program bank index this Timbre refers to, -1 if unconfirmed --
+        // see kronos::programBankForConfirmedTimbreCode().
+        tv.setMember("programBank", kronos::programBankForConfirmedTimbreCode(t.rawBankCode));
         tv.setMember("isDefault", t.isDefault);
         // Off does NOT imply isDefault -- a Timbre can hold a real,
         // non-zero Program reference while switched off (see TimbreRef's
@@ -312,6 +319,7 @@ choc::value::Value EditorBridge::datasetResultValue(int datasetId, const Dataset
     result.setMember("displayName", dataset.displayName);
     result.setMember("setlistCount", static_cast<int>(dataset.file.setlists().size()));
     result.setMember("dirty", dataset.file.isDirty());
+    result.setMember("editCount", static_cast<int64_t>(dataset.file.editCount()));
     return result;
 }
 
@@ -369,6 +377,7 @@ choc::value::Value EditorBridge::listDatasets(const choc::value::ValueView&) {
         v.setMember("displayName", dataset.displayName);
         v.setMember("setlistCount", static_cast<int>(dataset.file.setlists().size()));
         v.setMember("dirty", dataset.file.isDirty());
+        v.setMember("editCount", static_cast<int64_t>(dataset.file.editCount()));  // see PcgFile::editCount()
         result.addArrayElement(v);
     }
     return result;
@@ -439,10 +448,21 @@ choc::value::Value EditorBridge::getEntries(const choc::value::ValueView& args) 
     const int setlistIndex = intArg(args, 1);
 
     const auto* setlist = setlistOf(datasetId, setlistIndex);
-    if (setlist == nullptr) return choc::value::createEmptyArray();
+    const auto* file = fileOf(datasetId);
+    if (setlist == nullptr || file == nullptr) return choc::value::createEmptyArray();
 
     auto result = choc::value::createEmptyArray();
-    for (const auto& song : setlist->songs) result.addArrayElement(songToValue(song));
+    for (const auto& song : setlist->songs) {
+        auto v = songToValue(song);
+        // Read off the referenced Program itself (PcgFile::findProgram()),
+        // at request time, so it always reflects that slot's current
+        // content -- see ProgramInfo::usesUserSamples/usesExsSamples.
+        const kronos::ProgramInfo* program =
+            song.params.found && song.params.isProgram ? file->findProgram(song.params.bank, song.params.number) : nullptr;
+        v.setMember("usesUserSamples", program != nullptr && program->usesUserSamples);
+        v.setMember("usesExsSamples", program != nullptr && program->usesExsSamples);
+        result.addArrayElement(v);
+    }
     return result;
 }
 
@@ -981,25 +1001,24 @@ choc::value::Value EditorBridge::resolveCombiDivergenceChange(const choc::value:
     return result;
 }
 
-choc::value::Value EditorBridge::findProgramNameCollisions(const choc::value::ValueView& args) {
-    const int datasetId = intArg(args, 0);
-    auto* file = fileOf(datasetId);
-    if (file == nullptr) return choc::value::createEmptyArray();
-
+// Shared body of findProgramNameCollisions()/findCombiNameCollisions():
+// every member is decoded fresh from the file and serialized by
+// `memberToValue(bank, number)` (an empty optional skips it). bankType is
+// the group's kronos::ProgramBankType, always -1 for a Combi group (see
+// NameCollisionGroup's own doc comment in PcgFile.h).
+template <class MemberToValue>
+static choc::value::Value nameCollisionGroupsToValue(const std::vector<kronos::PcgFile::NameCollisionGroup>& groups,
+                                                     MemberToValue memberToValue) {
     auto result = choc::value::createEmptyArray();
-    for (const auto& group : file->findProgramNameCollisions()) {
+    for (const auto& group : groups) {
         auto groupValue = choc::value::createObject("NameCollisionGroup");
         groupValue.setMember("name", group.name);
-        // Always a real ProgramBankType for a Program group now (never -1)
-        // -- see NameCollisionGroup's own doc comment in PcgFile.h: grouping
-        // itself splits on bank type, so every group here is homogeneous.
         groupValue.setMember("bankType", group.bankType);
         auto variantsValue = choc::value::createEmptyArray();
         for (const auto& variant : group.variants) {
             auto membersValue = choc::value::createEmptyArray();
             for (const auto& [bank, number] : variant.members) {
-                auto program = file->decodeProgram(bank, number);
-                if (program) membersValue.addArrayElement(programToValue(*program));
+                if (auto member = memberToValue(bank, number)) membersValue.addArrayElement(*member);
             }
             auto variantValue = choc::value::createObject("NameCollisionVariant");
             variantValue.setMember("members", membersValue);
@@ -1011,30 +1030,22 @@ choc::value::Value EditorBridge::findProgramNameCollisions(const choc::value::Va
     return result;
 }
 
-choc::value::Value EditorBridge::findCombiNameCollisions(const choc::value::ValueView& args) {
-    const int datasetId = intArg(args, 0);
-    auto* file = fileOf(datasetId);
+choc::value::Value EditorBridge::findProgramNameCollisions(const choc::value::ValueView& args) {
+    auto* file = fileOf(intArg(args, 0));
     if (file == nullptr) return choc::value::createEmptyArray();
+    return nameCollisionGroupsToValue(file->findProgramNameCollisions(), [&](int bank, int number) {
+        auto program = file->decodeProgram(bank, number);
+        return program ? std::optional(programToValue(*program)) : std::nullopt;
+    });
+}
 
-    auto result = choc::value::createEmptyArray();
-    for (const auto& group : file->findCombiNameCollisions()) {
-        auto groupValue = choc::value::createObject("NameCollisionGroup");
-        groupValue.setMember("name", group.name);
-        auto variantsValue = choc::value::createEmptyArray();
-        for (const auto& variant : group.variants) {
-            auto membersValue = choc::value::createEmptyArray();
-            for (const auto& [bank, number] : variant.members) {
-                auto combi = file->decodeCombi(bank, number);
-                if (combi) membersValue.addArrayElement(combiToValue(*combi));
-            }
-            auto variantValue = choc::value::createObject("NameCollisionVariant");
-            variantValue.setMember("members", membersValue);
-            variantsValue.addArrayElement(variantValue);
-        }
-        groupValue.setMember("variants", variantsValue);
-        result.addArrayElement(groupValue);
-    }
-    return result;
+choc::value::Value EditorBridge::findCombiNameCollisions(const choc::value::ValueView& args) {
+    auto* file = fileOf(intArg(args, 0));
+    if (file == nullptr) return choc::value::createEmptyArray();
+    return nameCollisionGroupsToValue(file->findCombiNameCollisions(), [&](int bank, int number) {
+        auto combi = file->decodeCombi(bank, number);
+        return combi ? std::optional(combiToValue(*combi)) : std::nullopt;
+    });
 }
 
 choc::value::Value EditorBridge::getProgramBankTypes(const choc::value::ValueView& args) {

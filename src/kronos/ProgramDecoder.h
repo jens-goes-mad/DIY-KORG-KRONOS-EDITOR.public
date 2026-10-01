@@ -80,6 +80,62 @@ uint64_t hashProgramRecord(const uint8_t* record, size_t recordSize);
 // using ProgramInfo::contentHash (byte-exact).
 uint64_t hashProgramRecordForComparison(const uint8_t* record, size_t recordSize, bool ignoreName);
 
+// What a 16-byte multisample bank UUID refers to, per Korg's own
+// KRONOS_MIDI_SysEx.txt ("Stereo flag in UUID", "Reserved invalid IDs",
+// "Legacy IDs"): byte 15 bit 0 is only a mono/stereo flag; the all-zero UUID
+// and ...0001 are reserved invalid; ROM, "Smp: Old RAM" and EXs1-126 use the
+// fixed "legacy" form 4b4f5247-0000-0000-0000-00004d5300nn ('K','O','R','G',
+// 0 x8,'M','S',0,nn), legacy bank number in nn's bits 1-7 (0=ROM, 1=Old RAM,
+// 2=EXs1 ...). Every other UUID is Generated -- per the same doc that's
+// "EXs127 and above and all user banks", which the UUID alone cannot tell
+// apart. Confirmed against real data 2026-09-28: every Generated UUID used by
+// a sample-based Program in "Narf Ultimate Covers K2.PCG" but one (a Wave
+// Sequence zone, see hd1PlayedSampleSources()) is exactly "SGC
+// SAMPLES.KSC"'s own manifest UUID, and its zones' MS Numbers resolve to
+// matching multisample names in that manifest (11 checked by hand).
+enum class MultisampleBankKind { Invalid, Rom, OldRam, Exs, Generated };
+
+MultisampleBankKind classifyMultisampleBankUuid(const uint8_t* uuid16);
+
+// Which kinds of sample bank an HD-1-layout Program record actually plays
+// (classifyMultisampleBankUuid() above, over every zone that sounds):
+// `user` = a Generated bank (in practice a user sample bank loaded from a
+// .KSC -- or EXs127+, indistinguishable, see above) or "Smp: Old RAM" (the
+// instrument's own Sampling-mode memory -- user-sampled content, not a Korg
+// library); `exs` = a Korg EXs1-126 library. ROM-only -> both false. Both
+// can be true. Only meaningful for a Program in an
+// HD-1 bank: the EXi layout holds unrelated data at these offsets (Prog_EXi_
+// Common.txt has Step Sequence values there), so callers must check
+// ProgramInfo::bankType first. Offsets from Prog_HD-1.txt (private repo's
+// docs/external/KORG/), + this format's usual +4 shift:
+//  - Oscillator Mode, SysEx 2558 bits 2-0 -> file 2562. Raw 0=Single,
+//    1=Double (Korg's legend); 2=Drums, 5=Double Drums read off real data
+//    (every raw-2 Program in the Narf file is a single "... Kit", every raw-5
+//    one a two-kit "Dry/Amb" pair) -- the guide lists the 4 names but not
+//    their raw codes. Drums modes play Drum Kits, not zone multisamples, so
+//    they never count here (Drum Kit sample references are a separate record,
+//    DrumKit.txt, not decoded).
+//  - OSC1 zones at SysEx 2774 -> file 2778, OSC2 zones at SysEx 3240 -> file
+//    3244, identically shaped: 8 zones x 22 bytes, each [+0 bits 1-0] MS Type
+//    (0=Off, 1=Multisample, 2=Wave Sequence), [+1..16] MS Bank UUID, [+18..19]
+//    MS Number (little-endian -- the byte order that makes the 11 name
+//    matches above line up). OSC2 counts only in Double mode: real Single
+//    Programs keep stale OSC2 zone data (303 non-Off OSC2 zones on Single
+//    Programs in the Narf file). Wave Sequence zones are skipped -- what their
+//    UUID field means is not documented or verified.
+struct Hd1SampleSources {
+    bool user = false;
+    bool exs = false;
+};
+Hd1SampleSources hd1PlayedSampleSources(const uint8_t* record, size_t recordSize);
+
+// The one place a ProgramInfo (PcgFile.h) is built from a record's bytes --
+// decodeProgramFields() + hashProgramRecord() + hd1PlayedSampleSources()
+// (HD-1 banks only, see its doc comment). Used by PcgFile's load pass,
+// decodeProgram() and refreshProgramInfo() alike, so a new ProgramInfo field
+// only ever gets wired in here.
+ProgramInfo decodeProgramInfo(const uint8_t* record, size_t recordSize, int bank, int number, ProgramBankType bankType);
+
 // Result of classifying one Program bank's type -- see ProgramBankType's
 // doc comment in PcgFile.h for why this must be read per-file rather than
 // looked up in a fixed table.

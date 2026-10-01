@@ -82,12 +82,18 @@ detail.
   extracted and cross-verified against two independent real backup files -- now used
   directly by the Duplicates panel's "keep this one" feature to clear the other copies
   of a duplicate back to a real blank slot. See §5.5.
+- **HD-1 multisample references**: each HD-1 Program names the multisample every
+  oscillator zone plays by sample-bank UUID + number (both oscillators, 8 zones, same
+  22-byte shape), and Korg's own UUID scheme tells ROM / EXs1-126 banks apart from
+  generated ones (a user sample bank loaded from a `.KSC`, or EXs127+). Cross-verified
+  against a real KSC's own manifest (its UUID, and 11 multisample names). Drives the
+  app's sample (waveform) icon. See §5.8.
 
 Deliberately **not** solved yet: a handful of reserved bytes whose purpose isn't known
 (byte +17 still has unexplained bits even after Font size/Transpose were found), Drum
-Kits/Wave Sequences/Global settings, whether a real backup can omit a Program/Combi
-bank entirely (every file examined so far has had a complete, canonically-ordered set),
-and -- a real risk, not just a curiosity -- whether a Program's own KARMA-related fields
+Kits/Wave Sequences/Global settings, how a bank is identified when a backup omits banks
+(real partial backups exist -- so far only with the *last* banks missing, which the
+file-order numbering handles; a gap in the middle is untested), and -- a real risk, not just a curiosity -- whether a Program's own KARMA-related fields
 (GE/Switch/Fader Name IDs, KARMA_GE_RTP's own Generated Effect module data) are safe to
 copy verbatim between Programs at all, since `copyProgramFrom()` currently does exactly
 that with no special handling. See §8 for the full, numbered list of open questions.
@@ -775,6 +781,45 @@ Programs saved from different instrument states are often not byte-identical, an
 "Modified twin" in the Differences search can mean a tiny (even garbage-byte) difference.
 These are not masked: without a decoded reason, hiding them would be a guess.
 
+### 5.8 HD-1 multisample references -- which sample bank a Program plays, CONFIRMED 2026-09-28
+
+An HD-1 Program names every multisample it plays by **bank UUID + multisample number**, per
+velocity zone. Offsets are from Korg's own `Prog_HD-1.txt` (SysEx offset + the usual `+4`
+shift); the byte order of MS Number and the raw Oscillator Mode codes 2/5 were read off real
+data, not stated by Korg. **HD-1 layout only** -- an EXi Program has Step Sequence data at
+these offsets (`Prog_EXi_Common.txt`); EXi's own MOD-7 `[PCM]` section has separate, bit-packed
+multisample fields that are not decoded.
+
+| File offset | Field | Evidence |
+|---|---|---|
+| **2562**, bits 2-0 | **Oscillator Mode**: 0 Single, 1 Double, 2 Drums, 5 Double Drums | Korg lists the four names (Parameter Guide p. 54) and range `00~05`; raw 2 = every single-kit Program, raw 5 = every two-kit "Dry/Amb" Program in the Narf file. |
+| **2778** (OSC1), **3244** (OSC2) | 8 zones x 22 bytes, same shape for both oscillators: `+0` bits 1-0 **MS Type** (0 Off, 1 Multisample, 2 Wave Sequence), `+1..16` **MS Bank UUID**, `+18..19` **MS Number**, little-endian | The real `Init-Program-HD1.raw` holds OSC1 Zone1 = Multisample from `4b4f5247-...-4d530000` (ROM, below). Little-endian MS Numbers resolve to the matching multisample name in `SGC SAMPLES.KSC`'s manifest for 11 of the Narf file's Programs checked by hand (Rosanna Hit -> MS44, Forum Bari Sax -> MS17, Trumpet Section -> MS15, ...). |
+
+**What a bank UUID means** -- Korg's `KRONOS_MIDI_SysEx.txt`: byte 15 bit 0 is only a mono/stereo
+flag; `00..00` and `00..01` are reserved invalid; ROM, "Smp: Old RAM" and EXs1-126 use the fixed
+legacy form `4b4f5247-0000-0000-0000-00004d5300nn` (`KORG` ... `MS`, bank number in bits 1-7 of
+`nn`: 0 ROM, 1 Old RAM, 2 EXs1, ...). **Every other UUID is generated** -- "EXs127 and above and
+all user banks", which the UUID alone cannot tell apart. Real distribution (both files, every
+non-Off Multisample zone): mostly ROM, EXs1-18 and Old RAM; generated UUIDs only on the
+user-sampled Programs, and in the Narf file those are exactly `SGC SAMPLES.KSC`'s own UUID.
+
+Two traps found in the real data:
+- **Stale OSC2 data.** Single-mode Programs keep OSC2 zone settings (303 / 458 non-Off OSC2 zones
+  on Single Programs in the two files), so OSC2 only counts in Double mode.
+- **Drums modes** play Drum Kits (a separate record, `DrumKit.txt`, own sample UUIDs), not these
+  zones -- zone data there is ignored, and Drum Kit sample references are not decoded.
+
+`hd1PlayedSampleSources()` (`src/kronos/ProgramDecoder.cpp`) applies exactly this -- HD-1 bank,
+OSC1 (+ OSC2 if Double), MS Type = Multisample -- and reports which bank kinds those zones play:
+**user samples** (a generated UUID, or the Sampling-mode "Smp: Old RAM") and/or **Korg EXs**
+(legacy EXs1-126); ROM-only reports neither. Exposed as `ProgramInfo::usesUserSamples` /
+`usesExsSamples`, the app's orange / light-gray sample (waveform) icon. References never re-derive
+them: a Set List slot (`EditorBridge::getEntries()` via `PcgFile::findProgram()`) and a Combi
+Timbre (the frontend's `findProgram()`) read them off the referenced Program itself. On real
+files: `Narf Ultimate Covers K2.PCG` 22 user / 184 EXs; `setlist_test_2.PCG` 14 user (generated
+UUIDs only -- Old RAM not yet counted then); `K1_20260418.PCG` 44 user (14 generated + 30 Old
+RAM) / 121 EXs; factory `INIT.PCG` 0 user / 166 EXs; never an EXi Program. Open points: §8 #16.
+
 ## 6. Combi Timbre references — CONFIRMED (Program refs), status byte CONFIRMED
 
 Each Combi record (`CMB1 > CBK1`, §5.1) has 16 Timbre slots, each optionally
@@ -1178,7 +1223,12 @@ Recorded here for later, even though nothing below is wired into
     `used`/`count` field -- currently read and discarded, "meaning not
     understood yet") are a real candidate for a per-chunk identity field
     that would fix this properly. Not yet investigated with real test data
-    that's actually missing a known bank.
+    that's actually missing a known bank. **Real partial backups exist (2026-09-21):** `Narf
+    Ultimate Covers K2.PCG` has only 18 PRG1 sub-banks, and its Combis
+    still reference `USER-FF` -- consistent with the last banks simply
+    being omitted, which file-order numbering handles correctly. A backup
+    with a bank missing from the *middle* (the case that would relabel
+    later banks) has still not been seen.
 14. **Mostly RESOLVED (2026-08-13), see §5.5**: a 2-byte field (offset
     2632-2633) that differs between a factory "Init Program"'s bytes in
     different banks turned out to be "Tone Adjust"/"Switch8 On Value" (a
@@ -1211,6 +1261,23 @@ Recorded here for later, even though nothing below is wired into
     or *across* two. Not reproduced against a real file yet -- recorded so
     the risk isn't lost, not because it's been confirmed to actually
     happen.
+16. **Sample-bank references (§5.8), open points (2026-09-28):** what a
+    Wave Sequence zone's UUID field means (such zones are skipped); a
+    generated bank UUID can be EXs127+ *or* a user bank, which the UUID
+    alone cannot tell apart (Korg's SysEx doc); whether a KSC's UUID stays
+    the same when the same library is reloaded; Drum Kit sample references
+    (`DKT1`, see #5) and EXi MOD-7's bit-packed `[PCM]` multisample fields
+    are not decoded, so Drums-mode and MOD-7 Programs are never flagged.
+17. **Set List name / Comment length limits on real hardware -- UNCONFIRMED**
+    (the project owner's recollection, 2026-08-07, moved here from STATE.md
+    on 2026-09-30): a slot's name (SDB1, §3) is single-line and truncated at
+    24 characters -- matches the byte layout exactly (28-byte record minus
+    the 4-byte marker), but the device's behavior when typing past it is
+    untested; the Comment reportedly truncates at 512 characters, while the
+    byte layout allows 523 (542-byte record - 18-byte offset - NUL, which
+    the Comment encoder enforces). The 11-byte gap needs an isolated
+    hardware test (write exactly 512 and 523 characters, see what the
+    device shows).
 
 ## 9. Where this is implemented
 

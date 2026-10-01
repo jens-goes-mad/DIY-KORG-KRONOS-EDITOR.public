@@ -39,6 +39,10 @@ small screen.
 - **Setlist**: 128 Set Lists, 128 slots each. A slot points at a Program or a
   Combi, plus Color/Volume/Hold Time/Font size/Transpose/Comment.
 - **Programs** / **Combis**: every bank, filterable by bank and by name.
+  A small waveform icon after a Program's engine type (HD-1) shows where
+  its samples come from: orange = user samples (a .KSC user bank or
+  Sampling mode), light gray = a Korg EXs library, none = ROM only --
+  shown wherever that Program appears or is referenced.
 - **Duplicates**: byte-for-byte identical Programs, groupable and
   resolvable in one click.
 - **Internals**: raw structural info, mostly for debugging the file itself.
@@ -127,6 +131,12 @@ scroll; click a column header to sort, type in the box under it to filter):
   **Renamed** (the same sound under a different name), **Modified twins** (same name,
   different content) or **Moved** (identical, different slot). Click a row to open
   A in the left pane and B in the right, each at its own slot. Programs only for now.
+
+After a search, each pane's Programs and Combis lists can be **filtered** to one result
+category: the **Cross Dataset** dropdown next to the name filter lists that file's own
+categories -- Duplicates, Only in this file / Renamed / Modified twins / Moved, Compare PROG
+for Programs; All diverged / Edited / Different songs (Compare COMBI) for Combis. It turns orange while
+filtering and resets when the result is gone (another pair, or either file edited).
 
 For Combis specifically, a diverged row tells you *why*, not just *that* it differs.
 **Click** it to expand a breakdown of exactly what changed -- a specific value where

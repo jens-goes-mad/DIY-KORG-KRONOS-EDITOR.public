@@ -157,6 +157,12 @@
           // a real row to exercise in mock/browser mode too, not just the
           // real app.
           exiAlgorithmType: mockBankType(bank) === 1 ? (bank === 1 && number === 0 ? 8 : 2) : 0,
+          // One HD-1 row playing user samples (orange icon) and one playing
+          // Korg EXs samples (gray icon), so both sample icons (pane.js's
+          // sampleIcon()) have a row to show in mock mode -- stand-ins for
+          // ProgramInfo::usesUserSamples/usesExsSamples.
+          usesUserSamples: mockBankType(bank) === 0 && number === 1,
+          usesExsSamples: mockBankType(bank) === 0 && number === 4,
           setlistReferenceCount: 0,
           combiReferenceCountAvailable: true,
           combiReferenceCount: 0,
@@ -173,6 +179,8 @@
         name: "",
         bankType: mockBankType(bank),
         exiAlgorithmType: mockBankType(bank) === 1 ? 2 : 0,
+        usesUserSamples: false,
+        usesExsSamples: false,
         setlistReferenceCount: 0,
         combiReferenceCountAvailable: true,
         combiReferenceCount: 0,
@@ -273,7 +281,14 @@
       songs[0][0].comment = MOCK_WRAP_TEST_COMMENT;
     }
 
-    return { displayName: fileName, setlists, songs, programs: makeFakePrograms(), combis: makeFakeCombis(), dirty: false };
+    return { displayName: fileName, setlists, songs, programs: makeFakePrograms(), combis: makeFakeCombis(), dirty: false, editCount: 1 };
+  }
+
+  // Every mock write goes through this -- mirrors PcgFile::writeIntoData()
+  // setting isDirty() and bumping editCount() together.
+  function markEdited(dataset) {
+    dataset.dirty = true;
+    dataset.editCount++;
   }
 
   // A plain browser tab can't show a real native file picker (or read an
@@ -315,6 +330,7 @@
         displayName: d.displayName,
         setlistCount: d.setlists.length,
         dirty: d.dirty,
+        editCount: d.editCount,
       }))
     );
 
@@ -336,7 +352,22 @@
 
   window.getEntries = (datasetId, setlistIndex) => {
     const dataset = datasets[datasetId];
-    return Promise.resolve(dataset && dataset.songs[setlistIndex] ? dataset.songs[setlistIndex] : []);
+    if (!dataset || !dataset.songs[setlistIndex]) return Promise.resolve([]);
+    // Mirrors EditorBridge::getEntries(): usesUserSamples/usesExsSamples are read off
+    // the referenced Program itself, at request time.
+    return Promise.resolve(
+      dataset.songs[setlistIndex].map((song) => {
+        const program =
+          song.paramsFound && song.isProgram
+            ? dataset.programs.find((p) => p.bank === song.bank && p.number === song.number)
+            : null;
+        return {
+          ...song,
+          usesUserSamples: !!(program && program.usesUserSamples),
+          usesExsSamples: !!(program && program.usesExsSamples),
+        };
+      })
+    );
   };
 
   // Mirrors PcgFile::reorderSong()'s semantics: `.index` is a slot's
@@ -356,7 +387,7 @@
     const [moved] = list.splice(fromIdx, 1);
     list.splice(toIdx, 0, moved);
     list.forEach((e, i) => { e.index = i; });
-    datasets[datasetId].dirty = true;
+    markEdited(datasets[datasetId]);
     return ok();
   };
 
@@ -386,7 +417,7 @@
     for (let i = 0; i < dstList.length; i++) {
       if (srcList[i]) dstList[i] = Object.assign({}, srcList[i], { index: dstList[i].index });
     }
-    datasets[datasetId].dirty = true;
+    markEdited(datasets[datasetId]);
     return ok();
   };
 
@@ -404,7 +435,7 @@
       return ascending ? a.label.localeCompare(b.label) : b.label.localeCompare(a.label);
     });
     list.forEach((e, i) => { e.index = i; });
-    datasets[datasetId].dirty = true;
+    markEdited(datasets[datasetId]);
     return ok();
   };
 
@@ -441,7 +472,7 @@
     let end = 18;
     while (end < bytes.length && bytes[end] !== 0) end++;
     entry.comment = bytes.slice(18, end).map((b) => String.fromCharCode(b)).join("");
-    datasets[datasetId].dirty = true;
+    markEdited(datasets[datasetId]);
     return ok();
   };
 
@@ -468,13 +499,24 @@
     let end = 4;
     while (end < bytes.length && bytes[end] !== 0) end++;
     entry.label = bytes.slice(4, end).map((b) => String.fromCharCode(b)).join("");
-    datasets[datasetId].dirty = true;
+    markEdited(datasets[datasetId]);
     return ok();
   };
 
   window.listPrograms = (datasetId) => Promise.resolve(datasets[datasetId] ? datasets[datasetId].programs : []);
 
-  window.listCombis = (datasetId) => Promise.resolve(datasets[datasetId] ? datasets[datasetId].combis : []);
+  // Mirrors EditorBridge::combiToValue(): each Timbre carries the Program
+  // bank its raw code refers to (-1 if unconfirmed), computed at request
+  // time so swaps/moves that rewrite rawBankCode stay consistent.
+  const combiWithProgramBanks = (c) => ({
+    ...c,
+    timbres: c.timbres.map((t) => {
+      const programBank = mockProgramBankForTimbreCode(t.rawBankCode);
+      return { ...t, programBank: programBank == null ? -1 : programBank };
+    }),
+  });
+  window.listCombis = (datasetId) =>
+    Promise.resolve(datasets[datasetId] ? datasets[datasetId].combis.map(combiWithProgramBanks) : []);
 
   // Mirrors makeFakePrograms()'s own bank 0 = HD-1 / bank 1 = EXi convention,
   // independent of which programs actually exist in a bank -- same as the
@@ -578,6 +620,8 @@
       existingAtTarget.name = srcProgram.name;
       existingAtTarget.bankType = dstBankType;
       existingAtTarget.exiAlgorithmType = srcProgram.exiAlgorithmType;
+      existingAtTarget.usesUserSamples = srcProgram.usesUserSamples;
+      existingAtTarget.usesExsSamples = srcProgram.usesExsSamples;
     } else {
       dstDataset.programs.push({
         bank: dstBank,
@@ -585,12 +629,14 @@
         name: srcProgram.name,
         bankType: dstBankType,
         exiAlgorithmType: srcProgram.exiAlgorithmType,
+        usesUserSamples: srcProgram.usesUserSamples,
+        usesExsSamples: srcProgram.usesExsSamples,
         setlistReferenceCount: 0,
         combiReferenceCountAvailable: true,
         combiReferenceCount: 0,
       });
     }
-    dstDataset.dirty = true;
+    markEdited(dstDataset);
     return ok();
   };
 
@@ -622,12 +668,16 @@
     const aContent = {
       name: a.name,
       exiAlgorithmType: a.exiAlgorithmType,
+      usesUserSamples: a.usesUserSamples,
+      usesExsSamples: a.usesExsSamples,
       setlistReferenceCount: a.setlistReferenceCount,
       combiReferenceCount: a.combiReferenceCount,
     };
     const bContent = {
       name: b.name,
       exiAlgorithmType: b.exiAlgorithmType,
+      usesUserSamples: b.usesUserSamples,
+      usesExsSamples: b.usesExsSamples,
       setlistReferenceCount: b.setlistReferenceCount,
       combiReferenceCount: b.combiReferenceCount,
     };
@@ -666,7 +716,7 @@
       }
     }
 
-    dataset.dirty = true;
+    markEdited(dataset);
     return ok({ setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
@@ -745,7 +795,7 @@
     // Was `clearedPrograms > 0` only -- missed marking the dataset dirty
     // when requireByteExactMatch=false clears nothing but still repoints
     // real references (found while adding that mode, 2026-08-25).
-    if (clearedPrograms > 0 || setlistRefsRepointed > 0 || combiRefsRepointed > 0) dataset.dirty = true;
+    if (clearedPrograms > 0 || setlistRefsRepointed > 0 || combiRefsRepointed > 0) markEdited(dataset);
     return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
@@ -788,7 +838,7 @@
       }
     }
 
-    if (setlistRefsRepointed > 0) dataset.dirty = true;
+    if (setlistRefsRepointed > 0) markEdited(dataset);
     return ok({ setlistRefsRepointed });
   };
 
@@ -804,7 +854,7 @@
     if (!program) return fail("No such Program slot");
 
     program.name = program.bankType === 0 ? "Init Program" : "Init EXi Program";  // kronos::ProgramBankType::Hd1 = 0
-    dataset.dirty = true;
+    markEdited(dataset);
     return ok({});
   };
 
@@ -843,7 +893,7 @@
         }
       }
     }
-    dataset.dirty = true;
+    markEdited(dataset);
     return ok({ setlistRefsRepointed });
   };
 
@@ -887,7 +937,7 @@
     moving.number = toNumber;
     repoint(fromNumber, toNumber);
 
-    dataset.dirty = true;
+    markEdited(dataset);
     return ok({ setlistRefsRepointed });
   };
 
@@ -938,7 +988,7 @@
       }
     }
 
-    dataset.dirty = true;
+    markEdited(dataset);
     return ok({ setlistRefsRepointed });
   };
 
@@ -974,21 +1024,22 @@
       timbres: src.timbres,
     });
 
-    dataset.dirty = true;
+    markEdited(dataset);
     return ok({ setlistRefsRepointed: 0 });
   };
 
-  // Minimal mock-only mirror of PcgFile.cpp's kConfirmedTimbreBanks -- only
+  // Mock stand-in for kronos::programBankForConfirmedTimbreCode() -- only
   // the raw codes makeFakeTimbres() actually uses (0/1/20/6), not the full
-  // 20-bank table (no mock scenario needs the rest, same "flag the real
-  // scope, don't over-build" reasoning as every other simplification in this
-  // file). Returns null for a code with no matching bank in mock's own tiny
-  // 2-bank `programs` array (20/6 included -- correctly "not resolvable
-  // here", same as the real backend would report for a genuinely absent
-  // bank, not a guess).
+  // 20-bank table (no mock scenario needs the rest). The mock's ONE copy of
+  // this mapping: listCombis() sends it per Timbre (like the real
+  // combiToValue()), and the cross-dataset copy mocks below use it too.
+  // 20 (USER-D) is confirmed but has no Programs in mock data -- shown as
+  // "not in this backup", skipped by the copy analysis, same as the real
+  // backend; 6 (GM) is indexless -> null.
   function mockProgramBankForTimbreCode(rawBankCode) {
     if (rawBankCode === 0) return 0;
     if (rawBankCode === 1) return 1;
+    if (rawBankCode === 20) return 9;  // USER-D -- confirmed, but mock has no Programs there
     return null;
   }
 
@@ -1179,7 +1230,7 @@
       timbres: newTimbres,
     });
 
-    dstDataset.dirty = true;  // destination only -- src is never touched by a copy
+    markEdited(dstDataset);  // destination only -- src is never touched by a copy
     return ok({ setlistRefsRepointed: 0 });
   };
 

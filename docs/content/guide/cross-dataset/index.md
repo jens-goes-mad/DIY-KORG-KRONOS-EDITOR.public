@@ -120,6 +120,29 @@ write in this app. A resolved change disappears from the list right away (and th
 once nothing about that Combi diverges any more); if either pane is currently showing the
 dataset that was just written to, it refreshes automatically.
 
+## Filtering the panes by a result
+
+The Programs and Combis lists in each pane have a **Cross Dataset** dropdown next to their name
+filter. It becomes available once a search has run for a pair that includes the file this pane
+shows, and it lists that file's categories *from its own side*, each with its count (an empty
+category is greyed out):
+
+- **Programs**: **Duplicates** (this file's copies), the **Differences** categories (**Only in
+  this file**, **Renamed**, **Modified twins**, **Moved** -- "only in the other file" isn't
+  offered, those slots don't exist here) and **Compare PROG** (the diverged slots).
+- **Combis**: **Compare COMBI** -- **All diverged**, split into **Edited** (the same song,
+  changed) and **Different songs** (a different name and more than 3 changes); the two never
+  overlap. Slots that are "Init Combi" on both sides are always left out here.
+
+Only modes you have actually searched appear. Picking a category narrows the list to exactly
+those slots -- together with the name filter and the bank buttons -- and the dropdown turns
+orange while it filters; "(no filter)" shows the whole list again. Programs and Combis each
+keep their own pick.
+
+The filter follows the search: it disappears when the result does (another pair picked in the
+sidebar, or either file edited), when the pane switches to another file, and when you jump to
+an entry it would hide. One pair of files at a time.
+
 ## See also
 
 - [Programs](/guide/prog#duplicates) -- the per-dataset version of duplicate detection, for

@@ -77,6 +77,65 @@ uint64_t hashProgramRecordForComparison(const uint8_t* record, size_t recordSize
     return hash;
 }
 
+MultisampleBankKind classifyMultisampleBankUuid(const uint8_t* uuid16) {
+    bool zeroPrefix = true;
+    for (int i = 0; i < 15; ++i) zeroPrefix = zeroPrefix && uuid16[i] == 0;
+    if (zeroPrefix && uuid16[15] <= 1) return MultisampleBankKind::Invalid;
+
+    static const uint8_t kLegacyPrefix[15] = {'K', 'O', 'R', 'G', 0, 0, 0, 0, 0, 0, 0, 0, 'M', 'S', 0};
+    for (int i = 0; i < 15; ++i)
+        if (uuid16[i] != kLegacyPrefix[i]) return MultisampleBankKind::Generated;
+    int legacyBank = uuid16[15] >> 1;  // bit 0 is the mono/stereo flag
+    if (legacyBank == 0) return MultisampleBankKind::Rom;
+    if (legacyBank == 1) return MultisampleBankKind::OldRam;
+    return MultisampleBankKind::Exs;
+}
+
+// See the header's doc comment for where every offset/value comes from.
+Hd1SampleSources hd1PlayedSampleSources(const uint8_t* record, size_t recordSize) {
+    constexpr size_t kOscillatorModeOffset = 2562;
+    constexpr size_t kZoneOffsets[2] = {2778, 3244};  // OSC1, OSC2
+    constexpr size_t kZoneStride = 22;
+    constexpr int kZonesPerOscillator = 8;
+    constexpr int kModeSingle = 0, kModeDouble = 1;
+    constexpr int kMsTypeMultisample = 1;
+
+    Hd1SampleSources sources;
+    if (kZoneOffsets[1] + kZonesPerOscillator * kZoneStride > recordSize) return sources;
+    int mode = record[kOscillatorModeOffset] & 0x07;
+    int oscillators = mode == kModeSingle ? 1 : mode == kModeDouble ? 2 : 0;
+    for (int osc = 0; osc < oscillators; ++osc) {
+        for (int z = 0; z < kZonesPerOscillator; ++z) {
+            const uint8_t* zone = record + kZoneOffsets[osc] + z * kZoneStride;
+            if ((zone[0] & 0x03) != kMsTypeMultisample) continue;
+            switch (classifyMultisampleBankUuid(zone + 1)) {
+                case MultisampleBankKind::Generated:
+                case MultisampleBankKind::OldRam: sources.user = true; break;
+                case MultisampleBankKind::Exs: sources.exs = true; break;
+                default: break;
+            }
+        }
+    }
+    return sources;
+}
+
+ProgramInfo decodeProgramInfo(const uint8_t* record, size_t recordSize, int bank, int number, ProgramBankType bankType) {
+    ProgramFields fields = decodeProgramFields(record, recordSize, bank, number);
+    ProgramInfo info;
+    info.bank = fields.bank;
+    info.number = fields.number;
+    info.name = fields.name;
+    info.contentHash = hashProgramRecord(record, recordSize);
+    info.bankType = bankType;
+    info.exiAlgorithmType = fields.exiAlgorithmType;
+    if (bankType == ProgramBankType::Hd1) {
+        const Hd1SampleSources sources = hd1PlayedSampleSources(record, recordSize);
+        info.usesUserSamples = sources.user;
+        info.usesExsSamples = sources.exs;
+    }
+    return info;
+}
+
 // Expected per-record stride for each bank type. CORRECTED 2026-08-13
 // (docs/content/format/index.md §5.5): this used to claim EXi records are
 // 3706 bytes (docs/external/README.md's Synthify-Kronos-PCG-File-

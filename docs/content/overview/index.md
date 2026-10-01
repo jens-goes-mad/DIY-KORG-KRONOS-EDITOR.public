@@ -71,8 +71,11 @@ all 20 Program banks' raw bank codes now confirmed -- cross-checked against Korg
 documentation and an independent third-party reverse-engineering effort where either exists,
 never trusted blindly. Which specific EXi synthesis engine (AL-1, CX-3, STR-1, MS-20EX,
 PolysixEX, MOD-7, SGX-2, EP-1) an individual EXi Program uses is confirmed too, byte-verified
-against real templates. Full detail, including exactly what's still open, is in
-[The file format](/format).
+against real templates, and so is which sample bank each HD-1 oscillator zone plays --
+checked against a real `.KSC` sample library's own manifest -- so Programs that depend on a
+user sample bank (orange) or a Korg EXs library (light gray) are marked with a small waveform
+icon. Full detail, including exactly
+what's still open, is in [The file format](/format).
 
 ![Main View](DIY-MainPanels.png)
 

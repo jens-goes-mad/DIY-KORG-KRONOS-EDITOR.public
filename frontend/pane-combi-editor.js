@@ -36,12 +36,14 @@ const TIMBRE_STATUS_OFF = 0;
 // createProgramsPanel().findProgram -- formatTimbreRef() below needs read
 // access to a Program's name for a confirmed Timbre bank reference, handed
 // down as a callback rather than reaching into that other file's closure
-// directly.
+// directly. `callbacks.getSlotFilter()` is the coordinator's "Cross Dataset"
+// dropdown pick (a Set of slot keys, or null), same as createProgramsPanel()'s.
 function createCombisPanel(
   { panelTable, bankFilterRow, selectControlRow },
   {
     getDatasetId,
     getFilterText,
+    getSlotFilter,
     getProgramBankType,
     findProgram,
     onJumpToSetlist,
@@ -177,85 +179,6 @@ function createCombisPanel(
     return td;
   }
 
-  // Mirrors PcgFile.cpp's kConfirmedTimbreBanks -- all 20 Program bank
-  // indices now have a confirmed raw Combi Timbre code (2026-08-14,
-  // USER-FF was the last gap), one small table here too so this mirror
-  // can't drift out of sync with the backend's own list (docs/content/format/index.md
-  // §6.2).
-  // (No `name` field, unlike the old version of this table -- see
-  // formatTimbreRef() below for why.)
-  // INT-A..D coincide (both number spaces use 0..3); USER-A/D/F/AA use a
-  // *different* number in each space (e.g. USER-D is Program bank index 9
-  // but Timbre code 20) -- a Timbre's rawBankCode must be translated to a
-  // Program bank index before it can be compared against ProgramInfo.bank
-  // (getProgramBankType()'s map, the `programs` array's own .bank field)
-  // at all; outside this table, rawBankCode isn't known to mean the same
-  // thing as a Program's own .bank field, so looking up its type/name
-  // would be a guess, not a lookup -- exactly what this project doesn't do.
-  //
-  // CORRECTED 2026-08-10: USER-A/D/F/AA's indices were 8/11/13/14, an
-  // extrapolation later contradicted by real hardware -- see
-  // kConfirmedTimbreBanks's own doc comment in PcgFile.cpp for the full
-  // derivation (GM/g(d) aren't stored PBK1/MBK1 chunks, USER-A..G is 7
-  // banks not 6, so everything from USER-A onward sits 2 indices earlier).
-  // USER-G/USER-GG added the same day once independently confirmed by name
-  // against real hardware too.
-  //
-  // PROMOTED 2026-08-11: INT-F/USER-B/C/CC/DD used to be name-only
-  // confirmed (a raw code checked against real hardware, but no matching
-  // index) -- meaning `programBankForConfirmedTimbreCode()` returned null
-  // for them, so formatTimbreRef() below never looked up their actual
-  // Program name (reported bug: Combi U-A 002 "Sex on Fire" Timbre 2,
-  // raw bank 5/INT-F, showed the bank label but no Program name at all).
-  // Once §5.2's full 20-bank order got confirmed against real hardware,
-  // every one of them turned out to already have a confirmed index too --
-  // promoted here to match PcgFile.cpp.
-  //
-  // USER-BB/EE added 2026-08-11, checked directly against real Combis
-  // (setlist_test_2.PCG: Combi I-A 000 "K-Lab: Katja's House" Timbre 9,
-  // Combi U-A 014 "KARMA Org 1'2'3  Piano 4" Timbre 7).
-  //
-  // CORRECTED 2026-08-14, retracting a 2026-08-11 misreading: this array
-  // briefly had `{programBankIndex: 10, rawBankCode: 4}` (INT-E's own
-  // index paired with the wrong code) -- the project owner re-checked the
-  // same real Combi and confirmed real hardware actually shows `INT-E`
-  // for that reference, not `USER-E`. Fixed: `INT-E` is raw code 4
-  // (`{4, 4}`, the "obvious" extrapolation was right all along -- no
-  // anomaly), `USER-E` is raw code 21 (`{10, 21}`, confirmed separately
-  // via Combi I-A 001 "Stradivarius Goes POP" Timbre 7) -- also exactly
-  // the "obvious" gap in `USER-A..G`'s 17-23 block. See
-  // kConfirmedTimbreBanks' own doc comment in PcgFile.cpp for the full
-  // story -- kept as a methodology note, not scrubbed from history.
-  const CONFIRMED_TIMBRE_BANKS = [
-    { programBankIndex: 0, rawBankCode: 0 },
-    { programBankIndex: 1, rawBankCode: 1 },
-    { programBankIndex: 2, rawBankCode: 2 },
-    { programBankIndex: 3, rawBankCode: 3 },
-    { programBankIndex: 4, rawBankCode: 4 },
-    { programBankIndex: 5, rawBankCode: 5 },
-    { programBankIndex: 6, rawBankCode: 17 },
-    { programBankIndex: 7, rawBankCode: 18 },
-    { programBankIndex: 8, rawBankCode: 19 },
-    { programBankIndex: 9, rawBankCode: 20 },
-    { programBankIndex: 10, rawBankCode: 21 },
-    { programBankIndex: 11, rawBankCode: 22 },
-    { programBankIndex: 12, rawBankCode: 23 },
-    { programBankIndex: 13, rawBankCode: 24 },
-    { programBankIndex: 14, rawBankCode: 25 },
-    { programBankIndex: 15, rawBankCode: 26 },
-    { programBankIndex: 16, rawBankCode: 27 },
-    { programBankIndex: 17, rawBankCode: 28 },
-    { programBankIndex: 18, rawBankCode: 29 },
-    { programBankIndex: 19, rawBankCode: 30 },
-  ];
-
-  // The confirmed Program bank index for a Timbre's raw bank code, or null
-  // if that code isn't independently confirmed yet.
-  function programBankForConfirmedTimbreCode(rawBankCode) {
-    const entry = CONFIRMED_TIMBRE_BANKS.find((b) => b.rawBankCode === rawBankCode);
-    return entry ? entry.programBankIndex : null;
-  }
-
   // Formats one Timbre's Program reference for display: the confirmed bank
   // name when known, otherwise the raw numeric code so it's still honest
   // about what was found (see docs/content/format/index.md's "Combi Timbre references"
@@ -286,7 +209,10 @@ function createCombisPanel(
   // through to the `t.bankName` branch below, showing "GM" with no Program
   // name (there's nothing to look one up from without a confirmed bank).
   function formatTimbreRef(t) {
-    const programBank = programBankForConfirmedTimbreCode(t.rawBankCode);
+    // The backend's own translation (EditorBridge::combiToValue(), kronos::
+    // programBankForConfirmedTimbreCode()) -- the frontend used to keep a
+    // hand-synced copy of that table here, which drifted twice (STATE.md).
+    const programBank = t.programBank >= 0 ? t.programBank : null;
     const bank =
       programBank !== null
         ? PROGRAM_BANK_NAMES[programBank]
@@ -309,6 +235,7 @@ function createCombisPanel(
     // Programs bank filter for it is correctly disabled, since there's
     // genuinely no data there) with no indication why.
     let bankPresent = false;
+    let sampleKind = null;  // the referenced Program's own sample icon, see programSampleKind()
     if (programBank !== null) {
       const bankType = getProgramBankType(programBank);
       bankPresent = bankType != null;
@@ -316,21 +243,23 @@ function createCombisPanel(
         ref += ` (${programBankTypeName(bankType)})`;
         const program = findProgram(programBank, t.number);
         if (program && program.name) name = program.name;
+        sampleKind = programSampleKind(program);
       } else {
         ref += " (not in this backup)";
       }
     }
-    if (t.status === TIMBRE_STATUS_OFF) ref += " (off)";
+    // Kept apart from `ref` so the sample icon can sit right after the
+    // engine type, before "(off)" (setLabelWithSampleIcon()'s suffix).
+    const refSuffix = t.status === TIMBRE_STATUS_OFF ? " (off)" : "";
     // `programBank`/`bankPresent` (not just `ref`) are returned too --
     // buildTimbreRow() below needs both to know WHETHER a jump target
     // exists (only for a confirmed bank that's actually present in this
     // dataset -- an unidentified "code N" reference, or a confirmed bank
     // this backup simply doesn't include, has no real destination to jump
     // to) and, if so, which bank to jump to (this is a Timbre's own
-    // rawBankCode-derived index, not the same number
-    // PROGRAM_BANK_NAMES[programBank] is a label FOR -- see
-    // programBankForConfirmedTimbreCode()'s own doc comment).
-    return { ref, name, programBank, bankPresent };
+    // rawBankCode-derived index, see kronos::
+    // programBankForConfirmedTimbreCode()'s doc comment in PcgFile.h).
+    return { ref, refSuffix, name, programBank, bankPresent, sampleKind };
   }
 
   function buildTimbreRow(combi) {
@@ -369,7 +298,7 @@ function createCombisPanel(
         const label = document.createElement("span");
         label.className = "timbre-label";
         label.textContent = `Timbre ${i + 1}:`;
-        const { ref, name, programBank, bankPresent } = formatTimbreRef(t);
+        const { ref, refSuffix, name, programBank, bankPresent, sampleKind } = formatTimbreRef(t);
         // A button, same look/behavior as the Setlist table's own Bank
         // button (pane-setlist-editor.js) -- only when `programBank` is
         // confirmed AND actually present in this dataset (`bankPresent`),
@@ -406,7 +335,7 @@ function createCombisPanel(
           refSpan = document.createElement("span");
           refSpan.className = "timbre-ref";
         }
-        refSpan.textContent = ref;
+        setLabelWithSampleIcon(refSpan, ref, sampleKind, refSuffix);
         const nameSpan = document.createElement("span");
         nameSpan.className = "timbre-name";
         nameSpan.textContent = name;
@@ -452,7 +381,7 @@ function createCombisPanel(
 
   function render() {
     const needle = getFilterText().trim().toLowerCase();
-    const rows = filterByName(combis, needle)
+    const rows = filterBySlots(filterByName(combis, needle), getSlotFilter())
       .filter((c) => combiBankFilter.has(c.bank))
       .filter(
         (c) => selectedSetlistIndex < 0 || (c.setlistUsages || []).some((u) => u.setlistIndex === selectedSetlistIndex)
@@ -658,6 +587,9 @@ function createCombisPanel(
       log(`[Library:Combis] Loaded dataset ${datasetId}: ${combis.length} Combis.`);
     }
     combiPresentBanks = new Set(combis.map((c) => c.bank));
+    // Same as fetchPrograms() (pane-program-editor.js): every Combi write ends
+    // in this re-fetch -- drop a Cross Dataset result whose file was edited.
+    await revalidateCrossDatasetResults();
   }
 
   // Called by the coordinator (pane.js's createLibraryPanels()) whenever the

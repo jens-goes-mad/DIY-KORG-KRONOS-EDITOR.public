@@ -1,0 +1,277 @@
+<!doctype html>
+<!--
+  Browser harness for the panes' "Cross Dataset" filter dropdown (pane.js's
+  createLibraryPanels() + cross-dataset-results.js), end to end in the REAL app:
+  the whole index.html runs in an iframe on mock_bridge.js; only window.prompt
+  (the mock's stand-in for the native Open dialog) and the cross-dataset
+  bridge calls are stubbed. A scripted run opens two files, runs each sidebar
+  mode's find (Differences first, then Duplicates, Compare PROG and Compare
+  COMBI), drives both panes' Programs and Combis dropdowns and prints a JSON
+  report.
+
+  Needs a same-origin iframe, so serve frontend/ over HTTP (file:// iframes
+  are cross-origin in Chrome). From frontend/:
+    python3 -m http.server 8765 &
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --disable-gpu \
+      --window-size=1500,1000 --virtual-time-budget=60000 \
+      --dump-dom "http://localhost:8765/cross-dataset-filter.test.html" | grep -o '<pre id="out">[^<]*'
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cross Dataset filter test</title>
+  <style>
+    body { margin: 0; font: 12px monospace; }
+    iframe { width: 1400px; height: 900px; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <iframe id="app" src="index.html"></iframe>
+  <pre id="out">running...</pre>
+  <script>
+    const report = { checks: [], failed: 0 };
+    function check(label, ok, extra) {
+      report.checks.push({ label, ok: !!ok, ...(extra !== undefined ? { extra } : {}) });
+      if (!ok) report.failed++;
+    }
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // The mock's Programs (mock_bridge.js's makeFakePrograms()): banks 0-1, numbers 0-5 (5 =
+    // an empty slot), the same 12 slots in every mock dataset.
+    const ALL_PROGRAMS = 12;
+    // The stubbed Differences result, from
+    // dataset 1's point of view as A (real bridge row shape, -1 = no slot on that side):
+    const diff = (kind, a, b) => ({
+      kind, aBank: a ? a[0] : -1, aNumber: a ? a[1] : -1, aName: "",
+      bBank: b ? b[0] : -1, bNumber: b ? b[1] : -1, bName: "", bankType: 0,
+    });
+    const rowsAB = [
+      diff("onlyInA", [0, 1]), diff("onlyInA", [1, 4]),
+      diff("onlyInB", null, [0, 3]),
+      diff("renamed", [0, 2], [1, 2]),
+      diff("moved", [0, 0], [1, 0]),
+    ];
+
+    (async () => {
+      const frame = document.getElementById("app");
+      try {
+        // (a fresh iframe briefly holds an already-"complete" about:blank -- wait for index.html itself)
+        const appLoaded = () => frame.contentDocument && frame.contentDocument.readyState === "complete" &&
+          frame.contentWindow.location.href.endsWith("index.html");
+        if (!appLoaded()) await new Promise((r) => frame.addEventListener("load", r));
+        await wait(300);  // app.js's startup refreshDatasets()
+        const win = frame.contentWindow;
+        const doc = frame.contentDocument;
+        const $ = (sel, root = doc) => root.querySelector(sel);
+        const $$ = (sel, root = doc) => [...root.querySelectorAll(sel)];
+        const pane = (id) => $(`.pane[data-pane="${id}"]`);
+        const paneApi = (id) => win.eval("panes")[id];
+        const dropdown = (id) => $(".cross-dataset-filter-select", pane(id));
+        const optionTexts = (id) => $$("option", dropdown(id)).map((o) => o.textContent + (o.disabled ? " [disabled]" : ""));
+        const programKeys = (id) => $$(".programs-table tbody tr[data-entry-key]", pane(id)).map((tr) => tr.dataset.entryKey).sort();
+        async function pick(id, value) {
+          dropdown(id).value = value;
+          dropdown(id).dispatchEvent(new win.Event("change", { bubbles: true }));
+          await wait(100);
+        }
+        async function showCategory(id, category) {
+          $(`li[data-category="${category}"]`, pane(id)).click();
+          await wait(150);
+        }
+
+        // --- two open files: A shows dataset 1, B shows dataset 2 -------------------
+        const names = ["K1.PCG", "INIT.PCG"];
+        win.prompt = () => names.shift();
+        $(".open-file-button").click(); await wait(400);
+        $(".open-file-button").click(); await wait(400);
+        check("setup: pane A shows dataset 1, pane B dataset 2",
+          paneApi("A").getCurrentDatasetId() === 1 && paneApi("B").getCurrentDatasetId() === 2,
+          [paneApi("A").getCurrentDatasetId(), paneApi("B").getCurrentDatasetId()]);
+        await showCategory("A", "programs");
+        await showCategory("B", "programs");
+        check("setup: all 12 mock Programs in each pane", programKeys("A").length === ALL_PROGRAMS && programKeys("B").length === ALL_PROGRAMS, programKeys("A").length);
+
+        // --- before any find -------------------------------------------------------
+        check("no find yet: dropdown disabled, says how to enable it",
+          dropdown("A").disabled && /Run a Cross Dataset Duplicates, Differences or Compare PROG find/.test(dropdown("A").title), dropdown("A").title);
+        check("no find yet: only '(no filter)'", optionTexts("A").join("|") === "(no filter)", optionTexts("A"));
+
+        // --- layout: two equal columns, nothing overflows ---------------------------
+        {
+          const cols = $$(".library-toolbar > .column", pane("A")).map((c) => c.getBoundingClientRect());
+          const paneRect = pane("A").getBoundingClientRect();
+          check("layout: two toolbar columns of equal width", cols.length === 2 && Math.abs(cols[0].width - cols[1].width) <= 1, cols.map((c) => Math.round(c.width)));
+          check("layout: side by side (not stacked)", cols.length === 2 && Math.abs(cols[0].top - cols[1].top) <= 1 && cols[1].left > cols[0].right);
+          check("layout: toolbar stays inside the pane", cols[1].right <= paneRect.right + 0.5 && cols[0].left >= paneRect.left - 0.5,
+            { pane: [Math.round(paneRect.left), Math.round(paneRect.right)], cols: cols.map((c) => [Math.round(c.left), Math.round(c.right)]) });
+          check("layout: label 'Cross Dataset' above the dropdown",
+            $(".cross-dataset-filter-label", pane("A")).textContent === "Cross Dataset" &&
+            $(".cross-dataset-filter-label", pane("A")).getBoundingClientRect().bottom <= dropdown("A").getBoundingClientRect().top + 0.5);
+          check("layout: pane has no horizontal scroll", pane("A").scrollWidth <= pane("A").clientWidth + 1, [pane("A").scrollWidth, pane("A").clientWidth]);
+        }
+
+        // --- run a Differences find in the sidebar (A = dataset 1, B = dataset 2) ---
+        win.findProgramDifferencesAcrossDatasets = async () => rowsAB;
+        $(".cross-dataset-duplicates-button").click(); await wait(300);
+        $$(".cross-dataset-mode-toggle .button", doc).find((b) => b.textContent === "Differences").click(); await wait(100);
+        $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find").click(); await wait(400);
+        check("find: sidebar shows the result", !!$(".cross-dataset-results select"));
+
+        check("pane A (dataset 1): enabled, its own categories",
+          !dropdown("A").disabled &&
+          optionTexts("A").join("|") === "(no filter)|Only in this file (2)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)",
+          optionTexts("A"));
+        check("pane A: categories grouped under 'Differences'", $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Differences");
+        check("pane B (dataset 2): its own side", !dropdown("B").disabled &&
+          optionTexts("B").join("|") === "(no filter)|Only in this file (1)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)",
+          optionTexts("B"));
+        check("find alone doesn't filter anything", programKeys("A").length === ALL_PROGRAMS);
+
+        // --- filtering ---------------------------------------------------------------
+        await pick("A", "differences:onlyHere");
+        check("pane A 'Only in this file' keeps exactly its slots", programKeys("A").join() === "0-1,1-4", programKeys("A"));
+        check("pane A: orange 'filtering' marker on", dropdown("A").parentElement.classList.contains("is-filtering"));
+        check("pane B untouched by pane A's pick", programKeys("B").length === ALL_PROGRAMS);
+        await pick("B", "differences:renamed");
+        check("pane B 'Renamed' uses B's slot", programKeys("B").join() === "1-2", programKeys("B"));
+        await pick("B", "differences:moved");
+        check("pane B 'Moved' uses B's slot", programKeys("B").join() === "1-0", programKeys("B"));
+        await pick("B", "");
+        check("pane B back to '(no filter)': all rows, marker off", programKeys("B").length === ALL_PROGRAMS && !dropdown("B").parentElement.classList.contains("is-filtering"));
+
+        // combined with the name filter (AND)
+        const nameFilter = $(".library-filter", pane("A"));
+        nameFilter.value = "subdivisions";  // mock name of every number-4 slot
+        nameFilter.dispatchEvent(new win.Event("input", { bubbles: true }));
+        await wait(100);
+        check("AND with the name filter", programKeys("A").join() === "1-4", programKeys("A"));
+        nameFilter.value = "";
+        nameFilter.dispatchEvent(new win.Event("input", { bubbles: true }));
+        await wait(100);
+
+        // --- other tabs ----------------------------------------------------------------
+        await showCategory("A", "combis");
+        check("Combis tab: dropdown disabled until a Compare COMBI find",
+          dropdown("A").disabled && /Compare COMBI find/.test(dropdown("A").title), dropdown("A").title);
+        await showCategory("A", "duplicates");
+        {
+          const filterCol = $(".cross-dataset-filter", pane("A"));
+          const leftCol = $(".library-toolbar > .column", pane("A"));
+          const toolbar = $(".library-toolbar", pane("A"));
+          check("Duplicates tab: Cross Dataset column hidden, name filter takes the full row",
+            filterCol.hidden && filterCol.getBoundingClientRect().width === 0 &&
+            Math.abs(leftCol.getBoundingClientRect().width - toolbar.getBoundingClientRect().width) <= 1,
+            [Math.round(leftCol.getBoundingClientRect().width), Math.round(toolbar.getBoundingClientRect().width)]);
+        }
+        await showCategory("A", "programs");
+        check("back on Programs: the pick survived the tab switches",
+          dropdown("A").value === "differences:onlyHere" && programKeys("A").join() === "0-1,1-4", [dropdown("A").value, programKeys("A")]);
+
+        // --- a jump to a slot the filter hides clears it; one it keeps doesn't ---------
+        paneApi("A").jumpToInstrument({ isProgram: true, bank: 0, number: 1 });
+        await wait(200);
+        check("jump to a kept slot: filter stays", dropdown("A").value === "differences:onlyHere");
+        paneApi("A").jumpToInstrument({ isProgram: true, bank: 1, number: 3 });
+        await wait(200);
+        check("jump to a hidden slot: filter cleared, row visible",
+          dropdown("A").value === "" && programKeys("A").includes("1-3"), dropdown("A").value);
+
+        // --- an edit drops the result everywhere ----------------------------------------
+        await pick("A", "differences:onlyHere");
+        await pick("B", "differences:renamed");
+        await win.resetProgram(2, 1, 1);           // a write into dataset 2 (mock: bumps its editCount)...
+        await paneApi("B").refreshLibrary();       // ...followed by the re-fetch every write path ends in
+        await wait(200);
+        check("edit in B's file: pane A's filter dropped too (same pair)",
+          dropdown("A").disabled && dropdown("A").value === "" && programKeys("A").length === ALL_PROGRAMS, [dropdown("A").value, programKeys("A").length]);
+        check("edit in B's file: pane B's filter dropped", dropdown("B").disabled && programKeys("B").length === ALL_PROGRAMS);
+        check("edit: the sidebar's result is gone too", !$(".cross-dataset-results"));
+
+        // --- changing the sidebar's pair clears everything -------------------------------
+        $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find").click(); await wait(400);
+        check("re-find: dropdowns enabled again", !dropdown("A").disabled && !dropdown("B").disabled);
+        await pick("A", "differences:onlyHere");
+        const selB = $$(".sidebar-panel-body select", doc)[1];
+        selB.value = "";
+        selB.dispatchEvent(new win.Event("change", { bubbles: true }));
+        await wait(200);
+        check("sidebar picks another pair: panes' filters cleared and disabled",
+          dropdown("A").disabled && dropdown("B").disabled && programKeys("A").length === ALL_PROGRAMS);
+
+        // --- the pane's own dataset change -------------------------------------------------
+        selB.value = "2";
+        selB.dispatchEvent(new win.Event("change", { bubbles: true }));
+        await wait(100);
+        $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find").click(); await wait(400);
+        await pick("A", "differences:onlyHere");
+        await paneApi("A").loadDataset(2, "INIT.PCG");
+        await wait(200);
+        check("pane switched to the other file of the pair: pick reset, B's categories",
+          dropdown("A").value === "" && !dropdown("A").disabled && /Only in this file \(1\)/.test(optionTexts("A").join("|")), optionTexts("A"));
+
+        // --- Duplicates + Compare PROG next to Differences (same pair, nothing edited) ----
+        await paneApi("A").loadDataset(1, "K1.PCG");
+        await showCategory("A", "programs");
+        const member = (datasetId, bank, number) => ({ datasetId, bank, number, name: "", filename: "", bankType: 0 });
+        win.findDuplicateProgramsAcrossDatasets = async () => [
+          { members: [member(1, 0, 0), member(2, 1, 0)] },
+          { members: [member(1, 1, 3), member(2, 0, 4)] },
+        ];
+        win.findDivergentProgramsAcrossDatasets = async () => [{ bank: 0, number: 2, nameA: "", nameB: "", bankType: 0 }];
+        async function findMode(label) {
+          if (!$(".sidebar-panel-title")) { win.toggleCrossDatasetDuplicatesPanel(); await wait(300); }
+          $$(".cross-dataset-mode-toggle .button", doc).find((b) => b.textContent === label).click(); await wait(100);
+          $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find").click(); await wait(400);
+        }
+        await findMode("Duplicates");
+        await findMode("Compare PROG");
+        check("PGM: all three Program modes, in the sidebar's order",
+          optionTexts("A").join("|") ===
+            "(no filter)|Duplicates (2)|Only in this file (2)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)|Compare PROG (1)",
+          optionTexts("A"));
+        check("PGM: only Differences is an optgroup", $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Differences");
+        await pick("A", "duplicates");
+        check("PGM 'Duplicates': this file's own copies", programKeys("A").join() === "0-0,1-3", programKeys("A"));
+        await pick("B", "duplicates");
+        check("PGM 'Duplicates' in pane B: the other file's copies", programKeys("B").join() === "0-4,1-0", programKeys("B"));
+        await pick("A", "comparePrograms");
+        check("PGM 'Compare PROG': the diverged slot", programKeys("A").join() === "0-2", programKeys("A"));
+
+        // --- Compare COMBI -> the Combis list ------------------------------------------------
+        const combiKeys = (id) => $$(".combis-table tbody tr[data-entry-key]", pane(id)).map((tr) => tr.dataset.entryKey).sort();
+        const combi = (bank, number, nameA, nameB, n) => ({ bank, number, nameA, nameB, changes: Array.from({ length: n }, (_, i) => "change " + i) });
+        win.findDivergentCombisAcrossDatasets = async () => [
+          combi(0, 1, "Stradivarius Goes POP", "Stradivarius Goes POP", 2),
+          combi(1, 0, "K-Lab: Katja's House", "Another Song", 5),  // different song
+          combi(0, 3, "Init Combi", "Init Combi", 1),              // template on both sides: left out
+        ];
+        await showCategory("A", "combis");
+        check("COMBI: disabled before a Compare COMBI find", dropdown("A").disabled);
+        const allCombis = combiKeys("A").length;
+        await findMode("Compare COMBI");
+        check("COMBI: grouped categories, Init-Combi slot left out",
+          !dropdown("A").disabled && optionTexts("A").join("|") === "(no filter)|All diverged (2)|Edited (1)|Different songs (1)" &&
+          $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Compare COMBI", optionTexts("A"));
+        await pick("A", "compareCombis:diverged");
+        check("COMBI 'All diverged' filters the Combis list", combiKeys("A").join() === "0-1,1-0", combiKeys("A"));
+        await pick("A", "compareCombis:edited");
+        check("COMBI 'Edited': diverged but not a different song", combiKeys("A").join() === "0-1", combiKeys("A"));
+        await pick("A", "compareCombis:differentSong");
+        check("COMBI 'Different songs'", combiKeys("A").join() === "1-0", combiKeys("A"));
+        await showCategory("A", "programs");
+        check("each tab keeps its own pick", dropdown("A").value === "comparePrograms" && programKeys("A").join() === "0-2", dropdown("A").value);
+        await showCategory("A", "combis");
+        check("...and the Combis pick is still there", dropdown("A").value === "compareCombis:differentSong" && combiKeys("A").length === 1);
+        paneApi("A").jumpToInstrument({ isProgram: false, bank: 0, number: 0 });
+        await wait(200);
+        check("COMBI: a jump to a hidden Combi clears the Combis filter", dropdown("A").value === "" && combiKeys("A").length === allCombis,
+          [dropdown("A").value, combiKeys("A").length, allCombis]);
+      } catch (err) {
+        check("no exception", false, String(err && err.stack ? err.stack : err));
+      }
+      report.summary = report.failed === 0 ? "ALL PASSED" : report.failed + " FAILED";
+      document.getElementById("out").textContent = JSON.stringify(report, null, 1);
+    })();
+  </script>
+</body>
+</html>

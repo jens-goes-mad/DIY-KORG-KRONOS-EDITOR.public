@@ -102,6 +102,13 @@ struct ProgramInfo {
     // ProgramFields::exiAlgorithmType's doc comment (ProgramDecoder.h) for
     // the confirmed enum/offset. Only meaningful when bankType == Exi.
     int exiAlgorithmType = 0;
+    // HD-1 Programs only (always false for EXi): the kinds of sample bank
+    // this Program actually plays -- user samples (a .KSC user bank, or the
+    // Sampling-mode "Old RAM") and/or Korg EXs libraries. See
+    // hd1PlayedSampleSources()'s doc comment (ProgramDecoder.h). Drives the
+    // frontend's orange / light-gray sample icon.
+    bool usesUserSamples = false;
+    bool usesExsSamples = false;
 };
 
 // A Timbre's on/off + source-engine status, read from the byte immediately
@@ -161,6 +168,14 @@ std::string timbreBankName(int rawBankCode);
 // -- counting Combi usage for those would be a guess, so it's not
 // attempted.
 bool isConfirmedTimbreProgramBank(int programBank);
+
+// The PBK1 file-order Program bank index (ProgramInfo::bank) a Timbre's raw
+// bank code (TimbreRef::rawBankCode) refers to, or -1 if that code has no
+// confirmed index (unidentified, or indexless like GM). The ONE copy of this
+// translation (kConfirmedTimbreBanks) -- the frontend reads the result per
+// Timbre from EditorBridge::combiToValue()'s "programBank" instead of keeping
+// its own table (it used to, and that copy drifted twice, see STATE.md).
+int programBankForConfirmedTimbreCode(int rawBankCode);
 
 // One Combi, from CMB1's CBK1 banks (see docs/content/format/index.md §5.1). No
 // contentHash -- duplicate detection was only requested for Programs.
@@ -229,6 +244,15 @@ public:
     // broader dirty-tracking/undo system yet, this is purpose-built for
     // that one question ("would Unload lose anything?").
     bool isDirty() const { return dirty_; }
+
+    // A content version number -- bumped by every writeIntoData() call and
+    // every (re)load, never reset (unlike isDirty(), a save() doesn't change
+    // any content, so it doesn't change this either). Lets a caller
+    // that cached something derived from this file's bytes (the Cross
+    // Dataset results, frontend/cross-dataset-results.js) tell whether ANY
+    // edit happened since -- isDirty() alone can't: it stays true across
+    // every edit after the first one.
+    uint64_t editCount() const { return editCount_; }
 
     const std::vector<Setlist>& setlists() const { return setlists_; }
     std::vector<Setlist>& setlists() { return setlists_; }
@@ -689,6 +713,16 @@ public:
     // once this is proven out -- programs_/combis_/setlists_ below still
     // reflect the older eager-parse shape for everything else.
     std::optional<ProgramInfo> decodeProgram(int bank, int number) const;
+
+    // The Program at (bank, number) -- PBK1/MBK1 file-order bank index, see
+    // ProgramInfo::bank -- or nullptr if there is none. The one lookup every
+    // Program REFERENCE goes through (a Set List slot's instrument, a Combi
+    // Timbre, a copy's source/target), so per-Program facts like
+    // ProgramInfo::usesUserSamples are read off the referenced
+    // Program itself rather than re-derived per referrer. Linear scan over
+    // ~2,560 Programs -- cheap even for a whole Set List's 128 slots.
+    const ProgramInfo* findProgram(int bank, int number) const;
+
 
     // Same as decodeProgram(), for Combis -- see src/kronos/CombiDecoder.h,
     // the second per-record decoder built this way.
@@ -1264,30 +1298,44 @@ private:
     // as the load-time lookup's own out-of-range behavior.
     std::string resolveInstrumentName(bool isProgram, int bank, int number) const;
 
+
     // Where one PRG1 sub-bank's (MBK1 or PBK1) records live within data_
     // -- retained so decodeProgram() can locate and re-decode a specific
     // record on demand, without re-scanning the whole file's chunk
     // hierarchy every time.
-    struct ProgramBankLocation {
+    // Same shape for a CBK1 (Combi) sub-bank, minus bankType.
+    struct BankLocation {
         size_t recordsStart = 0;
         uint32_t numRecords = 0;
         uint32_t bytesPerRecord = 0;
+    };
+    struct ProgramBankLocation : BankLocation {
         ProgramBankType bankType = ProgramBankType::Hd1;  // classified once at load, see ProgramBankType's doc comment
     };
 
-    // Same as ProgramBankLocation, for one CBK1 sub-bank -- retained so
-    // decodeCombi() can locate and re-decode a specific record on demand.
-    struct CombiBankLocation {
-        size_t recordsStart = 0;
-        uint32_t numRecords = 0;
-        uint32_t bytesPerRecord = 0;
-    };
+    // One record of either kind -- `isProgram` picks programBankLocations_
+    // or combiBankLocations_ (same flag convention as
+    // findSetlistReferences()). The single implementation of the bank/record
+    // bounds check + offset math that every Program/Combi record accessor
+    // (programRecordBytes()/combiRecordBytes(), put*RecordBytes(),
+    // decodeProgram()/decodeCombi(), ...) goes through.
+    const BankLocation* bankLocation(bool isProgram, int bank) const;          // nullptr if no such bank
+    std::optional<size_t> recordOffset(bool isProgram, int bank, int number) const;  // into data_, nullopt if out of range
+    std::optional<std::vector<uint8_t>> recordBytes(bool isProgram, int bank, int number) const;
+    // Writes and re-derives the cached ProgramInfo/CombiInfo; false (writes
+    // nothing) if out of range or `bytes` isn't exactly one record long.
+    bool putRecordBytes(bool isProgram, int bank, int number, const std::vector<uint8_t>& bytes);
+    // Shared body of moveProgramWithinBank()/moveCombiWithinBank() -- see
+    // their doc comments; combiRefs* stay 0 for a Combi (nothing references
+    // a Combi from a Timbre).
+    ProgramSwapResult moveRecordWithinBank(bool isProgram, int bank, int fromNumber, int toNumber);
 
     std::vector<Setlist> setlists_;
     std::vector<ProgramInfo> programs_;
     std::vector<CombiInfo> combis_;
     std::vector<uint8_t> data_;                          // the whole file's raw bytes, retained after load
     bool dirty_ = false;                                 // see isDirty()/writeIntoData()
+    uint64_t editCount_ = 0;                             // see editCount()/writeIntoData()
 
     // The ONLY place any byte of data_ is ever overwritten (grepped the
     // whole class to confirm, 2026-08-15) -- every write method
@@ -1299,7 +1347,7 @@ private:
     // every future one. Deliberately NOT a public/generic "put raw bytes
     // at an offset" API -- offsets stay private to PcgFile, computed the
     // same way they always were (sbkSongsStart_/sdbSongsStart_ + a known
-    // stride, or a bank's own ProgramBankLocation/CombiBankLocation);
+    // stride, or a bank's own BankLocation);
     // callers still go through the named, validated public put*() methods.
     // A caller-facing generic put is a separate, bigger idea (offset
     // round-tripped from a prior get*() call) -- discussed and deliberately
@@ -1307,10 +1355,11 @@ private:
     void writeIntoData(size_t offset, const uint8_t* src, size_t length) {
         std::copy(src, src + length, data_.begin() + static_cast<long>(offset));
         dirty_ = true;
+        ++editCount_;
     }
 
     std::vector<ProgramBankLocation> programBankLocations_;  // index into data_, one entry per PRG1 sub-bank
-    std::vector<CombiBankLocation> combiBankLocations_;      // index into data_, one entry per CBK1 sub-bank
+    std::vector<BankLocation> combiBankLocations_;           // index into data_, one entry per CBK1 sub-bank
 
     // data_ offset of setlists_[i]'s first song record (i.e. right after
     // that Set List's own 40-byte SBK1 header) -- one entry per setlists_

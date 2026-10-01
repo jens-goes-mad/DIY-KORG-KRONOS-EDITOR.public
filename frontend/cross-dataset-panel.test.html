@@ -27,6 +27,7 @@
   <script src="vendor/tabulator/tabulator.min.js"></script>
   <script src="sidebar-panel.js"></script>
   <script src="datasets.js"></script>
+  <script src="cross-dataset-results.js"></script>
   <script>
     // ---- stubs for what the panel takes from the rest of the app -----------------------
     const jumps = [];
@@ -46,8 +47,8 @@
     const panes = { A: makePane("A"), B: makePane("B") };
 
     const datasets = [
-      { datasetId: 1, displayName: "/x/K1_20260418.PCG", setlistCount: 1, dirty: false },
-      { datasetId: 2, displayName: "/x/INIT.PCG", setlistCount: 1, dirty: false },
+      { datasetId: 1, displayName: "/x/K1_20260418.PCG", setlistCount: 1, dirty: false, editCount: 1 },
+      { datasetId: 2, displayName: "/x/INIT.PCG", setlistCount: 1, dirty: false, editCount: 1 },
     ];
     window.listDatasets = async () => datasets.map((d) => ({ ...d }));
 
