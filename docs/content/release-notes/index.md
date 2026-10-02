@@ -15,7 +15,18 @@ A short, user-facing summary of what changed in each tagged release -- not a ful
 log (see [`STATE.md`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/STATE.md)
 in the repo for that level of detail).
 
-## 0.1.11 (latest)
+## 0.1.12 (latest)
+
+- **One Find does everything**: in the Cross Dataset sidebar, a single **Find** now runs all
+  four searches at once (Duplicates, Differences, Compare PROG and Compare COMBI -- about a
+  tenth of a second for two full backups). The mode buttons only switch which result you
+  see, and the panes' **Cross Dataset** filter offers every category right away.
+- The sidebar now reads top to bottom: **Dataset A**, **Dataset B**, **Find**, then the mode
+  buttons directly above the result they switch.
+- Resolving a Combi difference with **←** / **→** no longer resets the panes' Cross Dataset
+  filter.
+
+## 0.1.11
 
 - **Filter a pane by a Cross Dataset result**: the Programs and Combis lists now have a
   **Cross Dataset** dropdown next to the name filter. After a search, it narrows the list to
