@@ -32,7 +32,8 @@
     // ---- stubs for what the panel takes from the rest of the app -----------------------
     const jumps = [];
     const resolves = [];
-    function showToast() {}
+    const toasts = [];
+    function showToast(msg) { toasts.push(msg); }
     function formatBankNumber(e, t) {
       return (e.isProgram ? "P" : "C") + String(e.bank).padStart(2, "0") + "-" + String(e.number).padStart(3, "0");
     }
@@ -79,10 +80,17 @@
       { bank: 7, number: 100, nameA: "Tainted Love", nameB: "Your Song", changes: ["a", "b", "c", "d", "e"] },
       { bank: 2, number: 3, nameA: "Init Combi", nameB: "INIT COMBI", changes: ["Master Volume 100 -> 90"] },
     ];
-    window.findDuplicateProgramsAcrossDatasets = async () => dupGroups;
-    window.findProgramDifferencesAcrossDatasets = async () => diffRows;
-    window.findDivergentProgramsAcrossDatasets = async () => progDiv;
-    window.findDivergentCombisAcrossDatasets = async () => combiDiv;
+    // How often each search ran -- one Find must run all four, once each.
+    const calls = { dup: 0, diff: 0, prog: 0, combi: 0 };
+    let failDifferences = false;
+    window.findDuplicateProgramsAcrossDatasets = async () => { calls.dup++; return dupGroups; };
+    window.findProgramDifferencesAcrossDatasets = async () => {
+      calls.diff++;
+      if (failDifferences) throw new Error("stubbed failure");
+      return diffRows;
+    };
+    window.findDivergentProgramsAcrossDatasets = async () => { calls.prog++; return progDiv; };
+    window.findDivergentCombisAcrossDatasets = async () => { calls.combi++; return combiDiv; };
     window.resolveCombiDivergenceChange = async (...args) => { resolves.push(args); return { ok: true, resolvedDatasetId: 2 }; };
   </script>
   <script src="cross-dataset-duplicates-panel.js"></script>
@@ -121,6 +129,14 @@
 
         // --- controls ---------------------------------------------------------------
         check("title", $(".sidebar-panel-title").textContent === "Cross Dataset analysis");
+        {
+          // Dataset A, Dataset B, Find, THEN the mode toggle (moved below Find 2026-10-02).
+          const order = [...body().children].map((el) =>
+            el.classList.contains("cross-dataset-mode-toggle") ? "toggle"
+              : el.querySelector && el.querySelector("select") ? "dataset"
+              : el.tagName === "BUTTON" ? "find" : null).filter(Boolean);
+          check("order: Dataset A, Dataset B, Find, then the mode toggle", order.join(",") === "dataset,dataset,find,toggle", order);
+        }
         check("four mode buttons", $$(".cross-dataset-mode-toggle .button").map((b) => b.textContent).join("|") === "Duplicates|Differences|Compare PROG|Compare COMBI");
         const selects = $$(".sidebar-panel-body select");
         check("two dropdowns with placeholder + 2 datasets", selects.length === 2 && selects.every((s) => s.options.length === 3));
@@ -137,6 +153,29 @@
         s2.value = "2";
         s2.dispatchEvent(new Event("change", { bubbles: true }));
         await wait(60);
+
+        // --- ONE Find runs all four searches -----------------------------------------
+        await find();
+        check("one Find runs all four searches, once each", JSON.stringify(calls) === '{"dup":1,"diff":1,"prog":1,"combi":1}', calls);
+        for (const [label, ok] of [
+          ["Differences", () => !!heading("7 Difference(s)")],
+          ["Compare PROG", () => !!heading("2 Program Divergence(s)")],
+          ["Compare COMBI", () => !!heading("3 Combi Divergence(s)")],
+          ["Duplicates", () => !!heading("3 Duplicate Group(s)")],
+        ]) {
+          await selectMode(label);
+          await wait(200);
+          check(`one Find: '${label}' shows its result without another Find`, ok(), headings().map((h) => h.textContent).join(" / "));
+        }
+        check("switching modes runs no search", JSON.stringify(calls) === '{"dup":1,"diff":1,"prog":1,"combi":1}', calls);
+        failDifferences = true;
+        await find();
+        check("one search failing: nothing kept in ANY mode, one toast",
+          headings().length === 0 && toasts.length === 1 && /stubbed failure/.test(toasts[0]), { headings: headings().length, toasts });
+        await selectMode("Compare PROG");
+        check("...not even in the modes whose search succeeded", headings().length === 0);
+        failDifferences = false;
+        await selectMode("Duplicates");
 
         // --- Duplicates ------------------------------------------------------------
         await find();

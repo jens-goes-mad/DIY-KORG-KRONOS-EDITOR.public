@@ -652,10 +652,7 @@ function createLibraryPanels(
     crossDatasetSelect.value = crossDatasetPicks[currentTab] || "";
     const usable = !!groups && groups.length > 0;
     crossDatasetSelect.disabled = !usable;
-    const modesForTab = currentTab === "programs" ? "Duplicates, Differences or Compare PROG" : "Compare COMBI";
-    crossDatasetSelect.title = usable
-      ? ""
-      : `Run a Cross Dataset ${modesForTab} find (top bar) that includes this file.`;
+    crossDatasetSelect.title = usable ? "" : "Run Find in the Cross Dataset sidebar (top bar) for a pair that includes this file.";
     // Orange outline while a filter is on, so a shortened list never looks like missing data.
     crossDatasetSelect.parentElement.classList.toggle("is-filtering", !!getSlotFilter(currentTab));
   }

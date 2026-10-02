@@ -5,11 +5,11 @@
 // right after datasets.js and shaped like it: module state + getters + a
 // change broadcast.
 //
-// ONE pair of datasets at a time (project owner's decision, 2026-10-01): the
-// sidebar keeps one result per mode (Duplicates / Differences / Compare PROG /
-// Compare COMBI), all for the same A/B pair, and storing a result for a
-// different pair -- or the same pair after either file was edited -- replaces
-// everything. Holding several pairs at once is possible later (key by pair,
+// ONE pair of datasets at a time (project owner's decision, 2026-10-01), and
+// ONE Find produces every mode's result at once (2026-10-02): Duplicates,
+// Differences, Compare PROG and Compare COMBI are always stored -- and
+// replaced or dropped -- together, so there is never a half-searched state.
+// Holding several pairs at once is possible later (key by pair,
 // keep several entries); it would add a "compared with which file" choice to
 // the pane dropdown, since one dataset could then belong to several pairs.
 //
@@ -68,24 +68,24 @@ function getCrossDatasetResult(mode) {
   return { idA: r.idA, idB: r.idB, ...r.modes[mode] };
 }
 
-// Stores one mode's result. `pair` = { idA, idB, editCountA, editCountB } as of
-// the search; if it differs from what's stored (another pair, or the same pair
-// edited since), every other mode's result is dropped first.
-function setCrossDatasetResult(mode, pair, payload) {
+// The pair the stored result describes ({ idA, idB }), or null.
+function getCrossDatasetPair() {
   const r = crossDatasetResult;
-  const samePair = r && r.idA === pair.idA && r.idB === pair.idB &&
-    r.editCountA === pair.editCountA && r.editCountB === pair.editCountB;
-  if (!samePair) crossDatasetResult = { ...pair, modes: {} };
-  crossDatasetResult.modes[mode] = payload;
+  return r ? { idA: r.idA, idB: r.idB } : null;
+}
+
+// Stores one Find's results, replacing whatever was there. `pair` = { idA, idB,
+// editCountA, editCountB } as of the search; `modes` = { duplicates: {groups},
+// differences: {rows}, comparePrograms: {programs}, compareCombis: {combis} }.
+function setCrossDatasetResults(pair, modes) {
+  crossDatasetResult = { ...pair, modes };
   notifyCrossDatasetResultsChanged();
 }
 
-// Drops one mode's result, or (no argument) everything.
-function clearCrossDatasetResults(mode) {
+// Drops everything (another pair picked, a file closed or edited, a failed Find).
+function clearCrossDatasetResults() {
   if (!crossDatasetResult) return;
-  if (mode === undefined) crossDatasetResult = null;
-  else if (crossDatasetResult.modes[mode]) delete crossDatasetResult.modes[mode];
-  else return;
+  crossDatasetResult = null;
   notifyCrossDatasetResultsChanged();
 }
 
@@ -110,8 +110,8 @@ async function revalidateCrossDatasetResults(datasets) {
 // than A/B), in the sidebar's mode order. `group` is the sidebar mode's name
 // for a mode with several categories (an <optgroup>), null for a mode that is
 // one category by itself (a plain option named after the mode). Only modes
-// that have been searched are listed; inside one, a category with no slots is
-// still listed (the dropdown shows it disabled).
+// in the stored result are listed (after a Find, all of them); a category with
+// no slots is still listed (the dropdown shows it disabled).
 function getCrossDatasetFilterCategories(datasetId, kind) {
   const r = crossDatasetResult;
   if (!r || (datasetId !== r.idA && datasetId !== r.idB)) return null;

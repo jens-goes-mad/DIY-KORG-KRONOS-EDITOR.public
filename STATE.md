@@ -2579,6 +2579,7 @@ Archived entries (full text in STATE-ARCHIVE.md):
   #110 [BUILT, 2026-09-28] sample (waveform) icon for Programs that play a user sample bank (KSC)
   #111 [REFACTORED, 2026-09-29] duplication cleanup: Timbre bank table, PcgFile record helpers, bridge name collisions
   #112 [BUILT, 2026-10-01] Cross Dataset filter dropdown in the PGM/COMBI panes (all four modes), shared result store, PcgFile::editCount()
+  #114 [BUILT, 2026-10-02] one Cross Dataset Find runs all four searches; resolve keeps the panes' filter picks
 
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 

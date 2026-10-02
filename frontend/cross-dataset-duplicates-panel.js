@@ -4,11 +4,16 @@
 // createDuplicatesPanel()), which only ever looks inside one file. Reached via
 // a topbar icon next to the pane-visibility [left|both|right] buttons.
 //
-// One sidebar, ONE screen (revised 2026-09-26, per direct request): a mode
-// toggle, two dataset dropdowns (A and B), a Find button, and the result
-// rendered inline BELOW them -- no separate "results" view or "new search"
+// One sidebar, ONE screen (revised 2026-09-26, per direct request): two
+// dataset dropdowns (A and B), a Find button, a mode toggle (moved below Find
+// 2026-10-02, per direct request -- the dropdowns and Find act on all modes),
+// and the result rendered inline BELOW them -- no separate "results" view or "new search"
 // button, no bank filter. Find is disabled until two DIFFERENT datasets are
-// picked.
+// picked. ONE Find runs all four searches (2026-10-02, per direct request:
+// "both dropdowns and one Find change all cross data findings") -- the mode
+// toggle only picks which of the already-computed results is shown, and the
+// panes' filter dropdowns get every category at once. All four together take
+// ~80-115 ms natively on real backups (K1/K2/INIT/Narf, measured).
 //
 // - **Find duplicates**: Programs with the same content in A and in B, at any
 //   slot (findDuplicateProgramsAcrossDatasets(), matched on a location-
@@ -33,7 +38,7 @@
 //
 // The results themselves live in cross-dataset-results.js (shared with the
 // panes' "Cross Dataset" filter dropdown), not here: this file stores each
-// search's result there and reads it back to draw. That store drops a result
+// Find's results there and reads them back to draw. That store drops a result
 // as soon as either dataset is closed or edited (its `editCount` moved), and
 // this sidebar redraws on its broadcast.
 //
@@ -90,11 +95,6 @@ function destroyTables() {
   tableInstances.length = 0;
 }
 
-// Forgets the saved sort/filter of one mode's tables (called when that mode's rows are replaced).
-const TABLE_KEY_PREFIX = { duplicates: "dup:", differences: "diff:", comparePrograms: "prog:", compareCombis: "combi:" };
-function forgetTableStates(mode) {
-  for (const k of [...tableStates.keys()]) if (k.startsWith(TABLE_KEY_PREFIX[mode])) tableStates.delete(k);
-}
 
 // `hostEl` must already be in the document (Tabulator measures it). The table fills
 // all the height the result pane has left (`height: "100%"` of the absolutely-sized
@@ -198,8 +198,8 @@ function datasetsChanged(datasets) {
   }
   // A result describes ONE pair -- if the picks moved (a picked file was
   // closed), it's gone; otherwise drop it only if either file was edited.
-  const anyResult = MODES.map(([mode]) => getCrossDatasetResult(mode)).find((r) => r);
-  if (anyResult && (anyResult.idA !== compareDatasetIdA || anyResult.idB !== compareDatasetIdB)) {
+  const pair = getCrossDatasetPair();
+  if (pair && (pair.idA !== compareDatasetIdA || pair.idB !== compareDatasetIdB)) {
     clearCrossDatasetResults();
   } else {
     revalidateCrossDatasetResults(datasets);
@@ -211,30 +211,31 @@ function canFind() {
   return !isBusy && compareDatasetIdA != null && compareDatasetIdB != null && compareDatasetIdA !== compareDatasetIdB;
 }
 
-// Runs the current mode's search for the picked A/B. Always clears the busy flag,
-// even if the bridge throws, so the sidebar can never stay stuck on "Finding...".
-async function run(mode = toolMode, { keepTableState = false } = {}) {
+// Runs ALL four searches for the picked A/B and stores them as one result -- any
+// one failing fails the whole Find (nothing half-searched is kept). Always clears
+// the busy flag, even if the bridge throws, so the sidebar can never stay stuck
+// on "Searching...".
+async function run({ keepTableState = false } = {}) {
   if (!canFind()) return;
   const idA = compareDatasetIdA;
   const idB = compareDatasetIdB;
   isBusy = true;
   sidebar.update();
   try {
-    let payload;
-    if (mode === "duplicates") {
-      payload = { groups: await window.findDuplicateProgramsAcrossDatasets([idA, idB], []) };
-    } else if (mode === "differences") {
-      payload = { rows: await window.findProgramDifferencesAcrossDatasets(idA, idB, []) };
-    } else if (mode === "comparePrograms") {
-      payload = { programs: await window.findDivergentProgramsAcrossDatasets(idA, idB, []) };
-    } else {
-      payload = { combis: await window.findDivergentCombisAcrossDatasets(idA, idB) };
-    }
+    const [groups, rows, programs, combis] = await Promise.all([
+      window.findDuplicateProgramsAcrossDatasets([idA, idB], []),
+      window.findProgramDifferencesAcrossDatasets(idA, idB, []),
+      window.findDivergentProgramsAcrossDatasets(idA, idB, []),
+      window.findDivergentCombisAcrossDatasets(idA, idB),
+    ]);
     const fresh = await window.listDatasets();  // current edit counts, without re-broadcasting
-    if (!keepTableState) forgetTableStates(mode);  // new rows: old sort/filter no longer describe them
-    setCrossDatasetResult(mode, { idA, idB, editCountA: editCountOf(fresh, idA), editCountB: editCountOf(fresh, idB) }, payload);
+    if (!keepTableState) tableStates.clear();  // new rows: old sort/filter no longer describe them
+    setCrossDatasetResults(
+      { idA, idB, editCountA: editCountOf(fresh, idA), editCountB: editCountOf(fresh, idB) },
+      { duplicates: { groups }, differences: { rows }, comparePrograms: { programs }, compareCombis: { combis } }
+    );
   } catch (err) {
-    clearCrossDatasetResults(mode);
+    clearCrossDatasetResults();
     showToast(`Search failed: ${err && err.message ? err.message : err}`, { isError: true });
   } finally {
     isBusy = false;
@@ -312,6 +313,15 @@ async function resolveCombiChange(bank, number, description, direction) {
     return;
   }
 
+  // Re-run the whole Find rather than hand-editing the cached result -- this
+  // one resolved change (and the whole Combi row, once nothing about it
+  // diverges any more) disappears naturally from the fresh list, no manual
+  // array surgery needed, and can never drift out of sync with what the
+  // datasets actually contain now. FIRST, before the pane refresh below: the
+  // fresh result carries the new edit counts, so the panes' revalidation
+  // keeps it -- and their filter picks -- instead of dropping it.
+  await run({ keepTableState: true });  // a resolve must not drop what was typed/sorted
+
   // If either Norton pane currently shows the dataset that was actually
   // written to, refresh its library view -- the same "did a write land
   // somewhere already visible" check every other cross-pane write in this
@@ -319,13 +329,6 @@ async function resolveCombiChange(bank, number, description, direction) {
   for (const pane of Object.values(panes)) {
     if (pane.getCurrentDatasetId() === result.resolvedDatasetId) await pane.refreshLibrary();
   }
-
-  // Re-run the SAME comparison rather than hand-editing the cached result --
-  // this one resolved change (and the whole Combi row, once nothing about
-  // it diverges any more) disappears naturally from the fresh list, no
-  // manual array surgery needed, and can never drift out of sync with what
-  // the datasets actually contain now.
-  await run("compareCombis", { keepTableState: true });  // a resolve must not drop what was typed/sorted
 }
 
 // "Find differences": unlike jumpToDivergence() the two sides usually sit at
@@ -781,7 +784,8 @@ function buildDatasetSelect(bodyEl, labelText, currentId, onChange) {
 
 function buildBody(bodyEl) {
   destroyTables();  // the body is about to be rebuilt from scratch
-  buildModeToggle(bodyEl);
+  // Dataset A/B + Find first -- they act on ALL modes -- then the mode toggle,
+  // right above the result it switches.
   buildDatasetSelect(bodyEl, "Dataset A (opens in the left pane)", compareDatasetIdA, (v) => { compareDatasetIdA = v; });
   buildDatasetSelect(bodyEl, "Dataset B (opens in the right pane)", compareDatasetIdB, (v) => { compareDatasetIdB = v; });
 
@@ -795,10 +799,11 @@ function buildBody(bodyEl) {
   }
   findBtn.addEventListener("click", () => run());
   bodyEl.appendChild(findBtn);
+  buildModeToggle(bodyEl);
 
   const r = getCrossDatasetResult(toolMode);
   if (!r) return;
-  // Only this area scrolls; the mode toggle, dropdowns and Find button above stay put.
+  // Only this area scrolls; the dropdowns, Find button and mode toggle above stay put.
   const resultsEl = document.createElement("div");
   resultsEl.className = "cross-dataset-results";
   bodyEl.appendChild(resultsEl);

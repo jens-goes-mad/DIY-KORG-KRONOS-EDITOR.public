@@ -114,7 +114,8 @@ you started from.
 The **⧉** button in the topbar (next to Left only / Both / Right only) opens a sidebar
 with four tools that work on two open files at once, independent of either pane. Pick
 the two files in the **A** and **B** dropdowns (they follow files being opened/closed),
-press **Find**, and the result appears below as one table that fills the pane (only its rows
+press **Find** -- one Find runs all four tools at once, the toggle at the top only switches
+which result you see. The result appears below as one table that fills the pane (only its rows
 scroll; click a column header to sort, type in the box under it to filter):
 
 - **Duplicates** -- finds Programs with the same content in both files, at any slot
@@ -132,7 +133,7 @@ scroll; click a column header to sort, type in the box under it to filter):
   different content) or **Moved** (identical, different slot). Click a row to open
   A in the left pane and B in the right, each at its own slot. Programs only for now.
 
-After a search, each pane's Programs and Combis lists can be **filtered** to one result
+After a Find, each pane's Programs and Combis lists can be **filtered** to one result
 category: the **Cross Dataset** dropdown next to the name filter lists that file's own
 categories -- Duplicates, Only in this file / Renamed / Modified twins / Moved, Compare PROG
 for Programs; All diverged / Edited / Different songs (Compare COMBI) for Combis. It turns orange while

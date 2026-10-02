@@ -4719,3 +4719,35 @@ CLEAN UP -- noted 2026-08-15:
         filtering, per-tab picks, a Combi jump clearing the Combis filter),
         sidebar harness 53/53, `ctest` green. Still not exercised by hand in
         the native app with real files.
+  114. **BUILT (2026-10-02)**: ONE Cross Dataset Find runs all four searches,
+      per the owner's RFC ("both dropdowns and one Find button change all
+      cross data findings"). The sidebar's mode toggle now only switches
+      which already-computed result is shown; the panes' filter dropdowns
+      get every category at once (the "only searched modes are listed"
+      state is gone; disabled hint: "Run Find in the Cross Dataset sidebar
+      ..."). Measured first with a throwaway timing test against the real
+      backups -- all four native searches back to back: K1 vs INIT 109 ms,
+      K1 vs K2 82 ms, Narf K1X vs K1 115 ms (Differences is the slowest,
+      52-75 ms; Compare PROG < 1 ms).
+      - **Store** (`cross-dataset-results.js`): `setCrossDatasetResults(pair,
+        modes)` replaces the whole set; `clearCrossDatasetResults()` drops
+        all of it (per-mode set/clear gone); new `getCrossDatasetPair()`.
+      - **Sidebar**: `run()` = `Promise.all` of the four bridge calls; any
+        one failing fails the whole Find (one toast, nothing kept). A new
+        Find forgets every table's saved sort/filter (`tableStates.clear()`),
+        a resolve re-run keeps them.
+      - **Resolve order fixed**: a Combi ←/→ resolve now re-runs the Find
+        BEFORE refreshing the panes, so their revalidation sees the new edit
+        counts and keeps the result -- and the panes' filter picks.
+        Previously the refresh dropped the result (and every pick) first.
+      Verified: store test 33/33; sidebar harness 61/61 (new: one click =
+      each search once, every mode shown without another Find, switching
+      modes searches nothing, one failing search keeps nothing in any mode);
+      filter harness 47/47 at 1400px and 800px (one Find fills PGM and
+      COMBI; new resolve check -- mutation-tested: with the old order both
+      panes lose their picks and it fails); `ctest` green. Not exercised by
+      hand in the native app.
+      - **Follow-up (same day, per direct request)**: the sidebar now reads
+        Dataset A, Dataset B, Find, THEN the mode toggle (right above the
+        result it switches) -- the dropdowns and Find act on all modes.
+        Sidebar harness 62/62 (new order check), filter harness 47/47.

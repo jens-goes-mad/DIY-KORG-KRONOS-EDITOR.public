@@ -4,9 +4,8 @@
   createLibraryPanels() + cross-dataset-results.js), end to end in the REAL app:
   the whole index.html runs in an iframe on mock_bridge.js; only window.prompt
   (the mock's stand-in for the native Open dialog) and the cross-dataset
-  bridge calls are stubbed. A scripted run opens two files, runs each sidebar
-  mode's find (Differences first, then Duplicates, Compare PROG and Compare
-  COMBI), drives both panes' Programs and Combis dropdowns and prints a JSON
+  bridge calls are stubbed. A scripted run opens two files, runs ONE sidebar
+  Find (which fills all four modes), drives both panes' Programs and Combis dropdowns and prints a JSON
   report.
 
   Needs a same-origin iframe, so serve frontend/ over HTTP (file:// iframes
@@ -93,7 +92,7 @@
 
         // --- before any find -------------------------------------------------------
         check("no find yet: dropdown disabled, says how to enable it",
-          dropdown("A").disabled && /Run a Cross Dataset Duplicates, Differences or Compare PROG find/.test(dropdown("A").title), dropdown("A").title);
+          dropdown("A").disabled && /Run Find in the Cross Dataset sidebar/.test(dropdown("A").title), dropdown("A").title);
         check("no find yet: only '(no filter)'", optionTexts("A").join("|") === "(no filter)", optionTexts("A"));
 
         // --- layout: two equal columns, nothing overflows ---------------------------
@@ -110,20 +109,38 @@
           check("layout: pane has no horizontal scroll", pane("A").scrollWidth <= pane("A").clientWidth + 1, [pane("A").scrollWidth, pane("A").clientWidth]);
         }
 
-        // --- run a Differences find in the sidebar (A = dataset 1, B = dataset 2) ---
+        // --- ONE Find in the sidebar (A = dataset 1, B = dataset 2) runs all four searches ---
+        const member = (datasetId, bank, number) => ({ datasetId, bank, number, name: "", filename: "", bankType: 0 });
+        const combi = (bank, number, nameA, nameB, n) => ({ bank, number, nameA, nameB, changes: Array.from({ length: n }, (_, i) => "change " + i) });
+        win.findDuplicateProgramsAcrossDatasets = async () => [
+          { members: [member(1, 0, 0), member(2, 1, 0)] },
+          { members: [member(1, 1, 3), member(2, 0, 4)] },
+        ];
         win.findProgramDifferencesAcrossDatasets = async () => rowsAB;
-        $(".cross-dataset-duplicates-button").click(); await wait(300);
-        $$(".cross-dataset-mode-toggle .button", doc).find((b) => b.textContent === "Differences").click(); await wait(100);
-        $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find").click(); await wait(400);
-        check("find: sidebar shows the result", !!$(".cross-dataset-results select"));
+        win.findDivergentProgramsAcrossDatasets = async () => [{ bank: 0, number: 2, nameA: "", nameB: "", bankType: 0 }];
+        win.findDivergentCombisAcrossDatasets = async () => [
+          combi(0, 1, "Stradivarius Goes POP", "Stradivarius Goes POP", 2),
+          combi(1, 0, "K-Lab: Katja's House", "Another Song", 5),  // different song
+          combi(0, 3, "Init Combi", "Init Combi", 1),              // template on both sides: left out
+        ];
+        const findButton = () => $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find");
+        async function find() {
+          if (!$(".sidebar-panel-title")) { win.toggleCrossDatasetDuplicatesPanel(); await wait(300); }
+          findButton().click(); await wait(400);
+        }
+        await showCategory("A", "combis");
+        check("no find yet: Combis dropdown disabled too, same hint",
+          dropdown("A").disabled && /Run Find in the Cross Dataset sidebar/.test(dropdown("A").title), dropdown("A").title);
+        await showCategory("A", "programs");
+        await find();
+        check("find: sidebar shows the result", !!$(".sidebar-section-heading"));
 
-        check("pane A (dataset 1): enabled, its own categories",
-          !dropdown("A").disabled &&
-          optionTexts("A").join("|") === "(no filter)|Only in this file (2)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)",
-          optionTexts("A"));
-        check("pane A: categories grouped under 'Differences'", $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Differences");
+        const PANE_A_PROGRAMS = "(no filter)|Duplicates (2)|Only in this file (2)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)|Compare PROG (1)";
+        check("pane A (dataset 1): one Find -> every Program mode, its own side, in the sidebar's order",
+          !dropdown("A").disabled && optionTexts("A").join("|") === PANE_A_PROGRAMS, optionTexts("A"));
+        check("pane A: only Differences is an optgroup", $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Differences");
         check("pane B (dataset 2): its own side", !dropdown("B").disabled &&
-          optionTexts("B").join("|") === "(no filter)|Only in this file (1)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)",
+          optionTexts("B").join("|") === "(no filter)|Duplicates (2)|Only in this file (1)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)|Compare PROG (1)",
           optionTexts("B"));
         check("find alone doesn't filter anything", programKeys("A").length === ALL_PROGRAMS);
 
@@ -151,8 +168,8 @@
 
         // --- other tabs ----------------------------------------------------------------
         await showCategory("A", "combis");
-        check("Combis tab: dropdown disabled until a Compare COMBI find",
-          dropdown("A").disabled && /Compare COMBI find/.test(dropdown("A").title), dropdown("A").title);
+        check("Combis tab: the same Find already gave it Compare COMBI",
+          !dropdown("A").disabled && optionTexts("A").join("|") === "(no filter)|All diverged (2)|Edited (1)|Different songs (1)", optionTexts("A"));
         await showCategory("A", "duplicates");
         {
           const filterCol = $(".cross-dataset-filter", pane("A"));
@@ -209,27 +226,10 @@
         check("pane switched to the other file of the pair: pick reset, B's categories",
           dropdown("A").value === "" && !dropdown("A").disabled && /Only in this file \(1\)/.test(optionTexts("A").join("|")), optionTexts("A"));
 
-        // --- Duplicates + Compare PROG next to Differences (same pair, nothing edited) ----
+        // --- Duplicates + Compare PROG (same Find, nothing edited) -----------------------
         await paneApi("A").loadDataset(1, "K1.PCG");
         await showCategory("A", "programs");
-        const member = (datasetId, bank, number) => ({ datasetId, bank, number, name: "", filename: "", bankType: 0 });
-        win.findDuplicateProgramsAcrossDatasets = async () => [
-          { members: [member(1, 0, 0), member(2, 1, 0)] },
-          { members: [member(1, 1, 3), member(2, 0, 4)] },
-        ];
-        win.findDivergentProgramsAcrossDatasets = async () => [{ bank: 0, number: 2, nameA: "", nameB: "", bankType: 0 }];
-        async function findMode(label) {
-          if (!$(".sidebar-panel-title")) { win.toggleCrossDatasetDuplicatesPanel(); await wait(300); }
-          $$(".cross-dataset-mode-toggle .button", doc).find((b) => b.textContent === label).click(); await wait(100);
-          $$(".sidebar-panel-body > button", doc).find((b) => b.textContent === "Find").click(); await wait(400);
-        }
-        await findMode("Duplicates");
-        await findMode("Compare PROG");
-        check("PGM: all three Program modes, in the sidebar's order",
-          optionTexts("A").join("|") ===
-            "(no filter)|Duplicates (2)|Only in this file (2)|Renamed (1)|Modified twins (0) [disabled]|Moved (1)|Compare PROG (1)",
-          optionTexts("A"));
-        check("PGM: only Differences is an optgroup", $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Differences");
+        check("back on dataset 1: its categories again", optionTexts("A").join("|") === PANE_A_PROGRAMS, optionTexts("A"));
         await pick("A", "duplicates");
         check("PGM 'Duplicates': this file's own copies", programKeys("A").join() === "0-0,1-3", programKeys("A"));
         await pick("B", "duplicates");
@@ -239,16 +239,8 @@
 
         // --- Compare COMBI -> the Combis list ------------------------------------------------
         const combiKeys = (id) => $$(".combis-table tbody tr[data-entry-key]", pane(id)).map((tr) => tr.dataset.entryKey).sort();
-        const combi = (bank, number, nameA, nameB, n) => ({ bank, number, nameA, nameB, changes: Array.from({ length: n }, (_, i) => "change " + i) });
-        win.findDivergentCombisAcrossDatasets = async () => [
-          combi(0, 1, "Stradivarius Goes POP", "Stradivarius Goes POP", 2),
-          combi(1, 0, "K-Lab: Katja's House", "Another Song", 5),  // different song
-          combi(0, 3, "Init Combi", "Init Combi", 1),              // template on both sides: left out
-        ];
         await showCategory("A", "combis");
-        check("COMBI: disabled before a Compare COMBI find", dropdown("A").disabled);
         const allCombis = combiKeys("A").length;
-        await findMode("Compare COMBI");
         check("COMBI: grouped categories, Init-Combi slot left out",
           !dropdown("A").disabled && optionTexts("A").join("|") === "(no filter)|All diverged (2)|Edited (1)|Different songs (1)" &&
           $$("optgroup", dropdown("A")).map((g) => g.label).join() === "Compare COMBI", optionTexts("A"));
@@ -266,6 +258,26 @@
         await wait(200);
         check("COMBI: a jump to a hidden Combi clears the Combis filter", dropdown("A").value === "" && combiKeys("A").length === allCombis,
           [dropdown("A").value, combiKeys("A").length, allCombis]);
+
+        // --- a Combi resolve in the sidebar keeps the panes' picks ---------------------------
+        let resolveWrites = 0;
+        win.resolveCombiDivergenceChange = async () => {
+          resolveWrites++;
+          await win.resetProgram(2, 0, 5);  // stand-in for the real byte copy: any write into dataset 2 bumps its editCount
+          return { ok: true, resolvedDatasetId: 2 };
+        };
+        await showCategory("B", "combis");
+        await pick("B", "compareCombis:diverged");
+        await pick("A", "compareCombis:edited");
+        if (!$(".sidebar-panel-title")) { win.toggleCrossDatasetDuplicatesPanel(); await wait(300); }
+        $$(".cross-dataset-mode-toggle .button", doc).find((b) => b.textContent === "Compare COMBI").click(); await wait(300);
+        $$(".tabulator-row", doc).find((r) => /Stradivarius/.test(r.textContent)).click(); await wait(500);
+        $$(".cross-dataset-detail button", doc)[0].click(); await wait(800);
+        check("resolve: the write happened", resolveWrites === 1, resolveWrites);
+        check("resolve: pane B (the written file) keeps its pick", dropdown("B").value === "compareCombis:diverged" && !dropdown("B").disabled &&
+          combiKeys("B").join() === "0-1,1-0", [dropdown("B").value, combiKeys("B")]);
+        check("resolve: pane A keeps its pick too", dropdown("A").value === "compareCombis:edited" && combiKeys("A").join() === "0-1",
+          [dropdown("A").value, combiKeys("A")]);
       } catch (err) {
         check("no exception", false, String(err && err.stack ? err.stack : err));
       }

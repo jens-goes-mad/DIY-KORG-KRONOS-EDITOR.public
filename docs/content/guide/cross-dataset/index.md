@@ -17,16 +17,19 @@ layout. Screenshots to follow.
 The **⧉** button in the topbar, next to **Left only / Both / Right only**, opens one sidebar,
 "Cross Dataset analysis". It is a single screen:
 
-1. A **mode toggle**: **Duplicates | Differences | Compare PROG | Compare COMBI**.
-2. Two **dataset dropdowns**, **A** (opens in the left pane) and **B** (opens in the right
+1. Two **dataset dropdowns**, **A** (opens in the left pane) and **B** (opens in the right
    pane). They follow files being opened or closed while the sidebar is open.
-3. A **Find** button. It stays disabled until two *different* datasets are picked.
+2. A **Find** button. It stays disabled until two *different* datasets are picked. **One Find
+   runs all four searches at once** (about a tenth of a second for two full backups), so
+   every mode -- and every pane filter below -- has its result.
+3. A **mode toggle**: **Duplicates | Differences | Compare PROG | Compare COMBI**. It only
+   picks which result you see -- switching never searches again.
 4. The **result**, right below. Every result table can be **sorted** (click a column header;
    click again to reverse) and **filtered** (type in the box under a header) -- the sort and
    filters survive redraws and resolving a Combi change. Each result is **one table** that
    fills the rest of the pane: only its *rows* scroll -- the column titles, sort arrows and
-   filter boxes stay fixed at the top of the table, and so do the toggle, dropdowns and Find
-   button. A title line above it gives the count (e.g. "1201 Duplicate Group(s)"), and a folded
+   filter boxes stay fixed at the top of the table, and so do the dropdowns, Find button and
+   toggle. A title line above it gives the count (e.g. "1201 Duplicate Group(s)"), and a folded
    "How to read this" line explains the result.
 
 **"A" and "B" always mean this sidebar's own dropdowns -- never whichever Norton pane
@@ -123,7 +126,7 @@ dataset that was just written to, it refreshes automatically.
 ## Filtering the panes by a result
 
 The Programs and Combis lists in each pane have a **Cross Dataset** dropdown next to their name
-filter. It becomes available once a search has run for a pair that includes the file this pane
+filter. It becomes available once a Find has run for a pair that includes the file this pane
 shows, and it lists that file's categories *from its own side*, each with its count (an empty
 category is greyed out):
 
@@ -134,7 +137,7 @@ category is greyed out):
   changed) and **Different songs** (a different name and more than 3 changes); the two never
   overlap. Slots that are "Init Combi" on both sides are always left out here.
 
-Only modes you have actually searched appear. Picking a category narrows the list to exactly
+Picking a category narrows the list to exactly
 those slots -- together with the name filter and the bank buttons -- and the dropdown turns
 orange while it filters; "(no filter)" shows the whole list again. Programs and Combis each
 keep their own pick.

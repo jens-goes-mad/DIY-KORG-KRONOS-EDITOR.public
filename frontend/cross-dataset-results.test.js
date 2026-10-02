@@ -30,6 +30,7 @@ var window = typeof window !== "undefined" ? window : globalThis;
     return byKey;
   };
 
+  const MODE_NAMES = ["duplicates", "differences", "comparePrograms", "compareCombis"];
   let notifications = 0;
   onCrossDatasetResultsChanged(() => notifications++);
 
@@ -52,17 +53,24 @@ var window = typeof window !== "undefined" ? window : globalThis;
     aBank: r.bBank, aNumber: r.bNumber, bBank: r.aBank, bNumber: r.aNumber,
   });
 
+  // One Find's results (every mode present -- the sidebar always stores all four);
+  // `modes` overrides some, the rest are empty.
+  const empty = () => ({ duplicates: { groups: [] }, differences: { rows: [] }, comparePrograms: { programs: [] }, compareCombis: { combis: [] } });
+  const store = (pair, modes = {}) => setCrossDatasetResults(pair, { ...empty(), ...modes });
+  const P12 = { idA: 1, idB: 2, editCountA: 5, editCountB: 7 };
+
   // --- empty store -----------------------------------------------------------
   check("empty store: no categories", getCrossDatasetFilterCategories(1, "programs") === null);
-  check("empty store: no result", getCrossDatasetResult("differences") === null);
+  check("empty store: no result, no pair", getCrossDatasetResult("differences") === null && getCrossDatasetPair() === null);
 
-  // --- per-dataset categories ------------------------------------------------
-  setCrossDatasetResult("differences", { idA: 1, idB: 2, editCountA: 5, editCountB: 7 }, { rows });
-  check("set notifies", notifications === 1, notifications);
+  // --- per-dataset categories (Differences) ------------------------------------
+  store(P12, { differences: { rows } });
+  check("set notifies once", notifications === 1, notifications);
   check("sidebar view keeps A/B + payload", (() => {
     const r = getCrossDatasetResult("differences");
     return r && r.idA === 1 && r.idB === 2 && r.rows === rows;
   })());
+  check("pair getter", JSON.stringify(getCrossDatasetPair()) === '{"idA":1,"idB":2}');
   const one = itemsOf(1);
   const two = itemsOf(2);
   check("dataset A: Only in this file = onlyInA, own slots", one["differences:onlyHere"] === "1-91,4-0", one);
@@ -72,48 +80,48 @@ var window = typeof window !== "undefined" ? window : globalThis;
   check("dataset B: renamed/modified/moved use the B side", two["differences:renamed"] === "0-50" &&
     two["differences:modifiedTwin"] === "13-1" && two["differences:moved"] === "13-0,13-2", two);
   check("a dataset outside the pair gets nothing", getCrossDatasetFilterCategories(3, "programs") === null);
-  check("Differences gives the Combis list nothing (Programs only)",
-    JSON.stringify(getCrossDatasetFilterCategories(1, "combis")) === "[]");
-  check("every category is listed, even an empty one", (() => {
-    setCrossDatasetResult("differences", { idA: 1, idB: 2, editCountA: 5, editCountB: 7 }, { rows: [] });
-    const items = getCrossDatasetFilterCategories(1, "programs")[0].items;
-    return items.length === 4 && items.every((it) => it.slots.size === 0);
+  check("after a Find, every mode is listed -- empty categories too", (() => {
+    store(P12);
+    const progs = getCrossDatasetFilterCategories(1, "programs");
+    const combis = getCrossDatasetFilterCategories(1, "combis");
+    return progs.length === 3 && combis.length === 1 &&
+      [...progs, ...combis].every((g) => g.items.every((it) => it.slots.size === 0));
   })());
-  setCrossDatasetResult("differences", { idA: 1, idB: 2, editCountA: 5, editCountB: 7 }, { rows });
 
   // --- A/B order doesn't matter to a pane -------------------------------------
-  setCrossDatasetResult("differences", { idA: 2, idB: 1, editCountA: 7, editCountB: 5 }, { rows: rows.map(swap) });
+  store({ idA: 2, idB: 1, editCountA: 7, editCountB: 5 }, { differences: { rows: rows.map(swap) } });
   check("swapped pair: dataset 1 sees the same filter data", JSON.stringify(itemsOf(1)) === JSON.stringify(one), itemsOf(1));
   check("swapped pair: dataset 2 sees the same filter data", JSON.stringify(itemsOf(2)) === JSON.stringify(two), itemsOf(2));
-  setCrossDatasetResult("differences", { idA: 1, idB: 2, editCountA: 5, editCountB: 7 }, { rows });
 
   // --- Duplicates / Compare PROG / Compare COMBI -----------------------------
   {
-    const pair = { idA: 1, idB: 2, editCountA: 5, editCountB: 7 };
     const member = (datasetId, bank, number) => ({ datasetId, bank, number, name: "", filename: "", bankType: 0 });
-    setCrossDatasetResult("duplicates", pair, {
-      groups: [
-        { members: [member(1, 0, 0), member(2, 13, 0)] },
-        { members: [member(1, 0, 2), member(1, 3, 3), member(2, 13, 2)] },  // two copies in file 1
-      ],
-    });
-    setCrossDatasetResult("comparePrograms", pair, { programs: [{ bank: 3, number: 5, nameA: "", nameB: "", bankType: 0 }] });
     const combi = (bank, number, nameA, nameB, changeCount) =>
       ({ bank, number, nameA, nameB, changes: Array.from({ length: changeCount }, (_, i) => "c" + i) });
-    setCrossDatasetResult("compareCombis", pair, {
-      combis: [
-        combi(7, 1, "Separate Ways", "Separate Ways", 2),
-        combi(7, 100, "Tainted Love", "Your Song", 5),   // different song
-        combi(7, 101, "Tainted Love", "Your Song 2", 3), // renamed but only 3 changes: still the same song
-        combi(2, 3, "Init Combi", "INIT COMBI", 1),       // template slot on both sides: left out
-      ],
+    store(P12, {
+      duplicates: {
+        groups: [
+          { members: [member(1, 0, 0), member(2, 13, 0)] },
+          { members: [member(1, 0, 2), member(1, 3, 3), member(2, 13, 2)] },  // two copies in file 1
+        ],
+      },
+      differences: { rows },
+      comparePrograms: { programs: [{ bank: 3, number: 5, nameA: "", nameB: "", bankType: 0 }] },
+      compareCombis: {
+        combis: [
+          combi(7, 1, "Separate Ways", "Separate Ways", 2),
+          combi(7, 100, "Tainted Love", "Your Song", 5),   // different song
+          combi(7, 101, "Tainted Love", "Your Song 2", 3), // renamed but only 3 changes: still the same song
+          combi(2, 3, "Init Combi", "INIT COMBI", 1),       // template slot on both sides: left out
+        ],
+      },
     });
 
-    const one = getCrossDatasetFilterCategories(1, "programs");
+    const progs = getCrossDatasetFilterCategories(1, "programs");
     check("Programs: modes in the sidebar's order, one-category modes ungrouped",
-      one.map((g) => (g.group || "-") + ":" + g.items.map((it) => it.key).join("+")).join(" ") ===
+      progs.map((g) => (g.group || "-") + ":" + g.items.map((it) => it.key).join("+")).join(" ") ===
         "-:duplicates Differences:differences:onlyHere+differences:renamed+differences:modifiedTwin+differences:moved -:comparePrograms",
-      one.map((g) => [g.group, g.items.map((it) => it.key)]));
+      progs.map((g) => [g.group, g.items.map((it) => it.key)]));
     check("Duplicates: only this file's own copies (all of them)", itemsOf(1).duplicates === "0-0,0-2,3-3", itemsOf(1));
     check("Duplicates: the other file sees its own", itemsOf(2).duplicates === "13-0,13-2", itemsOf(2));
     check("Compare PROG: the same slot for both files", itemsOf(1).comparePrograms === "3-5" && itemsOf(2).comparePrograms === "3-5");
@@ -137,47 +145,40 @@ var window = typeof window !== "undefined" ? window : globalThis;
       const [all, edited, song] = items.map((it) => it.slots);
       return [...edited].every((s) => !song.has(s)) && edited.size + song.size === all.size;
     })());
-    check("Compare COMBI gives the Programs list nothing", !one.some((g) => g.group === "Compare COMBI"));
+    check("Compare COMBI gives the Programs list nothing", !progs.some((g) => g.group === "Compare COMBI"));
+    check("Program modes give the Combis list nothing", getCrossDatasetFilterCategories(1, "combis").length === 1);
     check("shared rules: isInitCombiRow / isDifferentSong",
       isInitCombiRow({ nameA: "Init Combi", nameB: "INIT COMBI" }) && !isInitCombiRow({ nameA: "Init Combi", nameB: "Song" }) &&
       isDifferentSong({ nameA: "A", nameB: "B", changes: [1, 2, 3, 4] }) && !isDifferentSong({ nameA: "A", nameB: "A", changes: [1, 2, 3, 4, 5] }));
-    clearCrossDatasetResults("duplicates");
-    clearCrossDatasetResults("comparePrograms");
-    clearCrossDatasetResults("compareCombis");
   }
 
-  // --- one pair at a time ----------------------------------------------------
-  setCrossDatasetResult("comparePrograms", { idA: 1, idB: 2, editCountA: 5, editCountB: 7 }, { programs: [] });
-  check("same pair + same edit counts: other modes are kept", !!getCrossDatasetResult("differences"));
-  setCrossDatasetResult("comparePrograms", { idA: 1, idB: 2, editCountA: 6, editCountB: 7 }, { programs: [] });
-  check("same pair, edited since: other modes are dropped",
-    !getCrossDatasetResult("differences") && !!getCrossDatasetResult("comparePrograms"));
-  setCrossDatasetResult("differences", { idA: 1, idB: 3, editCountA: 6, editCountB: 1 }, { rows });
-  check("another pair replaces everything",
-    !getCrossDatasetResult("comparePrograms") && getCrossDatasetFilterCategories(2, "programs") === null &&
-    getCrossDatasetFilterCategories(3, "programs") !== null);
-
-  // --- clearing --------------------------------------------------------------
-  setCrossDatasetResult("comparePrograms", { idA: 1, idB: 3, editCountA: 6, editCountB: 1 }, { programs: [] });
-  clearCrossDatasetResults("comparePrograms");
-  check("clear(mode) drops only that mode", !getCrossDatasetResult("comparePrograms") && !!getCrossDatasetResult("differences"));
+  // --- one Find replaces everything; clearing ----------------------------------
+  store({ idA: 1, idB: 3, editCountA: 6, editCountB: 1 }, { differences: { rows } });
+  check("a new Find replaces the old pair completely",
+    getCrossDatasetFilterCategories(2, "programs") === null && getCrossDatasetFilterCategories(3, "programs") !== null &&
+    getCrossDatasetResult("duplicates").groups.length === 0);
+  clearCrossDatasetResults();
+  check("clear drops every mode", MODE_NAMES.every((m) => getCrossDatasetResult(m) === null) && getCrossDatasetPair() === null);
   const before = notifications;
-  clearCrossDatasetResults("comparePrograms");
-  check("clearing something already gone doesn't notify", notifications === before);
+  clearCrossDatasetResults();
+  check("clearing an empty store doesn't notify", notifications === before);
 
   // --- revalidation ----------------------------------------------------------
+  const P13 = { idA: 1, idB: 3, editCountA: 6, editCountB: 1 };
   const list = (countA, countB) => [
     { datasetId: 1, editCount: countA },
     { datasetId: 3, editCount: countB },
   ];
+  store(P13, { differences: { rows } });
   await revalidateCrossDatasetResults(list(6, 1));
   check("revalidate, nothing edited: kept", !!getCrossDatasetResult("differences"));
   await revalidateCrossDatasetResults(list(6, 2));
-  check("revalidate, B edited: dropped", !getCrossDatasetResult("differences") && getCrossDatasetFilterCategories(1, "programs") === null);
-  setCrossDatasetResult("differences", { idA: 1, idB: 3, editCountA: 6, editCountB: 1 }, { rows });
+  check("revalidate, B edited: every mode dropped",
+    MODE_NAMES.every((m) => getCrossDatasetResult(m) === null) && getCrossDatasetFilterCategories(1, "programs") === null);
+  store(P13);
   await revalidateCrossDatasetResults([{ datasetId: 1, editCount: 6 }]);
   check("revalidate, B closed: dropped", !getCrossDatasetResult("differences"));
-  setCrossDatasetResult("differences", { idA: 1, idB: 3, editCountA: 6, editCountB: 1 }, { rows });
+  store(P13);
   window.listDatasets = async () => list(9, 1);
   await revalidateCrossDatasetResults();
   check("revalidate without a list fetches one (A edited: dropped)", !getCrossDatasetResult("differences"));
