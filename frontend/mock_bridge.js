@@ -409,18 +409,18 @@
     return ok();
   };
 
-  // "Copy all to opposite" (pane.js's setlist-info row) -- same dataset
-  // only (the button itself is only enabled when both panes already show
-  // it, see updateCopyButtonState()), overwrites every slot of
-  // dstSetlistIndex with srcSetlistIndex's content, keeping each dst slot's
-  // own `.index` (position) -- mirrors PcgFile::copySetlist() only moving
+  // The Setlist header menu's copy items -- same dataset only, overwrites
+  // dstSetlistIndex's slots with srcSetlistIndex's content (all of them, or
+  // just `slots`, each to the same slot), keeping each dst slot's own
+  // `.index` (position) -- mirrors PcgFile::copySetlist() only moving
   // content, never the destination Set List's own slot count/positions.
-  window.copySetlistEntries = (datasetId, srcSetlistIndex, dstSetlistIndex) => {
+  window.copySetlistEntries = (datasetId, srcSetlistIndex, dstSetlistIndex, slots) => {
     const srcList = datasets[datasetId] && datasets[datasetId].songs[srcSetlistIndex];
     const dstList = datasets[datasetId] && datasets[datasetId].songs[dstSetlistIndex];
     if (!srcList || !dstList) return fail(`Dataset ${datasetId} has no such Set List loaded`);
     if (srcSetlistIndex === dstSetlistIndex) return ok();
     for (let i = 0; i < dstList.length; i++) {
+      if (slots && !slots.includes(i)) continue;
       if (srcList[i]) dstList[i] = Object.assign({}, srcList[i], { index: dstList[i].index });
     }
     markEdited(datasets[datasetId]);
@@ -432,6 +432,20 @@
   // sortSetlist()'s own doc comment for why). Mirrors its empty-slots-
   // trail-last convention and reindexes `.index` 0..N-1 by new position,
   // same pattern as reorderSongEntry()'s mock above.
+  // Mirrors PcgFile::compactSetlist(): real songs move up in order, empty
+  // slots to the end.
+  window.compactSetlistEntries = (datasetId, setlistIndex) => {
+    const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
+    if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);
+    const real = list.filter((e) => !looksLikeEmptySetlistName(e.label));
+    const moved = real.filter((e, i) => e.index !== i).length;
+    if (moved === 0) return ok({ moved: 0 });
+    const order = [...real, ...list.filter((e) => looksLikeEmptySetlistName(e.label))];
+    order.forEach((e, i) => { list[i] = e; e.index = i; });
+    markEdited(datasets[datasetId]);
+    return ok({ moved });
+  };
+
   window.sortSetlistEntries = (datasetId, setlistIndex, ascending) => {
     const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
     if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);

@@ -291,6 +291,17 @@ Three marker values seen:
 | `1e 02 00 00` | Ordinary marker -- a Set List's own name record (#2 onward), and most song slots. |
 | `28 0f 01 00` | Appears on **exactly 128 records total** (one per Set List), always immediately after a name record -- flags "first song slot of a new Set List." This is the *only* way to find where one Set List's name ends and its 128 songs begin -- the name record itself is byte-for-byte indistinguishable from an ordinary record otherwise. |
 
+**The marker belongs to the slot, not to the song (2026-10-11).** In all 8 real backups with
+Set Lists (K1, K2, INIT, PRELOAD, three `setlist_test*` files, the Narf SETLIST file), every
+first song slot holds `28 0f 01 00` and every other song slot `1e 02 00 00` -- 128 and 16,256
+records respectively, no exception. So whenever this app moves or copies a song (sort, drag
+reorder or copy, Copy Setlist, Compact Setlist), only the 24-byte name moves; the destination
+slot keeps its own marker. Until this date a whole 28-byte record moved, so e.g. sorting a
+Set List carried slot 0's `28 0f 01 00` into another slot and left slot 0 with
+`1e 02 00 00` -- this app re-read such a file fine (it finds slots by fixed stride), but
+whether the Kronos does was never tested; a file saved after a sort or a move into/out of
+slot 0 before this fix may carry misplaced markers.
+
 Unpopulated song slots are empty strings (all-NUL after the marker) --
 most factory-default Set Lists (`"Set List 005"` .. `"Set List 127"`) have
 no songs assigned.

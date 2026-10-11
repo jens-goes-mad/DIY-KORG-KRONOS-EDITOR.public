@@ -2482,6 +2482,19 @@ To check on real hardware (owner, noted 2026-09-30):
       repointed by any move. Its bank byte numbering isn't decoded (values
       16/24/25 in PRELOAD.PCG). Does a Drum Track still play the right drum
       Program after its target moved?
+  - Set List name-record markers (noted 2026-10-11, entry 116): before that
+    date, Sort and moves into/out of slot 0 carried slot 0's `28 0f 01 00`
+    marker to another slot. Does the Kronos still load such a file with the
+    right Set List boundaries? Files saved after the fix keep every marker
+    in place -- a sorted + compacted Set List loading correctly on the unit
+    would confirm the fix end to end.
+  - Setlist header menu on the device (noted 2026-10-11, entry 116): in a
+    copy of K1, use Compact Setlist, Copy entire Setlist to opposite, Copy
+    entries from Setlist to opposite (with a filter on, including slot 0)
+    and Reset entries, save, load on the Kronos. Check: every Set List shows
+    its own name and its songs start at slot 000; the copied/compacted songs
+    play the right Program/Combi with their Color/Volume/Comment; the other
+    Set Lists are unchanged.
 
 Deferred on purpose (recorded when the related work shipped):
   - Init Combi records differ by 40+ unexplained bytes across banks, so
@@ -2611,6 +2624,7 @@ Archived entries (full text in STATE-ARCHIVE.md):
   #113 [BUILT, 2026-10-02] screenshot scenes: `kronos_editor --scene <file>` regenerates all 17 app screenshots (Hugo docs + README), byte-identical run to run (docs/screenshots/)
   #114 [BUILT, 2026-10-02] one Cross Dataset Find runs all four searches; resolve keeps the panes' filter picks
   #115 [BUILT, 2026-10-11] Reset all entries, Combi Timbre MIDI channel + vol 0, Duplicates keep-click + bank-pair bulk resolve + Combi reset, empty slots out of Duplicates, Compact bank
+  #116 [BUILT, 2026-10-11] Setlist header menu (copy entire/entries to opposite, reset entries, compact), "Copy all" button removed, Set List name marker kept per slot (bug fix)
 
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 

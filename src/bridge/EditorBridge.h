@@ -161,15 +161,19 @@ public:
     // error}. Overwrites every song slot in dstSetlistIndex with
     // srcSetlistIndex's content (both Set Lists live in the SAME dataset --
     // this is a same-file operation, not a cross-dataset one, see
-    // PcgFile::copySetlist()'s own doc comment) -- the "copy all to
-    // opposite" pane-header button (frontend/pane.js/app.js), for starting a
+    // PcgFile::copySetlist()'s own doc comment) -- the Setlist header
+    // menu's copy items (pane-setlist-editor.js/app.js), for starting a
     // gig's Set List from an existing one and then tweaking a few entries.
     // Leaves dstSetlistIndex's own Setlist::name untouched -- only the 128
     // song slots move. The frontend is responsible for only offering this
     // when both panes already share one dataset with two different Set
-    // Lists selected (see app.js's copyAllToOpposite()) -- this method
-    // itself doesn't know or care which pane called it.
+    // Lists selected (pane-setlist-editor.js's header menu) -- this method
+    // itself doesn't know or care which pane called it. Optional 4th
+    // argument: an array of slot indices to copy (each to the same index)
+    // instead of all of them.
     choc::value::Value copySetlistEntries(const choc::value::ValueView& args);
+    // [datasetId, setlistIndex] -> {ok, moved}. See PcgFile::compactSetlist().
+    choc::value::Value compactSetlistEntries(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, ascending] -> {ok} or {ok:false, error}.
     // Physically reorders every one of a Set List's 128 slots into

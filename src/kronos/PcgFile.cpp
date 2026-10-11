@@ -2587,7 +2587,14 @@ bool PcgFile::putNameRecordBytes(int setlistIndex, int songIndex, const std::vec
     size_t nameOff = start + static_cast<size_t>(songIndex) * kRecordSize;
     if (nameOff + kRecordSize > data_.size()) return false;
 
-    writeIntoData(nameOff, bytes.data(), bytes.size());
+    // Only the 24-byte name field is written -- the record's 4-byte marker
+    // belongs to the SLOT, not to the content (docs/content/format/index.md
+    // §3.2): slot 0 of every Set List carries `28 0f 01 00` ("first song of
+    // a new Set List"), every other slot `1e 02 00 00` -- the same in every
+    // one of the 8 real backups with Set Lists checked 2026-10-11. Writing
+    // the whole record used to let a sort/move/copy carry slot 0's marker
+    // into another slot (and an ordinary one into slot 0).
+    writeIntoData(nameOff + kMarkerSize, bytes.data() + kMarkerSize, bytes.size() - kMarkerSize);
 
     setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)].name =
         readRecordName(data_.data(), nameOff, data_.size());
@@ -2633,13 +2640,21 @@ bool PcgFile::reorderSong(int setlistIndex, int fromIndex, int toIndex) {
     return true;
 }
 
-bool PcgFile::copySetlist(int srcSetlistIndex, int dstSetlistIndex) {
+bool PcgFile::copySetlist(int srcSetlistIndex, int dstSetlistIndex, const std::vector<int>* slots) {
     if (srcSetlistIndex < 0 || static_cast<size_t>(srcSetlistIndex) >= setlists_.size()) return false;
     if (dstSetlistIndex < 0 || static_cast<size_t>(dstSetlistIndex) >= setlists_.size()) return false;
     if (srcSetlistIndex == dstSetlistIndex) return true;
 
     const int count = static_cast<int>(setlists_[static_cast<size_t>(srcSetlistIndex)].songs.size());
-    for (int i = 0; i < count; ++i) {
+    std::vector<int> all;
+    if (slots == nullptr) {
+        for (int i = 0; i < count; ++i) all.push_back(i);
+        slots = &all;
+    }
+    for (int i : *slots) {
+        if (i < 0 || i >= count) return false;
+    }
+    for (int i : *slots) {
         auto name = nameRecordBytes(srcSetlistIndex, i);
         auto params = songRecordBytes(srcSetlistIndex, i);
         if (!name || !params) return false;
@@ -2647,6 +2662,27 @@ bool PcgFile::copySetlist(int srcSetlistIndex, int dstSetlistIndex) {
         if (!putSongRecordBytes(dstSetlistIndex, i, *params)) return false;
     }
     return true;
+}
+
+int PcgFile::compactSetlist(int setlistIndex) {
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= setlists_.size()) return -1;
+    const auto& songs = setlists_[static_cast<size_t>(setlistIndex)].songs;
+    const int count = static_cast<int>(songs.size());
+
+    // Real songs first, then the empty ones, each in their current order.
+    std::vector<int> order;
+    for (int i = 0; i < count; ++i) {
+        if (!looksLikeEmptySetlistName(songs[static_cast<size_t>(i)].name)) order.push_back(i);
+    }
+    int moved = 0;
+    for (int i = 0; i < static_cast<int>(order.size()); ++i) {
+        if (order[static_cast<size_t>(i)] != i) ++moved;
+    }
+    if (moved == 0) return 0;  // already compact, nothing written
+    for (int i = 0; i < count; ++i) {
+        if (looksLikeEmptySetlistName(songs[static_cast<size_t>(i)].name)) order.push_back(i);
+    }
+    return applySetlistOrder(setlistIndex, order) ? moved : -1;
 }
 
 bool PcgFile::sortSetlist(int setlistIndex, bool ascending) {
@@ -2672,12 +2708,17 @@ bool PcgFile::sortSetlist(int setlistIndex, bool ascending) {
         return ascending ? songs[static_cast<size_t>(a)].name < songs[static_cast<size_t>(b)].name
                           : songs[static_cast<size_t>(a)].name > songs[static_cast<size_t>(b)].name;
     });
+    return applySetlistOrder(setlistIndex, order);
+}
 
-    // Snapshot every slot's raw bytes before writing any of them back --
-    // this touches all 128 slots in a new, non-contiguous order (unlike
-    // reorderSong()'s single-range shift), so there's no safe direction to
-    // read-then-write in without a slot's own bytes getting overwritten
-    // before something else has read them.
+// Shared by sortSetlist() and compactSetlist(): slot i receives the content
+// of slot order[i]. Snapshots every slot's raw bytes before writing any of
+// them back -- this touches all slots in a new, non-contiguous order (unlike
+// reorderSong()'s single-range shift), so there's no safe direction to
+// read-then-write in without a slot's own bytes getting overwritten before
+// something else has read them.
+bool PcgFile::applySetlistOrder(int setlistIndex, const std::vector<int>& order) {
+    const int count = static_cast<int>(order.size());
     std::vector<std::vector<uint8_t>> names(static_cast<size_t>(count));
     std::vector<std::vector<uint8_t>> params(static_cast<size_t>(count));
     for (int i = 0; i < count; ++i) {

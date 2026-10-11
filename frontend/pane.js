@@ -269,13 +269,20 @@ function showRowContextMenu(ev, items) {
   rowContextMenuEl.style.zIndex = "1000";
   const content = document.createElement("div");
   content.className = "dropdown-content";
-  for (const { label, onSelect } of items) {
+  // `disabled` items are shown greyed out and do nothing; `title` is the
+  // hover text (e.g. why an item is disabled).
+  for (const { label, onSelect, disabled = false, title = "" } of items) {
     const item = document.createElement("a");
-    item.className = "dropdown-item";
+    item.className = "dropdown-item" + (disabled ? " is-disabled" : "");
     item.href = "#";
     item.textContent = label;
+    if (title) item.title = title;
     item.addEventListener("click", (clickEv) => {
       clickEv.preventDefault();
+      if (disabled) {
+        clickEv.stopPropagation();  // keep the menu open
+        return;
+      }
       closeRowContextMenu();
       onSelect();
     });
@@ -459,24 +466,15 @@ function refCell(text, unavailable) {
   return td;
 }
 
-// A row's own "more actions" menu -- a small "⋯" button in its own trailing
-// column (always the table's LAST column, per direct request -- keeps it in
-// a fixed spot regardless of how wide the Name column's own content runs),
-// opening showRowContextMenu() with the given items. Shared by Programs'
-// and Combis' own row-building (`pane-program-editor.js`/`pane-combi-
-// editor.js` both call this the same way with their own action list --
-// today just "Reset entry…" each, but this is the one place a THIRD table
-// or a second action gets added, not a second hand-rolled copy of the
-// button/column). `items` is `showRowContextMenu()`'s own `[{label,
-// onSelect}]` shape, passed straight through.
-// Header-row "Reset all entries" for the Programs and Combis tables -- resets
-// exactly the rows the table is showing right now (every filter applied),
-// not every entry in the file. `resetOne(entry)` is the per-row bridge call
-// (window.resetProgram/resetCombi) the row's own "Reset entry" already uses.
-// Stops at the first failure, reporting how many already went through.
-// Returns how many were reset (0 when cancelled) -- the caller does its own
-// refresh, since Programs and Combis refresh differently.
-async function resetVisibleEntries(rows, { isProgram, resetOne, showToast }) {
+// Header-row "Reset all entries" for the Programs, Combis and Setlist
+// tables -- resets exactly the rows the table is showing right now (every
+// filter applied), not every entry in the file. `resetOne(entry)` resets one
+// row without asking (e.g. window.resetProgram) and returns {ok, error};
+// `labelOf(entry)` names a row in the failure toast. Stops at the first
+// failure, reporting how many already went through. Returns how many were
+// reset (0 when cancelled) -- the caller does its own refresh, since every
+// table refreshes differently.
+async function resetVisibleEntries(rows, { labelOf, resetOne, showToast }) {
   if (rows.length === 0) return 0;
   const confirmed = await window.showConfirmDialog(`You are resetting ${rows.length} entries.`, {
     confirmLabel: "Yes",
@@ -488,8 +486,7 @@ async function resetVisibleEntries(rows, { isProgram, resetOne, showToast }) {
   for (const entry of rows) {
     const result = await resetOne(entry);
     if (!result.ok) {
-      const label = formatBankNumber({ isProgram, bank: entry.bank, number: entry.number });
-      showToast(`Reset failed at ${label} (${done} of ${rows.length} done): ${result.error}`, { isError: true });
+      showToast(`Reset failed at ${labelOf(entry)} (${done} of ${rows.length} done): ${result.error}`, { isError: true });
       break;
     }
     done++;
@@ -503,8 +500,15 @@ function appendResetAllHeaderMenu(table, onResetAll) {
   table.querySelector("thead tr").appendChild(menuCell([{ label: "Reset all entries…", onSelect: onResetAll }], "th"));
 }
 
-// `tag` is "th" for a table-level menu in the header row (see
-// appendResetAllHeaderMenu() above) -- same button, same menu scaffolding.
+// A row's own "more actions" menu -- a small "⋯" button in its own trailing
+// column (always the table's LAST column, per direct request -- keeps it in
+// a fixed spot regardless of how wide the Name column's own content runs),
+// opening showRowContextMenu() with the given items. Shared by every table
+// (Programs, Combis, Setlist) -- the one place this button/column exists.
+// `items` is `showRowContextMenu()`'s own `[{label, onSelect, disabled,
+// title}]` shape, or a function returning it, called each time the menu
+// opens (for items whose enabled state changes, e.g. the Setlist header's
+// copy items). `tag` is "th" for a table-level menu in the header row.
 function menuCell(items, tag = "td") {
   const td = document.createElement(tag);
   td.className = "row-menu-cell";
@@ -515,7 +519,7 @@ function menuCell(items, tag = "td") {
   btn.textContent = "⋯";  // horizontal ellipsis, same affordance the Duplicates panel already uses
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();  // don't also trigger the row's own click (expand/collapse)
-    showRowContextMenu(ev, items);
+    showRowContextMenu(ev, typeof items === "function" ? items() : items);
   });
   td.appendChild(btn);
   return td;
@@ -1356,11 +1360,12 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, o
     // refreshing" need as refreshEntries above, just for the library view.
     refreshLibrary: libraryPanels.refresh,
     getCurrentDatasetId,
-    // Exposed so the OPPOSITE pane's "copy all to opposite" button
+    // Exposed so the OPPOSITE pane's Setlist header menu copy items
     // (createSetlistPanel's getOpposite() callback, app.js wires it) can
     // read which Set List this pane currently shows, without this pane
     // needing any reference back to the shell that created it.
     getCurrentSetlistIndex: setlistPanel.getCurrentSetlistIndex,
+    reloadSetlistAfterBulkWrite: setlistPanel.reloadAfterBulkWrite,
     loadDataset,
     isEmpty: () => currentDatasetId == null,
     // Exposed so the OPPOSITE pane's own jumpToOppositePane() (a shift+click

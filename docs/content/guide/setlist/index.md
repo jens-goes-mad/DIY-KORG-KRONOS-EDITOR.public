@@ -93,14 +93,29 @@ This applies immediately once confirmed -- no undo, same as every other write in
 Ctrl/Cmd-click a row to mark it (a green left-edge stripe). This is groundwork for a future
 bulk action -- right now it's purely visual bookkeeping and doesn't do anything on its own.
 
-## Copy all to opposite
+## Set List menu: copy, reset, compact
 
-Once both panes are pointed at the *same dataset* but showing two *different* Set Lists,
-the **Copy all to opposite** button (next to the "Showing..." line) becomes active. One
-click overwrites every one of the opposite pane's 128 slots with this pane's Set List --
-handy for starting a gig's list from an existing prepared one and then only tweaking the
-handful of slots that need to change, rather than dragging all 128 by hand. The destination
-Set List keeps its own name; only its song slots are replaced.
+The **⋯** button in the table's header row (the same button every row has) opens the Set
+List-wide actions. Each one asks for confirmation first and applies immediately -- no undo.
+
+- **Copy entire Setlist to opposite** -- overwrites all 128 slots of the Set List the
+  *opposite* pane is showing with this one's, slot for slot -- handy for starting a gig's
+  list from an existing prepared one and then only tweaking the slots that need to change.
+  The destination Set List keeps its own name; only its song slots are replaced.
+- **Copy entries from Setlist to opposite** -- the same, but only for the rows this table
+  is showing right now (after the [filter](#filter)), each to the **same slot number** in
+  the opposite Set List, overwriting whatever is there.
+- **Reset entries** -- [Reset entry](#resetting-a-slot) for every row shown right now (after
+  the filter): "You are resetting *n* entries".
+- **Compact Setlist** -- moves every song up, keeping their order, so all empty slots (blank
+  or `- Init Setlist -`) end up at the end of the list -- the same idea as
+  [Compact bank](/guide/prog#compacting-a-bank) for Programs, minus the references (nothing
+  else points at a Set List slot).
+
+The two copy items are only available when the opposite pane shows a **different Set List
+of the same dataset** -- a slot's Program/Combi reference is just a bank/number, which means
+something else in another file (the same reason [drag-and-drop](#reordering-and-copying-slots-by-drag-and-drop)
+won't copy slots across datasets either). Hover a greyed-out item to see why it's off.
 
 ## Editing a slot: General and Comment
 

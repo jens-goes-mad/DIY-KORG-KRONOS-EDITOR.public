@@ -1018,7 +1018,7 @@ void testPcgFileEndToEnd() {
     }
 
     // copySetlist(): overwrites every song slot in the destination Set List
-    // with the source's -- the "copy all to opposite" pane-header button
+    // with the source's -- the Setlist header menu's "Copy entire Setlist"
     // (STATE.md). Setlist 0 ("Test Setlist") is the source, still in its
     // original restored state from the reorderSong() block above; setlist 1
     // ("Gig Setlist") is the destination, pre-loaded with distinct content
@@ -1061,6 +1061,63 @@ void testPcgFileEndToEnd() {
         std::vector<uint8_t> emptyParams(542, 0);
         CHECK(pcg.putSongRecordBytes(1, 1, emptyParams));
         CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "copySetlist() restore round-trips cleanly");
+    }
+
+    // copySetlist() with a slot list, compactSetlist(), and the name
+    // record's 4-byte marker staying with its SLOT (2026-10-11). Setlist 1
+    // is back to [Old Song, empty, ...]; setlist 0 is [Song Zero, Song One,
+    // empty, ...].
+    {
+        auto markerOf = [&](int setlist, int slot) {
+            auto bytes = pcg.nameRecordBytes(setlist, slot);
+            return bytes ? std::vector<uint8_t>(bytes->begin(), bytes->begin() + 4) : std::vector<uint8_t>{};
+        };
+        const auto marker0 = markerOf(1, 0);
+        const auto marker1 = markerOf(1, 1);
+
+        // Only slot 1 is copied, to slot 1; slot 0 keeps "Old Song".
+        const std::vector<int> slotOne = {1};
+        CHECK(pcg.copySetlist(0, 1, &slotOne));
+        CHECK_EQ(pcg.setlists()[1].songs[1].name, std::string("Song One"), "copySetlist(slots): slot 1 copied to slot 1");
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "copySetlist(slots): slot 0 not in the list, untouched");
+        const std::vector<int> badSlot = {1, 999};
+        CHECK(!pcg.copySetlist(0, 1, &badSlot));
+
+        // A name write never changes the slot's marker.
+        std::vector<uint8_t> foreign(28, 0);
+        foreign[0] = foreign[1] = foreign[2] = foreign[3] = 0xff;
+        const std::string tmp = "Marker Test";
+        std::copy(tmp.begin(), tmp.end(), foreign.begin() + 4);
+        CHECK(pcg.putNameRecordBytes(1, 1, foreign));
+        CHECK_EQ(pcg.setlists()[1].songs[1].name, tmp, "putNameRecordBytes() writes the name");
+        CHECK(markerOf(1, 1) == marker1);
+
+        // Compact: [Old Song, Marker Test] is already compact.
+        CHECK_EQ(pcg.compactSetlist(1), 0, "compactSetlist(): nothing to move");
+        // Blank slot 0 -> [empty, Marker Test]; compacting moves it up, and
+        // slot 0 keeps slot 0's marker, slot 1 its own.
+        std::vector<uint8_t> emptyName(28, 0);
+        CHECK(pcg.putNameRecordBytes(1, 0, emptyName));
+        CHECK_EQ(pcg.compactSetlist(1), 1, "compactSetlist(): one song moved");
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, tmp, "compactSetlist(): the song moved to slot 0");
+        CHECK_EQ(pcg.setlists()[1].songs[0].comment, std::string("second"), "compactSetlist(): its params moved with it");
+        CHECK(pcg.setlists()[1].songs[1].name.empty());
+        CHECK(markerOf(1, 0) == marker0);
+        CHECK(markerOf(1, 1) == marker1);
+        CHECK_EQ(pcg.compactSetlist(99), -1, "compactSetlist(): bad index");
+
+        // Restore setlist 1 to [Old Song, empty, ...].
+        std::vector<uint8_t> restoreName(28, 0);
+        const std::string oldSongName = "Old Song";
+        std::copy(oldSongName.begin(), oldSongName.end(), restoreName.begin() + 4);
+        CHECK(pcg.putNameRecordBytes(1, 0, restoreName));
+        auto restoredParams = makeSbkSongRecord(/*isProgram=*/true, /*bank=*/1, /*number=*/1, /*color=*/2,
+                                                  /*holdTime=*/2, /*volume=*/60, /*fontSizeValue=*/0, /*transpose=*/0,
+                                                  /*garbageLow4=*/0x00, "should be overwritten");
+        CHECK(pcg.putSongRecordBytes(1, 0, restoredParams));
+        CHECK(pcg.putNameRecordBytes(1, 1, emptyName));
+        CHECK(pcg.putSongRecordBytes(1, 1, std::vector<uint8_t>(542, 0)));
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "restore round-trips cleanly");
     }
 
     // sortSetlist(): a REAL, immediate, whole-Set-List rewrite -- not a

@@ -346,29 +346,32 @@ async function onMoveProgram(source, target) {
   await refreshPanesAfterProgramRearrange(target.datasetId, result.setlistRefsRepointed);
 }
 
-// "Copy all to opposite" (the Setlist panel's setlist-info row, pane.js) --
-// overwrites every one of the opposite pane's current Set List's 128 slots
-// with this pane's current Set List's content, in one native call
-// (EditorBridge::copySetlistEntries -> PcgFile::copySetlist()). Only
-// reachable when both panes already show the same dataset with two
-// different Set Lists selected (pane.js's updateCopyButtonState() gates the
-// button itself), so unlike onDropEntry above there's no cross-dataset case
-// to reject here -- source.datasetId === target.datasetId always holds by
-// construction.
-async function onCopySetlist(source, target) {
-  const result = await window.copySetlistEntries(source.datasetId, source.setlistIndex, target.setlistIndex);
+// The Setlist header menu's "Copy entire Setlist"/"Copy entries" to the
+// opposite pane (pane-setlist-editor.js, which confirms first): overwrites
+// the opposite pane's Set List slots with this pane's, in one native call
+// (EditorBridge::copySetlistEntries -> PcgFile::copySetlist()). `slots` is
+// null for all of them, else the slot indices to copy, each to the same
+// slot. Only offered when both panes show the same dataset with two
+// different Set Lists (oppositeCopyTarget()), so unlike onDropEntry above
+// there's no cross-dataset case to reject here.
+async function onCopySetlist(source, target, slots = null) {
+  const result = slots
+    ? await window.copySetlistEntries(source.datasetId, source.setlistIndex, target.setlistIndex, slots)
+    : await window.copySetlistEntries(source.datasetId, source.setlistIndex, target.setlistIndex);
   if (!result.ok) {
     showToast(`Copy Set List failed: ${result.error}`, { isError: true });
     return;
   }
-  setStatus(`Copied Set List ${kronosNumber(source.setlistIndex)} onto Set List ${kronosNumber(target.setlistIndex)}.`);
+  const what = slots ? `${slots.length} entries` : "all slots";
+  showToast(`Copied ${what} of Set List ${kronosNumber(source.setlistIndex)} to Set List ${kronosNumber(target.setlistIndex)}.`);
 
-  // Only the destination Set List's content changed -- refresh every pane
-  // currently showing it (could be both, if a third pane existed; today
-  // that's just "the opposite pane", but this mirrors onDropEntry's own
-  // affected-panes refresh rather than assuming exactly one other pane).
+  // Only the destination Set List's content changed -- a pane showing it
+  // reloads with its slot editors closed (they'd hold the old bytes); any
+  // other pane on the same dataset just re-reads its entries.
   for (const pane of Object.values(panes)) {
-    if (pane.getCurrentDatasetId() === target.datasetId) await pane.refreshEntries();
+    if (pane.getCurrentDatasetId() !== target.datasetId) continue;
+    if (pane.getCurrentSetlistIndex() === target.setlistIndex) await pane.reloadSetlistAfterBulkWrite();
+    else await pane.refreshEntries();
   }
 }
 

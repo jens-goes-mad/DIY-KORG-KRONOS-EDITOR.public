@@ -644,10 +644,27 @@ choc::value::Value EditorBridge::copySetlistEntries(const choc::value::ValueView
     auto* file = fileOf(datasetId);
     if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
 
-    if (!file->copySetlist(srcSetlistIndex, dstSetlistIndex)) {
+    // Optional 4th argument: only these slot indices (each to the same index).
+    const bool someSlots = args.isArray() && args.size() > 3 && args[3].isArray();
+    const auto slots = intArrayArg(args, 3);
+    if (!file->copySetlist(srcSetlistIndex, dstSetlistIndex, someSlots ? &slots : nullptr)) {
         return makeError("Couldn't copy that Set List (index out of range)");
     }
     return makeOk();
+}
+
+choc::value::Value EditorBridge::compactSetlistEntries(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    const int moved = file->compactSetlist(setlistIndex);
+    if (moved < 0) return makeError("Couldn't compact that Set List (index out of range)");
+    auto value = makeOk();
+    value.setMember("moved", moved);
+    return value;
 }
 
 choc::value::Value EditorBridge::sortSetlistEntries(const choc::value::ValueView& args) {

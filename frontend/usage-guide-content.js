@@ -107,6 +107,12 @@ Programs of that bank move up in order, the empty slots go to the end, and
 Set List/Combi references follow (experimental -- not yet verified on a
 real Kronos).
 
+The **⋯** in the Setlist table header offers: **Copy entire Setlist to
+opposite** and **Copy entries from Setlist to opposite** (only the rows
+shown, each to the same slot number -- both only when the opposite pane
+shows a different Set List of the same dataset), **Reset entries** (the rows
+shown) and **Compact Setlist** (songs move up, empty slots to the end).
+
 ## Cross-links and navigating between panes
 
 Anywhere a slot references another one -- a Setlist slot's Program/Combi, a

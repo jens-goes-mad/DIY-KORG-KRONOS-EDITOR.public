@@ -116,7 +116,7 @@ function createProgramsPanel(
   // resetVisibleEntries().
   async function resetAllEntries(rows) {
     const done = await resetVisibleEntries(rows, {
-      isProgram: true,
+      labelOf: (p) => formatBankNumber({ isProgram: true, bank: p.bank, number: p.number }),
       resetOne: (p) => window.resetProgram(getDatasetId(), p.bank, p.number),
       showToast,
     });

@@ -165,7 +165,6 @@ function createSetlistPanel(
     </div>
     <div class="setlist-info-row">
       <div class="setlist-info help">${NO_DATASET_MESSAGE}</div>
-      <button class="button is-small copy-setlist-button" type="button" disabled>Copy all to opposite</button>
     </div>
     <div class="filter-row">
       <input class="filter-input input is-small" type="text" placeholder="Filter / search..." disabled />
@@ -201,11 +200,14 @@ function createSetlistPanel(
 
   const setlistSelect = container.querySelector(".setlist-select");
   const infoEl = container.querySelector(".setlist-info");
-  const copySetlistButton = container.querySelector(".copy-setlist-button");
   const filterInput = container.querySelector(".filter-input");
   const sortAscButton = container.querySelector(".sort-asc-button");
   const sortDescButton = container.querySelector(".sort-desc-button");
   const tbody = container.querySelector("tbody");
+  // Header "⋯" -- the Set List-wide actions (headerMenuItems() below), built
+  // fresh each time it opens since the copy items depend on what the
+  // opposite pane shows right now.
+  container.querySelector("thead th:last-child").replaceWith(menuCell(() => headerMenuItems(), "th"));
 
   let setlists = [];        // [{index, name}], as returned by listSetlists()
   let currentSetlistIndex = -1;
@@ -404,11 +406,21 @@ function createSetlistPanel(
       { confirmLabel: "Reset", isDanger: true }
     );
     if (!confirmed) return;
+    const result = await resetSlot(entry);
+    if (!result.ok) {
+      showToast(`Reset failed: ${result.error}`, { isError: true });
+      return;
+    }
+    showToast(`Reset slot ${kronosNumber(entry.index)} to a blank "- Init Setlist -".`);
+  }
 
+  // The write behind resetEntry() above, without asking -- also the
+  // per-row step of the header menu's "Reset entries" (pane.js's
+  // resetVisibleEntries()). Returns {ok, error}.
+  async function resetSlot(entry) {
     const [currentParams, currentName, codecs] = await Promise.all([getSlotBytes(entry), getNameBytes(entry), loadSlotCodecs()]);
     if (currentParams == null || currentName == null) {
-      showToast("Reset failed: couldn't read the slot's current bytes.", { isError: true });
-      return;
+      return { ok: false, error: "couldn't read the slot's current bytes" };
     }
 
     // Params record: all-zero, the confirmed real "unpopulated" byte
@@ -423,12 +435,7 @@ function createSetlistPanel(
     // record ends and its 128 songs begin), the 24-byte name field
     // replaced with the visibility marker.
     const nameOk = await commitNameBytes(entry, codecs.encodeSlotName(currentName, "- Init Setlist -"));
-
-    if (!paramsOk || !nameOk) {
-      showToast("Reset failed -- see the log for details.", { isError: true });
-      return;
-    }
-    showToast(`Reset slot ${kronosNumber(entry.index)} to a blank "- Init Setlist -".`);
+    return paramsOk && nameOk ? { ok: true } : { ok: false, error: "see the log for details" };
   }
 
   // ONE editor <tr> per slot with an open panel (not one per open section)
@@ -846,8 +853,14 @@ function createSetlistPanel(
     scrollBox.scrollTo({ top: scrollBox.scrollTop + currentOffset - desiredOffset, behavior: "smooth" });
   }
 
-  function renderRows() {
+  // The rows the table shows right now (the name filter applied) -- also
+  // what the header menu's "Copy entries" and "Reset entries" act on.
+  function visibleEntries() {
     const needle = filterText.trim().toLowerCase();
+    return needle ? entries.filter((e) => e.label.toLowerCase().includes(needle)) : entries;
+  }
+
+  function renderRows() {
     // Filter is the only remaining display-only view state here -- sorting
     // used to be applied the same way (a client-side .sort() on top of
     // this), but that's gone: a Kronos has no notion of "sorted"
@@ -856,7 +869,7 @@ function createSetlistPanel(
     // commit a REAL reorder through the bridge and this just re-renders
     // whatever refreshEntries() reads back afterward, in physical slot
     // order like always.
-    const visible = needle ? entries.filter((e) => e.label.toLowerCase().includes(needle)) : entries;
+    const visible = visibleEntries();
 
     tbody.innerHTML = "";
     for (const entry of visible) {
@@ -1046,42 +1059,122 @@ function createSetlistPanel(
     renderRows();
   }
 
-  // "Copy all to opposite" (setlist-info row) -- only meaningful once both
-  // panes are pointed at the SAME dataset but showing two DIFFERENT Set
-  // Lists (per direct request); copying a Set List onto itself is a no-op,
-  // and cross-dataset copying raises the same physical bank/number
-  // portability question app.js's onDropEntry() already documents for
-  // single-slot copies. Recomputed whenever EITHER pane's selection changes
-  // (onPaneSelectionChanged() below, datasets.js), not just this one's --
-  // the opposite pane switching its own Set List must also flip this
-  // button's state even though nothing here changed.
-  function updateCopyButtonState() {
+  // The opposite pane's Set List as a copy target -- only when it shows the
+  // SAME dataset (a slot's bank/number reference isn't portable across two
+  // files' layouts, same rule as onDropEntry() in app.js) and a DIFFERENT
+  // Set List. Returns {datasetId, setlistIndex} or null.
+  function oppositeCopyTarget() {
     const datasetId = getDatasetId();
     const opposite = getOpposite();
-    const oppositeDatasetId = opposite ? opposite.getCurrentDatasetId() : null;
-    const oppositeSetlistIndex = opposite ? opposite.getCurrentSetlistIndex() : -1;
-    const eligible =
-      datasetId != null &&
-      oppositeDatasetId === datasetId &&
-      currentSetlistIndex >= 0 &&
-      oppositeSetlistIndex >= 0 &&
-      currentSetlistIndex !== oppositeSetlistIndex;
-    copySetlistButton.disabled = !eligible;
-    copySetlistButton.title = eligible
-      ? `Copy all 128 slots of this Set List onto the opposite pane's Set List ${kronosNumber(oppositeSetlistIndex)}, overwriting it.`
-      : "Copy every slot of this Set List onto the opposite pane's -- only available when both panes show the same dataset with two different Set Lists selected.";
+    if (datasetId == null || currentSetlistIndex < 0 || !opposite) return null;
+    const setlistIndex = opposite.getCurrentSetlistIndex();
+    if (opposite.getCurrentDatasetId() !== datasetId || setlistIndex < 0 || setlistIndex === currentSetlistIndex) return null;
+    return { datasetId, setlistIndex };
   }
 
-  copySetlistButton.addEventListener("click", async () => {
-    const datasetId = getDatasetId();
-    const opposite = getOpposite();
-    if (datasetId == null || !opposite) return;
-    const oppositeSetlistIndex = opposite.getCurrentSetlistIndex();
-    if (oppositeSetlistIndex < 0 || oppositeSetlistIndex === currentSetlistIndex) return;
-    await onCopySetlist({ datasetId, setlistIndex: currentSetlistIndex }, { datasetId, setlistIndex: oppositeSetlistIndex });
-  });
+  function setlistLabel(setlistIndex) {
+    const s = setlists.find((x) => x.index === setlistIndex);
+    return `Set List ${kronosNumber(setlistIndex)}${s ? ` "${s.name}"` : ""}`;
+  }
 
-  onPaneSelectionChanged(updateCopyButtonState);
+  // Header menu (2026-10-11, replaces the old "Copy all to opposite"
+  // button). Copies go to the SAME slot numbers in the opposite pane's Set
+  // List and overwrite what's there; the Set List's own name is not copied.
+  function headerMenuItems() {
+    const target = oppositeCopyTarget();
+    const noTarget = "Only when the opposite pane shows a different Set List of the same dataset.";
+    const visible = visibleEntries();
+    const hasSetlist = getDatasetId() != null && currentSetlistIndex >= 0;
+    return [
+      {
+        label: "Copy entire Setlist to opposite…",
+        disabled: !target,
+        title: target ? "" : noTarget,
+        onSelect: () => copyToOpposite(target, null),
+      },
+      {
+        label: "Copy entries from Setlist to opposite…",
+        disabled: !target || visible.length === 0,
+        title: target ? "Copies the rows shown right now (after the filter)." : noTarget,
+        onSelect: () => copyToOpposite(target, visible.map((e) => e.index)),
+      },
+      {
+        label: "Reset entries…",
+        disabled: !hasSetlist || visible.length === 0,
+        title: "Resets the rows shown right now (after the filter).",
+        onSelect: () => resetVisible(visible),
+      },
+      {
+        label: "Compact Setlist…",
+        disabled: !hasSetlist,
+        title: "Moves every song up, in order; empty slots go to the end.",
+        onSelect: () => compactSetlistNow(),
+      },
+    ];
+  }
+
+  // `slots` null = all of them.
+  async function copyToOpposite(target, slots) {
+    const what = slots ? `${slots.length} entries` : `all ${entries.length} slots`;
+    const confirmed = await window.showConfirmDialog(
+      `You are copying ${what} of ${setlistLabel(currentSetlistIndex)} to ${setlistLabel(target.setlistIndex)} in the ` +
+        "opposite pane -- to the same slot numbers, overwriting what's there. This can't be undone.",
+      { confirmLabel: "Copy", isDanger: true }
+    );
+    if (!confirmed) return;
+    await onCopySetlist({ datasetId: target.datasetId, setlistIndex: currentSetlistIndex }, target, slots);
+  }
+
+  async function resetVisible(rows) {
+    // The per-slot writes go through the row editor's own byte caches --
+    // closing every open editor first means no panel keeps showing old bytes.
+    closeAllEditors();
+    const done = await resetVisibleEntries(rows, {
+      labelOf: (entry) => `slot ${kronosNumber(entry.index)}`,
+      resetOne: (entry) => resetSlot(entry),
+      showToast,
+    });
+    if (done === 0) return;
+    showToast(`Reset ${done} slot(s) to a blank "- Init Setlist -".`);
+    await refreshEntries();
+  }
+
+  async function compactSetlistNow() {
+    const songs = entries.filter((e) => !looksLikeEmptySetlistName(e.label)).length;
+    const confirmed = await window.showConfirmDialog(
+      `Compact ${setlistLabel(currentSetlistIndex)}? Its ${songs} songs move up in their current order, so its ` +
+        `${entries.length - songs} empty slots end up at the end. This can't be undone.`,
+      { confirmLabel: "Compact", isDanger: true }
+    );
+    if (!confirmed) return;
+    const result = await window.compactSetlistEntries(getDatasetId(), currentSetlistIndex);
+    if (!result.ok) {
+      showToast(`Compact failed: ${result.error}`, { isError: true });
+      return;
+    }
+    if (result.moved === 0) {
+      showToast("This Set List is already compact.");
+      return;
+    }
+    showToast(`Compacted the Set List -- moved ${result.moved} song(s).`);
+    await reloadAfterBulkWrite();
+  }
+
+  // Closes every open slot editor and drops its cached bytes -- after a
+  // write that changed many slots at once, an open panel would otherwise
+  // keep showing (and later write back) the old content.
+  function closeAllEditors() {
+    openPanels.clear();
+    expandedSections.clear();
+    slotBytesCache.clear();
+    nameBytesCache.clear();
+    releaseAllSlotLocks();
+  }
+
+  async function reloadAfterBulkWrite() {
+    closeAllEditors();
+    await refreshEntries();
+  }
 
   function populateSetlistSelect() {
     setlistSelect.innerHTML = "";
@@ -1104,11 +1197,7 @@ function createSetlistPanel(
     setlistSelect.value = String(setlistIndex);
     filterText = "";
     filterInput.value = "";
-    openPanels.clear();  // don't carry an open editor panel over to a different Set List's song at the same index
-    expandedSections.clear();
-    slotBytesCache.clear();
-    releaseAllSlotLocks();
-    notifyPaneSelectionChanged();
+    closeAllEditors();  // don't carry an open editor panel over to a different Set List's song at the same index
     await refreshEntries();
   }
 
@@ -1166,8 +1255,8 @@ function createSetlistPanel(
   // against Korg's own SetList.txt, see docs/content/format/index.md §3.2 and
   // PcgFile::sortSetlist()'s own doc comment), so there's no lighter-
   // weight thing to change here than the actual bytes -- same "writes
-  // immediately, no undo" contract as drag-and-drop and Copy all to
-  // opposite. `sortSetlistEntries()` does the whole 128-slot rewrite in
+  // immediately, no undo" contract as drag-and-drop and the header menu's
+  // copy/compact. `sortSetlistEntries()` does the whole 128-slot rewrite in
   // one native call; refreshEntries() afterward just re-reads the file's
   // now-actually-different physical order, same as any other edit.
   async function sortSetlistNow(ascending) {
@@ -1200,13 +1289,9 @@ function createSetlistPanel(
       filterInput.disabled = true;
       sortAscButton.disabled = true;
       sortDescButton.disabled = true;
-      openPanels.clear();
-      expandedSections.clear();
-      slotBytesCache.clear();
-      releaseAllSlotLocks();
+      closeAllEditors();
       infoEl.textContent = NO_DATASET_MESSAGE;
       renderRows();
-      notifyPaneSelectionChanged();
       return;
     }
 
@@ -1222,16 +1307,12 @@ function createSetlistPanel(
     // cache would be for the WRONG dataset's slot entirely).
     filterText = "";
     filterInput.value = "";
-    openPanels.clear();
-    expandedSections.clear();
-    slotBytesCache.clear();
-    releaseAllSlotLocks();
+    closeAllEditors();
 
     infoEl.textContent = `Showing ${displayName}`;
     filterInput.disabled = setlists.length === 0;
     sortAscButton.disabled = setlists.length === 0;
     sortDescButton.disabled = setlists.length === 0;
-    notifyPaneSelectionChanged();
     await refreshEntries();
     log(`[Pane ${paneId}] Showing ${displayName}`);
   }
@@ -1247,6 +1328,7 @@ function createSetlistPanel(
     jumpToEntry,
     selectSetlist,
     openSlot,
+    reloadAfterBulkWrite,
     getSetlistCount: () => setlists.length,
   };
 }

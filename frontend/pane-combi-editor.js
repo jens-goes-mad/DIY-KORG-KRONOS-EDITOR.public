@@ -408,7 +408,7 @@ function createCombisPanel(
   // after the whole batch.
   async function resetAllEntries(rows) {
     const done = await resetVisibleEntries(rows, {
-      isProgram: false,
+      labelOf: (c) => formatBankNumber({ isProgram: false, bank: c.bank, number: c.number }),
       resetOne: (c) => window.resetCombi(getDatasetId(), c.bank, c.number),
       showToast,
     });

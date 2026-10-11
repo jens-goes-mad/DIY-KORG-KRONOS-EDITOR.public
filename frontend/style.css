@@ -385,11 +385,7 @@ body {
    default, and .select.is-fullwidth sets both the wrapper AND the inner
    <select> to width:100%, so neither needs anything from us here. */
 
-/* Holds .setlist-info (below) and the "copy all to opposite" button
-   (pane.js) side by side -- .setlist-info flexes to fill whatever space the
-   button doesn't need, so the row's height stays the button's natural
-   .button.is-small height regardless of how long the "Showing ..." text
-   is. */
+/* Holds .setlist-info (below) -- the "Showing ..." line. */
 .setlist-info-row {
   display: flex;
   align-items: center;
@@ -403,11 +399,6 @@ body {
   color: var(--text-dim);
   flex: 1;
   min-width: 0;  /* same content-based-minimum reasoning as .pane/.entries-scroll elsewhere in this file -- lets long "Showing ..." text truncate/wrap instead of pushing the button off */
-}
-
-.copy-setlist-button {
-  flex: none;
-  white-space: nowrap;
 }
 
 /* Holds the filter input and the two A-Z/Z-A sort buttons (pane.js) side by
@@ -598,6 +589,14 @@ td.has-comment {
 .row-context-menu .dropdown-item:hover {
   background: var(--editor-accent);
   color: var(--bg);
+}
+/* A menu item that can't be used right now (showRowContextMenu()'s
+   `disabled`) -- dimmed, no hover highlight; its title says why. */
+.row-context-menu .dropdown-item.is-disabled,
+.row-context-menu .dropdown-item.is-disabled:hover {
+  background: none;
+  color: var(--text-dim);
+  cursor: default;
 }
 
 /* ctrl/cmd+click "marked for a future bulk action" toggle (pane.js's

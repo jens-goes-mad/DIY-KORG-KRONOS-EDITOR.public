@@ -1218,8 +1218,8 @@ public:
 
     // Overwrites every song slot (0..127, both its SDB1 name record and its
     // SBK1 params record) in `dstSetlistIndex` with the corresponding slot's
-    // content from `srcSetlistIndex` -- "copy all to opposite" (frontend/
-    // pane.js), for copying a whole prepared Set List into a gig's slot and
+    // content from `srcSetlistIndex` -- the Setlist header menu's "Copy
+    // entire Setlist to opposite" (pane-setlist-editor.js), for copying a whole prepared Set List into a gig's slot and
     // then tweaking a few entries in place, rather than rebuilding it from
     // scratch. Same file only (both indices are within this one PcgFile) --
     // the two-panes-must-share-one-dataset requirement is enforced by the
@@ -1228,8 +1228,19 @@ public:
     // only the 128 song slots. One native call rather than 128 bridge round-
     // trips, same reasoning as reorderSong() above. Returns false (writes
     // nothing) if either index is out of range; a no-op (returns true) if
-    // srcSetlistIndex == dstSetlistIndex.
-    bool copySetlist(int srcSetlistIndex, int dstSetlistIndex);
+    // srcSetlistIndex == dstSetlistIndex. `slots`, if given, limits the copy
+    // to those slot indices, each to the SAME index in the destination (the
+    // Setlist header menu's "Copy entries", 2026-10-11); an out-of-range
+    // index writes nothing.
+    bool copySetlist(int srcSetlistIndex, int dstSetlistIndex, const std::vector<int>* slots = nullptr);
+
+    // "Compact Setlist" (Setlist header menu, 2026-10-11): real songs move up
+    // in their current order, empty slots (looksLikeEmptySetlistName() --
+    // blank or "- Init Setlist -") go to the end -- sortSetlist() below
+    // without the name sort. Nothing else references a Set List slot, so
+    // nothing is repointed. Returns how many real songs changed slot (0 =
+    // already compact, nothing written), -1 on a bad index.
+    int compactSetlist(int setlistIndex);
 
     // Physically reorders every one of a Set List's 128 slots (name AND
     // params together) into alphabetical-by-name order -- `ascending` true
@@ -1372,6 +1383,10 @@ private:
     // their doc comments; combiRefs* stay 0 for a Combi (nothing references
     // a Combi from a Timbre).
     ProgramSwapResult moveRecordWithinBank(bool isProgram, int bank, int fromNumber, int toNumber);
+
+    // Shared body of sortSetlist()/compactSetlist(): slot i gets the content
+    // of slot order[i] (`order` is a permutation of every slot index).
+    bool applySetlistOrder(int setlistIndex, const std::vector<int>& order);
 
     std::vector<Setlist> setlists_;
     std::vector<ProgramInfo> programs_;

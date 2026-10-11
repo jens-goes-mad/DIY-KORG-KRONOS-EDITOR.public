@@ -91,7 +91,8 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   reordering and copying by drag-and-drop (copying onto an already-occupied slot is
   refused, not silently destructive), Color/Volume/Comment/Font-size editing, A-Z/Z-A
   physical re-sorting (empty and reset slots always sort last, never interleaved
-  alphabetically among real content), copying a Program's raw bytes into another slot
+  alphabetically among real content), compacting a Set List, copying a whole Set List or
+  just the filtered entries to the opposite pane, copying a Program's raw bytes into another slot
   any number of times (same file or a different one), and rearranging Programs and Combis
   by drag-and-drop with matching gestures on both -- swap, move within or between banks,
   or copy onto an empty slot -- with every affected Set List reference repointed

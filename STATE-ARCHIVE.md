@@ -4869,3 +4869,35 @@ CLEAN UP -- noted 2026-08-15:
       compactProgramBank order/references/equivalence); real-file smoke
       tests against K1/K2/PRELOAD/Narf as noted above. Not clicked through
       in the native app.
+  116. **BUILT (2026-10-11)**: Setlist header menu, per the owner's RFC; the
+      "Copy all to opposite" button is gone (reported not working; the
+      backend copy itself was fine -- 128/128 slots plus save/reload on K1 --
+      so the fault was in the button's UI path, not investigated further
+      since the button was removed).
+      - The Setlist table's header row gets the shared ⋯ menu (`menuCell()`
+        now takes a function, so items are built when the menu opens;
+        `showRowContextMenu()` items can be `disabled` with a `title`):
+        **Copy entire Setlist to opposite**, **Copy entries from Setlist to
+        opposite** (the filtered rows, each to the same slot number), both
+        only when the opposite pane shows a different Set List of the SAME
+        dataset; **Reset entries** (filtered rows, `resetVisibleEntries()` --
+        now `labelOf` instead of `isProgram`); **Compact Setlist**
+        (`PcgFile::compactSetlist()`, sharing `applySetlistOrder()` with
+        `sortSetlist()`). Copy/compact/reset close the affected pane's slot
+        editors first (`closeAllEditors()`, which now also clears
+        `nameBytesCache` -- switching Set List/dataset used to leave it
+        stale). `copySetlist()` takes an optional slot list; the bridge's
+        `copySetlistEntries` an optional 4th argument.
+      - The unused pane-selection broadcast (datasets.js) is removed -- the
+        button was its only listener.
+      - **Bug fix, format-relevant**: `putNameRecordBytes()` now writes only
+        the 24-byte name, never the 4-byte marker. Measured first across 8
+        real backups: slot 0 is ALWAYS `28 0f 01 00`, every other slot
+        ALWAYS `1e 02 00 00` (128 / 16,256 records) -- the marker is
+        positional. Sorting K1's Set List 1 had moved slot 0's marker to
+        another slot (reproduced); after the fix, sort + partial copy into
+        slot 0 + compacting all 128 Set Lists + save/reload leave 0
+        misplaced markers. Format doc §3.2 updated.
+      Verified: `pcg_file_test` green (new: copySetlist slot list,
+      compactSetlist, marker preserved on every name write); real-file
+      smoke test above. Not clicked through in the native app.
