@@ -455,6 +455,22 @@
     return ok({ moved });
   };
 
+  // Mirrors PcgFile::resetSetlistSlots(): all-or-nothing on a bad index;
+  // each slot gets `name` and the fields an all-zero params record decodes
+  // to (same decoding as putSongRecordBytes() below: color 1, volume 0).
+  window.resetSetlistEntries = (datasetId, setlistIndex, slots, name) => {
+    const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
+    if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);
+    const targets = slots.map((i) => list.find((e) => e.index === i));
+    if (targets.some((e) => !e)) return fail("Couldn't reset those Set List slots (index out of range)");
+    for (const entry of targets) {
+      Object.assign(entry, { label: String(name).slice(0, 24), isProgram: false, bank: 0, number: 0, color: 1,
+                             volume: 0, fontSize: 0, transpose: 0, comment: "", instrumentName: "" });
+    }
+    markEdited(datasets[datasetId]);
+    return ok({ reset: slots.length });
+  };
+
   window.sortSetlistEntries = (datasetId, setlistIndex, ascending) => {
     const list = datasets[datasetId] && datasets[datasetId].songs[setlistIndex];
     if (!list) return fail(`Dataset ${datasetId} has no such Set List loaded`);

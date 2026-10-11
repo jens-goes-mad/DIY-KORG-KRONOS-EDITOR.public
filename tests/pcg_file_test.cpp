@@ -1120,6 +1120,46 @@ void testPcgFileEndToEnd() {
         CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "restore round-trips cleanly");
     }
 
+    // resetSetlistSlots() (Reset entry / Reset entries, 2026-10-11): blank
+    // params + the given name, the slot's marker untouched; all-or-nothing on
+    // a bad index. Setlist 1 is [Old Song, empty, ...] again.
+    {
+        auto markerOf = [&](int setlist, int slot) {
+            auto bytes = pcg.nameRecordBytes(setlist, slot);
+            return bytes ? std::vector<uint8_t>(bytes->begin(), bytes->begin() + 4) : std::vector<uint8_t>{};
+        };
+        const auto marker0 = markerOf(1, 0);
+        const auto paramsBefore = pcg.songRecordBytes(1, 0);
+
+        CHECK(!pcg.resetSetlistSlots(1, {0, 999}, "- Init Setlist -"));
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "resetSetlistSlots(): bad index writes nothing");
+        CHECK(pcg.songRecordBytes(1, 0) == paramsBefore);
+        CHECK(!pcg.resetSetlistSlots(99, {0}, "- Init Setlist -"));
+
+        CHECK(pcg.resetSetlistSlots(1, {0, 1}, "- Init Setlist -"));
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("- Init Setlist -"), "resetSetlistSlots(): name written");
+        CHECK_EQ(pcg.setlists()[1].songs[1].name, std::string("- Init Setlist -"), "resetSetlistSlots(): every listed slot");
+        CHECK(pcg.songRecordBytes(1, 0) == std::vector<uint8_t>(542, 0));
+        CHECK(pcg.setlists()[1].songs[0].comment.empty());
+        CHECK(markerOf(1, 0) == marker0);
+
+        // A 24-char marker name fills the field exactly; a longer name is cut.
+        CHECK(pcg.resetSetlistSlots(1, {1}, "---- GIG 2025-10-28 ----"));
+        CHECK_EQ(pcg.setlists()[1].songs[1].name, std::string("---- GIG 2025-10-28 ----"), "resetSetlistSlots(): 24 chars kept");
+        CHECK(pcg.resetSetlistSlots(1, {1}, "123456789012345678901234567890"));
+        CHECK_EQ(pcg.setlists()[1].songs[1].name, std::string("123456789012345678901234"), "resetSetlistSlots(): cut to 24");
+        CHECK(pcg.resetSetlistSlots(1, {}, "unused"));
+
+        // Restore setlist 1 to [Old Song, empty, ...].
+        std::vector<uint8_t> restoreName(28, 0);
+        const std::string oldSongName = "Old Song";
+        std::copy(oldSongName.begin(), oldSongName.end(), restoreName.begin() + 4);
+        CHECK(pcg.putNameRecordBytes(1, 0, restoreName));
+        CHECK(pcg.putSongRecordBytes(1, 0, *paramsBefore));
+        CHECK(pcg.putNameRecordBytes(1, 1, std::vector<uint8_t>(28, 0)));
+        CHECK_EQ(pcg.setlists()[1].songs[0].name, std::string("Old Song"), "resetSetlistSlots() restore round-trips");
+    }
+
     // sortSetlist(): a REAL, immediate, whole-Set-List rewrite -- not a
     // display-only convenience, see its own doc comment for why (no
     // separate "sorted view" a Kronos can show independent of a slot's

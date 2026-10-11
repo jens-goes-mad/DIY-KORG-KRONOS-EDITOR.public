@@ -1242,6 +1242,19 @@ public:
     // already compact, nothing written), -1 on a bad index.
     int compactSetlist(int setlistIndex);
 
+    // "Reset entry" / "Reset entries" (Setlist row and header menus): every
+    // slot in `slots` becomes a blank slot named `name` -- an all-zero SBK1
+    // params record (the confirmed real "unpopulated" pattern: no Program/
+    // Combi reference, comment, color, volume, font size or transpose) and
+    // `name` (truncated to 24 chars, NUL-padded) in the SDB1 name field.
+    // `name` is "- Init Setlist -", or a marker-slot name (frontend/
+    // components/kronos/setlist-markers.js). One native call for any number
+    // of slots, same reasoning as copySetlist() -- the per-slot bridge
+    // round-trips plus a table re-render per slot made resetting a whole
+    // Set List take ages. Returns false (writes nothing) if the Set List or
+    // any slot index is out of range.
+    bool resetSetlistSlots(int setlistIndex, const std::vector<int>& slots, const std::string& name);
+
     // Physically reorders every one of a Set List's 128 slots (name AND
     // params together) into alphabetical-by-name order -- `ascending` true
     // for A-Z, false for Z-A. Empty slots (no name) always sort to the end

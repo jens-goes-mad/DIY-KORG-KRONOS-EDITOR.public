@@ -4959,3 +4959,23 @@ CLEAN UP -- noted 2026-08-15:
       reverted): Reset to GIG on slot 000 + Reset to SET BREAK on slot 024 +
       Print -- the exported page's model had gigDate = today, slot 024 as
       "End of set 1", slot 025 in set 2.
+  119. **FIXED (2026-10-11)**: the Setlist header menu's "Reset entries" took
+      ages (reported directly). Cause: per slot, 4 bridge calls (read params,
+      read name, write params, write name) and two full re-renders of the
+      128-row table (commitSlotBytes()/commitNameBytes() each call
+      renderRows()) -- 256 table renders for a whole Set List.
+      - New `PcgFile::resetSetlistSlots(setlistIndex, slots, name)`: all-zero
+        params + `name` (cut to 24, NUL-padded) for every listed slot via
+        putSongRecordBytes()/putNameRecordBytes() (markers stay with their
+        slot); all-or-nothing on a bad index. Bridge `resetSetlistEntries`.
+      - Frontend: `resetSlots()` is now the only Set List reset path --
+        Reset entry, Reset to SET BREAK/GIG (one slot, then refreshEntries())
+        and Reset entries (all filtered rows, then reloadAfterBulkWrite())
+        -- the JS read/encode/write reset is gone. pane.js's
+        `confirmResetEntries()` is the shared "You are resetting n entries"
+        dialog (also used by resetVisibleEntries() for Programs/Combis,
+        which keep their per-row bridge calls with one reload at the end).
+      Verified: `pcg_file_test` (new block, confirmed to run by breaking one
+      expectation once); real app (throwaway scene, reverted) on K1 Set List
+      001: Reset entry on slot 003, then Reset entries on all 128 rows -- 128
+      "- Init Setlist -" rows after 68 ms, table refresh included.

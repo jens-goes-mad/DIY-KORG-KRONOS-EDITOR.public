@@ -2664,6 +2664,26 @@ bool PcgFile::copySetlist(int srcSetlistIndex, int dstSetlistIndex, const std::v
     return true;
 }
 
+bool PcgFile::resetSetlistSlots(int setlistIndex, const std::vector<int>& slots, const std::string& name) {
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= setlists_.size()) return false;
+    const int count = static_cast<int>(setlists_[static_cast<size_t>(setlistIndex)].songs.size());
+    for (int i : slots) {
+        if (i < 0 || i >= count) return false;
+    }
+
+    const std::vector<uint8_t> blankParams(kSbkRecordSize, 0);
+    // putNameRecordBytes() only writes bytes 4..27, so the marker bytes here
+    // are never used -- each slot keeps its own positional marker.
+    std::vector<uint8_t> nameRecord(kRecordSize, 0);
+    std::copy_n(name.begin(), std::min(name.size(), kRecordSize - kMarkerSize), nameRecord.begin() + kMarkerSize);
+
+    for (int i : slots) {
+        if (!putSongRecordBytes(setlistIndex, i, blankParams)) return false;
+        if (!putNameRecordBytes(setlistIndex, i, nameRecord)) return false;
+    }
+    return true;
+}
+
 int PcgFile::compactSetlist(int setlistIndex) {
     if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= setlists_.size()) return -1;
     const auto& songs = setlists_[static_cast<size_t>(setlistIndex)].songs;

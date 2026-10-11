@@ -476,12 +476,7 @@ function refCell(text, unavailable) {
 // table refreshes differently.
 async function resetVisibleEntries(rows, { labelOf, resetOne, showToast }) {
   if (rows.length === 0) return 0;
-  const confirmed = await window.showConfirmDialog(`You are resetting ${rows.length} entries.`, {
-    confirmLabel: "Yes",
-    cancelLabel: "No",
-    isDanger: true,
-  });
-  if (!confirmed) return 0;
+  if (!(await confirmResetEntries(rows.length))) return 0;
   let done = 0;
   for (const entry of rows) {
     const result = await resetOne(entry);
@@ -492,6 +487,17 @@ async function resetVisibleEntries(rows, { labelOf, resetOne, showToast }) {
     done++;
   }
   return done;
+}
+
+// The one confirmation every bulk reset asks -- resetVisibleEntries() above
+// (Programs/Combis, one bridge call per row) and the Setlist's "Reset
+// entries" (pane-setlist-editor.js, one bridge call for all rows).
+function confirmResetEntries(count) {
+  return window.showConfirmDialog(`You are resetting ${count} entries.`, {
+    confirmLabel: "Yes",
+    cancelLabel: "No",
+    isDanger: true,
+  });
 }
 
 // The header-row "⋯" that opens resetVisibleEntries() above -- appended as

@@ -174,6 +174,10 @@ public:
     choc::value::Value copySetlistEntries(const choc::value::ValueView& args);
     // [datasetId, setlistIndex] -> {ok, moved}. See PcgFile::compactSetlist().
     choc::value::Value compactSetlistEntries(const choc::value::ValueView& args);
+    // [datasetId, setlistIndex, slots, name] -> {ok, reset} or {ok:false,
+    // error}. See PcgFile::resetSetlistSlots() -- Reset entry (one slot) and
+    // Reset entries (the filtered rows) both go through this one call.
+    choc::value::Value resetSetlistEntries(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, ascending] -> {ok} or {ok:false, error}.
     // Physically reorders every one of a Set List's 128 slots into

@@ -669,6 +669,23 @@ choc::value::Value EditorBridge::compactSetlistEntries(const choc::value::ValueV
     return value;
 }
 
+choc::value::Value EditorBridge::resetSetlistEntries(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+    const auto slots = intArrayArg(args, 2);
+    const std::string name = stringArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    if (!file->resetSetlistSlots(setlistIndex, slots, name)) {
+        return makeError("Couldn't reset those Set List slots (index out of range)");
+    }
+    auto value = makeOk();
+    value.setMember("reset", static_cast<int>(slots.size()));
+    return value;
+}
+
 choc::value::Value EditorBridge::sortSetlistEntries(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     const int setlistIndex = intArg(args, 1);

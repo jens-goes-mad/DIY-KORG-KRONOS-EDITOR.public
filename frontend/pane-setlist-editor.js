@@ -408,8 +408,8 @@ function createSetlistPanel(
   // Korg's) is the visible "- Init Setlist -" name, patched in afterward
   // for the same "an untouched slot and a deliberately cleared one should
   // look different" reason "- Init Combi -"/"- Init Program (HD1) -" exist.
-  // Reuses commitSlotBytes()/commitNameBytes() -- the SAME write path
-  // every other edit on this row goes through, not a second one.
+  // The write itself is native (resetSlots() below), shared with the
+  // header menu's "Reset entries".
   // `name` other than the default: the "Reset to SET BREAK…" / "Reset to
   // GIG…" marker slots (components/kronos/setlist-markers.js) -- the same
   // blank slot, just a different visible name.
@@ -423,11 +423,14 @@ function createSetlistPanel(
   }
 
   async function resetEntryConfirmed(entry, name) {
-    const result = await resetSlot(entry, name);
+    const result = await resetSlots([entry.index], name);
     if (!result.ok) {
       showToast(`Reset failed: ${result.error}`, { isError: true });
       return;
     }
+    // Only this slot's editor (if open) held its old bytes.
+    if (openPanels.has(entry.index)) closePanel(entry);
+    await refreshEntries();
     showToast(`Reset slot ${kronosNumber(entry.index)} to a blank "${name}".`);
   }
 
@@ -456,28 +459,15 @@ function createSetlistPanel(
     await resetEntryConfirmed(entry, markers.gigMarkerName(input.value));
   }
 
-  // The write behind resetEntry() above, without asking -- also the
-  // per-row step of the header menu's "Reset entries" (pane.js's
-  // resetVisibleEntries()). Returns {ok, error}.
-  async function resetSlot(entry, name = INIT_SETLIST_NAME) {
-    const [currentParams, currentName, codecs] = await Promise.all([getSlotBytes(entry), getNameBytes(entry), loadSlotCodecs()]);
-    if (currentParams == null || currentName == null) {
-      return { ok: false, error: "couldn't read the slot's current bytes" };
-    }
-
-    // Params record: all-zero, the confirmed real "unpopulated" byte
-    // pattern -- no Program/Combi reference, comment, color, volume, font
-    // size, or transpose survives. Same length this slot's record already
-    // has, never a hardcoded 542.
-    const paramsOk = await commitSlotBytes(entry, new Uint8Array(currentParams.length));
-    // Name record: the 4-byte marker preserved (setlist-editor-name.js's
-    // encodeSlotName() -- see its own doc comment for why that marker must
-    // never be touched: on a Set List's FIRST slot specifically, it's the
-    // only byte pattern that identifies where the Set List's own name
-    // record ends and its 128 songs begin), the 24-byte name field
-    // replaced with the visibility marker (or a marker-slot name).
-    const nameOk = await commitNameBytes(entry, codecs.encodeSlotName(currentName, name));
-    return paramsOk && nameOk ? { ok: true } : { ok: false, error: "see the log for details" };
+  // The write behind resetEntry() above and the header menu's "Reset
+  // entries", without asking: ONE bridge call for any number of slots
+  // (PcgFile::resetSetlistSlots(): all-zero params, `name` in the name
+  // field, each slot's 4-byte marker untouched). Callers refresh the table
+  // once afterwards -- the old per-slot read/encode/write path re-rendered
+  // the whole table twice per slot, which made resetting a full Set List
+  // take ages. Returns {ok, error}.
+  function resetSlots(slotIndexes, name = INIT_SETLIST_NAME) {
+    return window.resetSetlistEntries(getDatasetId(), currentSetlistIndex, slotIndexes, name);
   }
 
   // ONE editor <tr> per slot with an open panel (not one per open section)
@@ -1211,17 +1201,14 @@ function createSetlistPanel(
   }
 
   async function resetVisible(rows) {
-    // The per-slot writes go through the row editor's own byte caches --
-    // closing every open editor first means no panel keeps showing old bytes.
-    closeAllEditors();
-    const done = await resetVisibleEntries(rows, {
-      labelOf: (entry) => `slot ${kronosNumber(entry.index)}`,
-      resetOne: (entry) => resetSlot(entry),
-      showToast,
-    });
-    if (done === 0) return;
-    showToast(`Reset ${done} slot(s) to a blank "${INIT_SETLIST_NAME}".`);
-    await refreshEntries();
+    if (rows.length === 0 || !(await confirmResetEntries(rows.length))) return;
+    const result = await resetSlots(rows.map((entry) => entry.index));
+    if (!result.ok) {
+      showToast(`Reset failed: ${result.error}`, { isError: true });
+      return;
+    }
+    await reloadAfterBulkWrite();
+    showToast(`Reset ${result.reset} slot(s) to a blank "${INIT_SETLIST_NAME}".`);
   }
 
   async function compactSetlistNow() {
