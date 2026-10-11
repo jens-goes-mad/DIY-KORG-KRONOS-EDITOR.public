@@ -1137,6 +1137,24 @@ function createSetlistPanel(
     if (row) scrollRowBelowHeader(row);
   }
 
+  // Opens one slot's editor in the current Set List with exactly `sections`
+  // ("general"/"comment") expanded, and scrolls it into view -- for
+  // screenshot scenes (scene-runner.js), which need a specific open/closed
+  // section combination that jumpToEntry() (always Comment) can't give.
+  // Returns false if the slot isn't in this Set List or couldn't be opened
+  // (e.g. the other pane holds its edit lock).
+  async function openSlot(songIndex, sections) {
+    const entry = entries.find((e) => e.index === songIndex);
+    if (!entry) return false;
+    for (const type of sections) {
+      const open = expandedSections.get(songIndex);
+      if (!open || !open.has(type)) await openSection(entry, type);
+    }
+    const row = tbody.querySelector(`[data-index="${songIndex}"]`);
+    if (row) scrollRowBelowHeader(row);
+    return openPanels.has(songIndex);
+  }
+
   filterInput.addEventListener("input", () => {
     filterText = filterInput.value;
     renderRows();
@@ -1227,6 +1245,8 @@ function createSetlistPanel(
     onDatasetChanged,
     getCurrentSetlistIndex: () => currentSetlistIndex,
     jumpToEntry,
+    selectSetlist,
+    openSlot,
     getSetlistCount: () => setlists.length,
   };
 }

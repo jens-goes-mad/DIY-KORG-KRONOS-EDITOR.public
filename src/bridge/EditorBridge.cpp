@@ -389,6 +389,11 @@ choc::value::Value EditorBridge::closeDataset(const choc::value::ValueView& args
     return makeOk();
 }
 
+void EditorBridge::closeAllDatasets() {
+    m_datasets.clear();
+    m_nextDatasetId = 1;
+}
+
 void EditorBridge::addDatasetsChangedListener(const void* key, DatasetsChangedListener listener) {
     m_datasetsChangedListeners.push_back({key, std::move(listener)});
 }

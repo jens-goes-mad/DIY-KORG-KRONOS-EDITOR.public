@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "window": { "width": 1400, "height": 1000 },
+  "datasets": {
+    "k1": "K1_20260418.PCG",
+    "k2": "K2_20260401.PCG",
+    "test": "setlist_test_2.PCG",
+    "halen": "HALEN-SPLIT.PCG"
+  },
+  "scenes": [
+    {
+      "id": "open",
+      "out": "../content/guide/DIY-Open.0_1_12.png",
+      "tooltip": ".open-file-button",
+      "rectangle": [0, 0, 45, 24]
+    },
+    {
+      "id": "setlist-one-pane",
+      "out": "../content/guide/DIY-SetlistOnePane.0_1_12.png",
+      "left": { "dataset": "test", "category": "setlist", "setlist": 1 }
+    },
+    {
+      "id": "setlist-selection",
+      "out": "../content/guide/DIY-SetlistSelection.0_1_12.png",
+      "openDatasets": ["test", "halen"],
+      "left": { "dataset": "test", "category": "setlist", "setlist": 1 },
+      "dropdown": ".pane[data-pane=\"B\"] .dataset-select",
+      "rectangle": [30, 10, 100, 30]
+    },
+    {
+      "id": "functions",
+      "out": "../content/guide/DIY-Functions.0_1_12.png"
+    },
+    {
+      "id": "flip-panes",
+      "out": "../content/guide/DIY-KE-003-FlipPanes.0_1_12.png",
+      "swapped": true,
+      "right": { "dataset": "test", "category": "setlist", "setlist": 1 },
+      "rectangle": [0, 40, 100, 60]
+    },
+    {
+      "id": "program-filter",
+      "out": "../content/guide/DIY-ProgramFilter.0_1_12.png",
+      "right": { "dataset": "test", "category": "programs", "open": "U-A 019" },
+      "visibility": "right"
+    },
+    {
+      "id": "setlist-one-pane-right",
+      "out": "../content/guide/setlist/DIY-SetlistOnePaneRight.0_1_12.png",
+      "right": { "dataset": "test", "category": "setlist", "setlist": 1 },
+      "visibility": "right",
+      "rectangle": [0, 0, 100, 58]
+    },
+    {
+      "id": "setlist-editor",
+      "out": "../content/guide/setlist/DIY-SetlistEditor.0_1_12.png",
+      "right": { "dataset": "test", "category": "setlist", "setlist": 1, "open": { "song": 20, "sections": ["general", "comment"] } },
+      "visibility": "right",
+      "rectangle": [0, 13, 100, 100]
+    },
+    {
+      "id": "prog-usage",
+      "out": "../content/guide/prog/DIY-ProgUsageOverview.0_1_12.png",
+      "right": { "dataset": "test", "category": "programs", "banks": ["I-A"], "open": "I-A 001" },
+      "visibility": "right"
+    },
+    {
+      "id": "duplicates",
+      "out": "../content/guide/prog/DIY-Duplicates.0_1_12.png",
+      "right": { "dataset": "test", "category": "duplicates", "open": "Deepest Vox Pad" },
+      "visibility": "right",
+      "tooltip": ".pane[data-pane=\"B\"] .duplicate-copies .bank-filter-button"
+    },
+    {
+      "id": "combi-overview",
+      "out": "../content/guide/combi/DIY-CombiOverview.0_1_12.png",
+      "right": { "dataset": "test", "category": "combis", "setlistFilter": 1 },
+      "visibility": "right"
+    },
+    {
+      "id": "combi-timbres",
+      "out": "../content/guide/combi/DIY-CombiTimbres.0_1_12.png",
+      "right": { "dataset": "test", "category": "combis", "setlistFilter": 1, "banks": ["U-A"], "open": "U-A 002" },
+      "visibility": "right",
+      "rectangle": [0, 17, 100, 100]
+    }
+  ]
+}

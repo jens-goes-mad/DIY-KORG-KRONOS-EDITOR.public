@@ -21,6 +21,8 @@
 
 #include "bridge/EditorBridge.h"
 #include "bridge/EditorExtension.h"
+#include "platform/WindowCapture.h"
+#include "scenes/SceneScript.h"
 
 #ifdef EDITOR_EMBED_RESOURCES
 #include "bridge/EmbeddedAssetRegistry.h"
@@ -207,6 +209,159 @@ struct EditorWindowInstance {
     std::unique_ptr<choc::ui::WebView> webView;
 };
 
+// One `--scene` run (docs/screenshots/README.md, src/scenes/SceneScript.h):
+// the scenes to capture and how far along the run is. The frontend asks for
+// the current scene after every page load (getPendingScene), applies it
+// (frontend/scene-runner.js) and calls captureScene once the UI has settled;
+// native code writes the PNG, closes every dataset (numbering restarts at
+// #1) and the page reloads for the next scene -- so every scene starts like
+// a fresh launch, with no leftover datasets, sidebar, scroll or selection
+// state to reset by hand. The first failure ends the whole run with exit
+// code 1.
+struct SceneRun {
+    static constexpr uint32_t kSceneTimeoutMs = 30000;
+
+    scenes::SceneScript script;
+    size_t index = 0;
+    int exitCode = 0;
+    bool finished = false;
+    std::string lastStep;  // the frontend's last sceneProgress() report, for the timeout message
+    choc::ui::DesktopWindow* window = nullptr;  // the main window, set once it exists
+    int windowWidth = 0, windowHeight = 0;      // its current size
+    // Catches a page that never reports back at all (a JS exception before
+    // scene-runner.js runs, a hung bridge call) -- the frontend's own errors
+    // arrive via sceneFailed instead.
+    choc::messageloop::Timer watchdog;
+
+    const scenes::Scene* current() const { return finished || index >= script.scenes.size() ? nullptr : &script.scenes[index]; }
+
+    void finish(int code) {
+        finished = true;
+        exitCode = code;
+        choc::messageloop::stop();
+    }
+
+    void fail(const std::string& id, const std::string& error) {
+        std::cerr << "scene " << id << ": " << error << "\n";
+        finish(1);
+    }
+};
+
+// Captures the main window for `scene` and writes scene.outPath, cropped to
+// its rectangle. Goes through a temp file next to the target, renamed only
+// once everything worked, so a failed scene never leaves a broken or half-
+// written PNG behind.
+bool captureScene(const SceneRun& run, const scenes::Scene& scene, std::string& error) {
+    namespace fs = std::filesystem;
+    const fs::path raw = scene.outPath + ".capture";
+    const std::string partial = scene.outPath + ".partial";
+    struct Cleanup {
+        fs::path a, b;
+        ~Cleanup() {
+            std::error_code ec;
+            fs::remove(a, ec);
+            fs::remove(b, ec);
+        }
+    } cleanup{raw, partial};
+
+    if (!kronos::isWindowActive(run.window->getWindowHandle())) {
+        error = "the window lost focus during the scene (another app came to the front) -- "
+                "an inactive title bar looks different; leave the Mac alone while scenes run";
+        return false;
+    }
+    if (!kronos::captureWindowPng(run.window->getWindowHandle(), raw.string(), error)) return false;
+    int width = 0, height = 0;
+    if (!kronos::imagePixelSize(raw.string(), width, height, error)) return false;
+    const auto r = scenes::toPixelRect(scene.rectangle, width, height);
+    if (!kronos::cropPng(raw.string(), partial, r.x, r.y, r.width, r.height, error)) return false;
+    std::error_code ec;
+    fs::rename(partial, scene.outPath, ec);
+    if (ec) {
+        error = "cannot write " + scene.outPath + ": " + ec.message();
+        return false;
+    }
+    std::cout << "scene " << scene.id << ": " << scene.outPath << " (" << r.width << "x" << r.height << " px)\n";
+    return true;
+}
+
+void bindSceneFunctions(choc::ui::WebView& view, EditorBridge& bridge, SceneRun* run) {
+    // Bound in every mode so app.js can always ask; null means "no scene
+    // pending, start normally".
+    view.bind("getPendingScene", [run](const choc::value::ValueView&) -> choc::value::Value {
+        const scenes::Scene* scene = run ? run->current() : nullptr;
+        if (scene == nullptr) return {};
+        // Frontmost and focused for every scene (an inactive window's title
+        // bar is drawn differently); captureScene checks it still is.
+        run->window->toFront();
+        // A scene with its own "window" size: resized before the page applies
+        // the scene, so the runner's settle step covers the relayout too.
+        if (scene->windowWidth != run->windowWidth || scene->windowHeight != run->windowHeight) {
+            run->window->setBounds({100, 100, scene->windowWidth, scene->windowHeight});
+            run->windowWidth = scene->windowWidth;
+            run->windowHeight = scene->windowHeight;
+        }
+        auto datasets = choc::value::createObject("Datasets");
+        for (const auto& [alias, path] : run->script.datasets) datasets.setMember(alias, path);
+        auto result = choc::value::createObject("PendingScene");
+        result.setMember("scene", scene->json);
+        result.setMember("datasets", datasets);
+        result.setMember("windowWidth", scene->windowWidth);
+        result.setMember("windowHeight", scene->windowHeight);
+        result.setMember("index", static_cast<int>(run->index));
+        result.setMember("total", static_cast<int>(run->script.scenes.size()));
+
+        const std::string id = scene->id;
+        run->lastStep = "page loaded";
+        run->watchdog = choc::messageloop::Timer(SceneRun::kSceneTimeoutMs, [run, id] {
+            if (!run->finished)
+                run->fail(id, "timed out after " + std::to_string(SceneRun::kSceneTimeoutMs / 1000) +
+                                  " s, last step: " + run->lastStep);
+            return false;
+        });
+        return result;
+    });
+    if (run == nullptr) return;
+
+    view.bind("captureScene", [run, &bridge](const choc::value::ValueView& args) -> choc::value::Value {
+        auto result = choc::value::createObject("CaptureResult");
+        const scenes::Scene* scene = run->current();
+        const std::string id = args.isArray() && args.size() > 0 ? std::string(args[0].getWithDefault<std::string>({})) : "";
+        if (scene == nullptr || scene->id != id) {
+            result.setMember("ok", false);
+            return result;
+        }
+        run->watchdog.clear();
+        std::string error;
+        if (bridge.anyDatasetDirty()) {
+            run->fail(id, "the scene modified a dataset -- scenes must be read-only");
+        } else if (!captureScene(*run, *scene, error)) {
+            run->fail(id, error);
+        } else if (++run->index == run->script.scenes.size()) {
+            std::cout << run->script.scenes.size() << " scene(s) captured\n";
+            run->finish(0);
+        } else {
+            bridge.closeAllDatasets();  // the next scene starts like a fresh launch
+        }
+        result.setMember("ok", !run->finished || run->exitCode == 0);
+        result.setMember("done", run->finished);
+        return result;
+    });
+
+    view.bind("sceneProgress", [run](const choc::value::ValueView& args) -> choc::value::Value {
+        if (args.isArray() && args.size() > 0) run->lastStep = std::string(args[0].getWithDefault<std::string>({}));
+        return {};
+    });
+
+    view.bind("sceneFailed", [run](const choc::value::ValueView& args) -> choc::value::Value {
+        const scenes::Scene* scene = run->current();
+        if (scene == nullptr) return {};
+        run->watchdog.clear();
+        const std::string error = args.isArray() && args.size() > 1 ? std::string(args[1].getWithDefault<std::string>({})) : "";
+        run->fail(scene->id, error.empty() ? "failed in the frontend" : error);
+        return {};
+    });
+}
+
 #if CHOC_APPLE
 // Guard against quitting with unsaved changes (2026-08-26, see STATE.md) --
 // macOS-only half of that feature. Every DesktopWindow already gets a
@@ -288,15 +443,58 @@ int main(int argc, char** argv) {
     // absolute here (relative to the launch directory) so "./../x.PCG" and the same file
     // named twice resolve to one dataset. Anything starting with "-" is ignored (macOS can
     // pass launch flags such as -psn_...).
+    //
+    // Except the screenshot options, which take a value and are handled first:
+    //     --scene <file>        capture every scene in <file>, then quit (docs/screenshots/README.md)
+    //     --scene-data <dir>    where the scene file's datasets live (default: next to <file>)
+    //     --scene-only <a,b>    just these scene ids
+    // Positional files are ignored in scene mode -- the scene file alone decides what's open.
     std::vector<std::string> startupFiles;
+    std::string scenePath, sceneDataDir;
+    std::vector<std::string> sceneOnly;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg == "--scene" || arg == "--scene-data" || arg == "--scene-only") {
+            if (i + 1 >= argc) {
+                std::cerr << arg << " needs a value\n";
+                return 1;
+            }
+            const std::string value = argv[++i];
+            if (arg == "--scene") {
+                scenePath = value;
+            } else if (arg == "--scene-data") {
+                sceneDataDir = value;
+            } else {
+                std::stringstream ids(value);
+                for (std::string id; std::getline(ids, id, ',');)
+                    if (!id.empty()) sceneOnly.push_back(id);
+            }
+            continue;
+        }
         if (arg.empty() || arg[0] == '-') continue;
         std::error_code ec;
         std::filesystem::path path = std::filesystem::absolute(arg, ec);
         if (ec) path = arg;
         const std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
         startupFiles.push_back((ec ? path.lexically_normal() : canonical).string());
+    }
+
+    std::unique_ptr<SceneRun> sceneRun;
+    if (!scenePath.empty()) {
+        if (!kronos::isWindowCaptureSupported()) {
+            std::cerr << "--scene: window capture is only implemented on macOS\n";
+            return 1;
+        }
+        sceneRun = std::make_unique<SceneRun>();
+        std::string error;
+        if (!scenes::loadSceneScript(scenePath, sceneDataDir, sceneOnly, sceneRun->script, error)) {
+            std::cerr << scenePath << ": " << error << "\n";
+            return 1;
+        }
+        startupFiles.clear();
+    } else if (!sceneDataDir.empty() || !sceneOnly.empty()) {
+        std::cerr << "--scene-data/--scene-only need --scene\n";
+        return 1;
     }
 
     choc::ui::setWindowsDPIAwareness();
@@ -408,8 +606,9 @@ int main(int argc, char** argv) {
         };
 
         options.webviewIsReady = [&bridge, &ctx, extraBindings, rawInstance, &createEditorWindow, frontendDir,
-                                   &usageGuideWindow, &startupFiles](choc::ui::WebView& view) {
+                                   &usageGuideWindow, &startupFiles, &sceneRun](choc::ui::WebView& view) {
             bindEditorBridgeFunctions(view, bridge);
+            bindSceneFunctions(view, bridge, sceneRun.get());
             view.bind("getStartupFiles", [&startupFiles](const choc::value::ValueView&) {
                 auto files = choc::value::createEmptyArray();
                 for (const auto& file : startupFiles) files.addArrayElement(choc::value::Value(file));
@@ -598,10 +797,25 @@ int main(int argc, char** argv) {
         return {true, [instance] { instance->window->toFront(); }};
     };
 
-    EditorWindowInstance* mainWindow =
-        createEditorWindow("/index.html", "DIY Kronos Editor (jens-goes-mad with claude) -- built " __DATE__ " " __TIME__,
-                            1100, 650, 800, 500, nullptr, nullptr, frontendDir);
+    // Scene mode: the first scene's size, not resizable, so every run
+    // captures identical geometry (a rectangle is a percentage of it); a
+    // plain title, since the build timestamp would change every screenshot.
+    const scenes::Scene* firstScene = sceneRun ? sceneRun->current() : nullptr;
+    const int mainWidth = firstScene ? firstScene->windowWidth : 1100;
+    const int mainHeight = firstScene ? firstScene->windowHeight : 650;
+    const std::string mainTitle =
+        sceneRun ? "DIY Kronos Editor" : "DIY Kronos Editor (jens-goes-mad with claude) -- built " __DATE__ " " __TIME__;
+    EditorWindowInstance* mainWindow = createEditorWindow("/index.html", mainTitle, mainWidth, mainHeight,
+                                                          std::min(800, mainWidth), std::min(500, mainHeight), nullptr,
+                                                          nullptr, frontendDir);
     if (mainWindow == nullptr) return 1;
+    if (sceneRun) {
+        mainWindow->window->setResizable(false);
+        mainWindow->window->setMinimumSize(200, 200);  // a later scene may be smaller than the first
+        sceneRun->window = mainWindow->window.get();
+        sceneRun->windowWidth = mainWidth;
+        sceneRun->windowHeight = mainHeight;
+    }
 
 #if CHOC_APPLE
     // Guard against quitting with unsaved changes (2026-08-26, see
@@ -631,5 +845,5 @@ int main(int argc, char** argv) {
 #endif
 
     choc::messageloop::run();
-    return 0;
+    return sceneRun ? sceneRun->exitCode : 0;
 }

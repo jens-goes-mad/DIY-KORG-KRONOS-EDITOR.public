@@ -83,6 +83,8 @@ add_executable(kronos_editor
     src/main.cpp
     src/bridge/EditorBridge.cpp
     src/platform/NativeFileDialog.cpp
+    src/platform/WindowCapture.cpp
+    src/scenes/SceneScript.cpp
     src/kronos/PcgFile.cpp
     src/kronos/ProgramDecoder.cpp
     src/kronos/CombiDecoder.cpp
@@ -202,7 +204,7 @@ if (EDITOR_EMBED_RESOURCES)
 endif()
 
 if (APPLE)
-    target_link_libraries(kronos_editor PRIVATE "-framework WebKit" "-framework Cocoa")
+    target_link_libraries(kronos_editor PRIVATE "-framework WebKit" "-framework Cocoa" "-framework ImageIO")
 
     # Real .app bundle, Release builds only (EDITOR_EMBED_RESOURCES is the
     # existing "this is a real packaged/shippable build" marker, already
@@ -320,6 +322,16 @@ target_compile_definitions(asset_obfuscation_test PRIVATE
     ASSET_OBFUSCATION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
 )
 add_test(NAME asset_obfuscation_test COMMAND asset_obfuscation_test)
+
+# Screenshot scene files (--scene, src/scenes/SceneScript.cpp): parsing,
+# validation and the percent-to-pixel math. choc's header-only JSON/Value
+# only, no WebView -- same small-target reasoning as above.
+add_executable(scene_script_test
+    tests/scene_script_test.cpp
+    src/scenes/SceneScript.cpp
+)
+target_include_directories(scene_script_test PRIVATE src third_party/choc)
+add_test(NAME scene_script_test COMMAND scene_script_test)
 
 # Standalone hardware-validation CLI tool, same minimal dependency set as
 # pcg_file_test above (no main.cpp/EditorBridge.cpp/CHOC) -- see

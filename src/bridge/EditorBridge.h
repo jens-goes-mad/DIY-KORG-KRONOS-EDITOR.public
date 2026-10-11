@@ -543,6 +543,13 @@ public:
     // own doc comment), just checked across all of them at once here.
     bool anyDatasetDirty() const;
 
+    // Screenshot scenes only (main.cpp's SceneRun, between two scenes): drops
+    // every dataset and restarts numbering at #1, so each scene starts like a
+    // fresh launch -- its dataset selectors list only its own files, numbered
+    // as in a real session. No datasets-changed broadcast: the page reloads
+    // right after. Not for interactive use (unsaved edits are not checked).
+    void closeAllDatasets();
+
 private:
     struct Dataset {
         kronos::PcgFile file;

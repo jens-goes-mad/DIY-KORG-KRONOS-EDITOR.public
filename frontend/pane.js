@@ -1332,5 +1332,12 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, o
     // switchCategory()/applyNavEntry()/nav-history directly.
     jumpToInstrument,
     jumpToSetlistEntry,
+    // Exposed for screenshot scenes (scene-runner.js): switchCategory is the
+    // same function a category-tab click calls (callers check the tab isn't
+    // disabled first), selectSetlist the Set List dropdown's own change
+    // handler, openSetlistSlot opens one slot's editor with chosen sections.
+    switchCategory,
+    selectSetlist: setlistPanel.selectSetlist,
+    openSetlistSlot: setlistPanel.openSlot,
   };
 }

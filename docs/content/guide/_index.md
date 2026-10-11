@@ -66,19 +66,19 @@ built internally, see [App architecture & components](/components).
 Click **Open...** in the topbar. This shows a native file picker (not a browser upload --
 the app reads straight off disk) for a `.PCG`/`.SNG` Korg Kronos backup. 
 
-![Norton-Commander is back](DIY-Open.png)
+![Norton-Commander is back](DIY-Open.0_1_12.png)
 
 Once loaded, the
 file becomes an open **dataset** and lands in whichever of the two panes is empty; if both
 already show something, it's still available from either pane's dataset selector.
 
-![Norton-Commander is back](DIY-SetlistOnePane.png)
+![Norton-Commander is back](DIY-SetlistOnePane.0_1_12.png)
 
 Opening the same file path twice reuses the already-open dataset instead of loading a
 second copy -- both panes end up looking at the exact same in-memory data, so an edit made
 in one pane is visible in the other immediately.
 
-![Norton-Commander is back](DIY-SetlistSelection.png)
+![Norton-Commander is back](DIY-SetlistSelection.0_1_12.png)
 
 ## The dual-pane layout
 
@@ -110,7 +110,7 @@ currently on that side," not a fixed pane -- if you've swapped panes with **⇄*
 "Left only" still shows whatever is visually on the left afterward. Nothing about either
 pane's data changes; it's a display toggle only, same as the swap button.
 
-![One pane](DIY-SetlistOnePane.png)
+![One pane](DIY-SetlistOnePane.0_1_12.png)
 
 ### Cross-dataset tools (⧉)
 

@@ -2021,3 +2021,61 @@ td.has-comment {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Screenshot scenes (scene-runner.js, `kronos_editor --scene`): nothing that
+   varies between runs or belongs to a live session, plus the drawn stand-ins
+   for a native tooltip and an open <select> menu (both drawn by the OS
+   outside the page, so a screenshot run can't show the real ones). */
+.scene-mode .toast-container {
+  display: none;
+}
+.scene-mode,
+.scene-mode * {
+  caret-color: transparent;
+}
+/* The real mouse pointer must not leave a hover highlight in a capture (or
+   click something mid-run); scene-runner.js's own .click() calls still work. */
+.scene-mode {
+  pointer-events: none;
+}
+/* macOS overlay scrollbars fade in after a scroll and out again -- whether a
+   capture catches one is timing, so none at all. */
+.scene-mode *::-webkit-scrollbar {
+  display: none;
+}
+.scene-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: 300px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  background: #2b2b2d;
+  color: #e8e8e8;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  white-space: pre-wrap;
+}
+.scene-dropdown {
+  position: fixed;
+  z-index: 10000;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(40, 40, 42, 0.97);
+  color: #ececec;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.scene-dropdown-item {
+  padding: 2px 10px 2px 24px;
+  border-radius: 4px;
+  white-space: nowrap;
+  position: relative;
+}
+.scene-dropdown-item.is-checked::before {
+  content: "\2713";
+  position: absolute;
+  left: 8px;
+}

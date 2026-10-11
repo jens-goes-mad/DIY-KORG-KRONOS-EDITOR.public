@@ -463,7 +463,17 @@ openFileButton.addEventListener("click", async () => {
 // fill the left and right pane without going through the Open dialog. The native side
 // only binds getStartupFiles() in the real app -- plain-browser dev (mock_bridge.js)
 // has none, and simply opens nothing.
+//
+// A pending screenshot scene (`--scene`, see scene-runner.js) takes over startup
+// instead: it decides itself which datasets are open where.
 (async () => {
+  if (typeof window.getPendingScene === "function") {
+    const pending = await window.getPendingScene();
+    if (pending) {
+      await runScene(pending, { panes, refreshDatasets, setPaneVisibility, swapPanes });
+      return;
+    }
+  }
   if (typeof window.getStartupFiles !== "function") return;
   let files = [];
   try {

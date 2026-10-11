@@ -4719,6 +4719,85 @@ CLEAN UP -- noted 2026-08-15:
         filtering, per-tab picks, a Combi jump clearing the Combis filter),
         sidebar harness 53/53, `ctest` green. Still not exercised by hand in
         the native app with real files.
+  113. **BUILT (2026-10-02)**: screenshot scenes, first iteration of an
+      RFC agreed with the owner the same day (screenshots change every
+      release; replacing them by hand was tedious). `kronos_editor --scene
+      docs/screenshots/scenes.json --scene-data <dir> [--scene-only a,b]`
+      opens one fixed-size, non-resizable window, captures every scene in
+      the file's `scenes` array and quits; the first failure ends the run
+      with exit code 1 (owner's decision). Format and usage:
+      `docs/screenshots/README.md`; wrapper `tools/update-screenshots.sh`
+      (`KRONOS_SCENE_DATA` = the private PCG directory -- the PCGs stay
+      private, the scene file names only file names).
+      - **Split**: `src/scenes/SceneScript.{h,cpp}` (pure: JSON parse,
+        validation of top level/id/out/rectangle, path resolution, percent
+        -> pixel math; new ctest target `scene_script_test`) +
+        `src/platform/WindowCapture.{h,cpp}` (macOS: `screencapture -x -o
+        -l<windowNumber>`, crop via ImageIO/CoreGraphics) + `SceneRun` and
+        three bindings in main.cpp (`getPendingScene`, `captureScene`,
+        `sceneFailed`) + `frontend/scene-runner.js`, which validates and
+        applies the UI fields (so far only `left`/`right` with `dataset` +
+        `category`; unknown fields fail) via `pane.loadDataset()` and the
+        newly exposed `pane.switchCategory()`.
+      - **Page reload per scene**: datasets live in EditorBridge and
+        survive `location.reload()` (openFile() dedupes by path), so each
+        PCG is parsed once while every scene starts from a fresh UI.
+      - **`rectangle`** (owner's addition): optional `[left, top, right,
+        bottom]` in percent of the whole captured image, title bar included
+        (title bar kept, owner's decision); omitted = whole window.
+      - **`sips --cropOffset` is broken on macOS 14.7.7** (verified against
+        a synthetic four-colour PNG: every offset returned the bottom-right
+        corner; only a centred crop without offset works) -- hence the
+        ImageIO crop.
+      - PNGs go through `<out>.capture`/`<out>.partial` and are renamed only
+        on success; a scene leaving a dataset dirty fails; a 30 s native
+        watchdog per scene catches a page that never reports back.
+      Verified: `ctest` 3/3 (scene_script_test: 18 error cases, path
+      resolution, --scene-only, pixel math incl. shared edges); real runs
+      against K1_20260418.PCG/K2_20260401.PCG: `DIY-MainPanels.png`
+      regenerated (2200x1686 px), a 3-scene run with two rectangles
+      (quadrants checked visually), a run failing on scene 2 (exit 1, scene
+      3 not run, no PNG/temp leftovers), load-time errors (bad rectangle,
+      unknown --scene-only id). Not committed.
+      - **Second iteration (same day, "implement all")**: every app
+        screenshot is now a scene -- 13 in the Hugo docs + the 4 README
+        PNGs (17; the two Safari shots on the Building page stay manual).
+        `guide/DIY-KE-003-FlipPanes.png` was referenced by the guide but
+        missing from docs/content (only a stale copy in docs/public) --
+        now generated. New fields: per-scene `window`, `openDatasets`,
+        `swapped`, `visibility`, `tooltip`/`dropdown` (drawn stand-ins:
+        the real ones are drawn by macOS outside the page), pane `setlist`,
+        `banks`, `setlistFilter`, `filter`, `open` (setlist slot editor with
+        chosen sections / Program-Combi slot / Duplicates group). New pane
+        API: `selectSetlist`, `openSetlistSlot` (setlist panel's new
+        `openSlot()`); bank filter, Combis Set List filter and Duplicates
+        group expansion have no function, so the runner operates those
+        controls (lookups only in scene-runner.js, failing loudly).
+      - **Screenshot mode**: fixed window title, dataset paths shown as file
+        names (private directory), status "Ready.", no toasts/caret/
+        scrollbars, `pointer-events: none` (the real mouse pointer left a
+        hover highlight in one capture), and `EditorBridge::
+        closeAllDatasets()` between scenes (new, scene-only) so each scene
+        starts like a fresh launch with #1 numbering -- before, scenes saw
+        every earlier scene's datasets in their selectors.
+      - **Determinism, found by running, not assumed**: (1) a fixed 250 ms
+        settle caught `scrollRowBelowHeader()`'s smooth scroll mid-way and
+        a resized window mid-relayout -- settling now waits for the exact
+        window size and 10 still ticks of every scroll position, then
+        re-scrolls opened rows and settles again; (2) Combis'
+        `jumpToEntry()` resets the Set List filter on purpose, so `open`
+        runs before `setlistFilter` there; (3) the title bar differs when
+        the window isn't key -- the window is focused per scene and a
+        capture fails ("leave the Mac alone") if it lost focus; (4)
+        overlay scrollbars fading. Result: three consecutive full runs,
+        17/17 byte-identical. A runner step report (`sceneProgress`) names
+        the last step in the 30 s timeout message. Still open: two
+        unexplained 30 s timeouts during development (before the rAF ->
+        timer-tick change and once after) and one "page kept moving --
+        never settled" (setlist-one-pane-right); the settle error now names
+        the element that moves, the timeout the last step. Some of these
+        runs shared the Mac with its user -- one later run correctly failed
+        on lost focus. 6 clean full runs total so far.
   114. **BUILT (2026-10-02)**: ONE Cross Dataset Find runs all four searches,
       per the owner's RFC ("both dropdowns and one Find button change all
       cross data findings"). The sidebar's mode toggle now only switches
