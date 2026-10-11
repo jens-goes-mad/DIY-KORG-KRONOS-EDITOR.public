@@ -29,67 +29,28 @@ choice instead of just refusing -- only needed once per download.
 
 ## Why this exists
 
-Korg never published a spec for the container/chunk structure the Kronos's
-`.PCG`/`.SNG` backup format is built from -- that part is entirely
-reverse-engineered here, though Korg's own SysEx documentation (describing
-individual objects like Programs/Combis/Set Lists) is used as a real
-cross-check wherever it exists. Managing a real Kronos's library -- years of
-accumulated duplicate Programs, Set Lists scattered across gig backups, no
-easy way to compare two backups side by side -- means doing it entirely by
-hand on the unit's own screen, or not at all. This project is
-reverse-engineering that format from scratch, byte by byte, verified against
-real backup files with known ground truth (not guessed), and building a real
-cross-platform editor on top of it as the findings land -- full writeup and
-reference at **[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/overview)**
-(source: [`docs/content/format/index.md`](docs/content/format/index.md)).
+Korg never published the layout of the Kronos's `.PCG`/`.SNG` backup files, so
+managing a real library -- years of duplicate Programs, Set Lists scattered
+across gig backups, no way to compare two backups side by side -- meant doing it
+by hand on the unit's own screen. This project reverse-engineers the format byte
+by byte, verified against real backup files (never guessed), and builds a
+cross-platform editor on top of it.
 
-**If you own a Kronos**, the browsing/rearranging features below already work
-on real backups today, and every additional confirmed field or fixed Set List
-name is real progress on a format nobody else has fully documented.
-**If you're a developer** curious about reverse-engineering a real binary
-format, building a cross-platform native+web UI, or both, the codebase is
-built specifically to lower that bar -- see
-[App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/components/)
-for how small, independently testable pieces let you contribute to one part
-without building the whole native app first. `STATE.md` tracks exactly
-what's built, what's verified, and every known blind spot/open question --
-that's the place to look for where a contribution would actually help right
-now (Drum Kits/Wave Sequences/Global settings are still completely
-unexplored; Windows/Linux native file dialogs are an honest stub; the
-write-back/encoder side barely exists yet).
+The full story, user guide, and format reference live on
+**[the docs site](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/overview)**:
 
-**Tools/stack**: C++ (CMake), [CHOC](https://github.com/Tracktion/choc) for
-the native window/WebView bridge, plain vanilla JS/HTML/CSS on the frontend
-(no bundler, no build step in dev -- open `frontend/index.html` in a
-browser tab with `mock_bridge.js`'s fake data and iterate without compiling
-anything), [Bulma](https://bulma.io) (vendored, CSS-only) for layout/styling,
-[Tabulator](https://tabulator.info) (vendored, MIT; used only for the Cross Dataset analysis
-sidebar's tables),
-a scoped `ctest` target plus headless `node`-runnable tests for the
-byte-level parsing logic, and GitHub Actions CI building macOS
-(arm64+Intel), Linux, and Windows on every relevant push.
+- [Overview](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/overview) -- what it does and why
+- [User Guide](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/guide/) -- every pane and button, with screenshots
+- [The file format](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/format/) -- the reverse-engineered `.PCG`/`.SNG` layout
+- [App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/components/) -- how to contribute without building the native app
 
-Feel free to support the project by sending ideas, bug reports, or pull
-requests -- any of it helps.
-
-First iteration scope (see `STATE.md` for current status):
-
-1. Open a `.PCG` file via a native Open dialog and extract all 128 Set Lists
-   into memory as a **dataset**.
-2. Pick one Set List per pane and show its 128 song slots, with filter/search.
-3. A Norton-Commander-style dual pane to copy songs between Set Lists, and
-   swap/reorder songs within one, both via drag and drop.
-
-Edits happen in memory, but as of Program drag-and-drop and the Setlist
-Comment/Color/Volume/Font size editors (see `STATE.md`) that increasingly
-means directly into a loaded file's own retained raw bytes, not just
-app-level bookkeeping layered on top of them -- which is also, now, always
-what actually ends up on disk: a `saveFileAs(datasetId, path)` bridge method
-writes that same retained buffer straight to a file. There's no Save UI yet
-(no dialog, no dirty-tracking, no keyboard shortcut) -- for now it's a
-building block, first exercised by a devtools-console script
-(`tools/generate_setlist_test_matrix.js`) that generates a matrix of
-Setlist edits for checking against real Kronos hardware.
+**Stack**: C++ (CMake) with [CHOC](https://github.com/Tracktion/choc) for the
+native window/WebView, plain HTML/JS/CSS (no bundler), vendored
+[Bulma](https://bulma.io) and [Tabulator](https://tabulator.info), `ctest` plus
+headless `node` tests for the byte-level code, and GitHub Actions CI for macOS
+(arm64+Intel), Linux, and Windows. [`STATE.md`](STATE.md) tracks what's built,
+what's verified, and the open questions -- the place to look for where help is
+most useful. Ideas, bug reports, and pull requests are all welcome.
 
 ## Datasets: one loaded file, decoupled from which pane shows it
 
