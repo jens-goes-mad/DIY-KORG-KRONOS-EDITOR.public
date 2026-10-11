@@ -426,11 +426,22 @@ bool isConfirmedTimbreProgramBank(int programBank) { return confirmedTimbreCodeF
 // Groups of 2+ only, each sorted by (bank, number), and the groups
 // themselves sorted by their first member: unordered_map iteration order
 // isn't deterministic run-to-run, so callers (and tests) see a stable order.
+// Entries `isEmptySlot` matches by name (an untouched or cleared "Init
+// Program"/"Init Combi" slot) are left out: real backups hold hundreds of
+// byte-identical empty slots, which only buried the real duplicates and
+// gave nothing worth resolving (2026-10-11, per direct request).
+namespace {
+bool looksLikeEmptyCombiName(const std::string& name);    // defined further down
+bool looksLikeEmptyProgramName(const std::string& name);  // defined further down
+}  // namespace
+
 template <class Info>
-static std::vector<std::vector<Info>> groupByContentHash(const std::vector<Info>& items) {
+static std::vector<std::vector<Info>> groupByContentHash(const std::vector<Info>& items, bool (*isEmptySlot)(const std::string&)) {
     auto bySlot = [](const Info& a, const Info& b) { return a.bank != b.bank ? a.bank < b.bank : a.number < b.number; };
     std::unordered_map<uint64_t, std::vector<Info>> byHash;
-    for (const auto& item : items) byHash[item.contentHash].push_back(item);
+    for (const auto& item : items) {
+        if (!isEmptySlot(item.name)) byHash[item.contentHash].push_back(item);
+    }
 
     std::vector<std::vector<Info>> groups;
     for (auto& [hash, group] : byHash) {
@@ -782,9 +793,13 @@ std::vector<std::vector<int>> PcgFile::combiUsageCounts() const {
     return counts;
 }
 
-std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const { return groupByContentHash(programs_); }
+std::vector<std::vector<ProgramInfo>> PcgFile::findDuplicatePrograms() const {
+    return groupByContentHash(programs_, looksLikeEmptyProgramName);
+}
 
-std::vector<std::vector<CombiInfo>> PcgFile::findDuplicateCombis() const { return groupByContentHash(combis_); }
+std::vector<std::vector<CombiInfo>> PcgFile::findDuplicateCombis() const {
+    return groupByContentHash(combis_, looksLikeEmptyCombiName);
+}
 
 void PcgFile::repointOneSetlistSlot(int setlistIndex, int songIndex, int toBank, int toNumber) {
     auto bytes = songRecordBytes(setlistIndex, songIndex);
@@ -1498,10 +1513,20 @@ PcgFile::CombiRearrangeResult PcgFile::resolveDuplicateCombis(int keepBank, int 
     }
 
     for (const auto& dup : duplicates) {
-        // Unlike resolveDuplicates() (Programs), the duplicate's own bytes
-        // are never touched -- see this method's own doc comment in
-        // PcgFile.h for why. Only its Set List references move.
         result.setlistRefsRepointed += repointSetlistReferences(/*isProgram=*/false, dup.bank, dup.number, keepBank, keepNumber);
+        // Byte-exact mode only: the folded-in copy is now unreferenced and
+        // identical to the kept one, so it's reset to a blank Init Combi
+        // (resetCombi()) -- see this method's own doc comment in PcgFile.h.
+        // A bank with no "Init Combi" donor can't be reset; counted, not
+        // treated as a failure, since the repoint itself already happened.
+        // An already-empty copy (looksLikeEmptyCombiName()) isn't reset at
+        // all: real backups hold hundreds of byte-identical "Init Combi"
+        // slots, and resetting them only turned them into new per-bank
+        // "- Init Combi -" duplicate groups (K1_20260418.PCG: 4 groups -> 10).
+        if (requireByteExactMatch && !looksLikeEmptyCombiName(dup.name)) {
+            if (resetCombi(dup.bank, dup.number).ok) ++result.clearedCombis;
+            else ++result.clearSkipped;
+        }
     }
 
     result.ok = true;
@@ -2277,6 +2302,72 @@ PcgFile::ProgramSwapResult PcgFile::moveRecordWithinBank(bool isProgram, int ban
 
 PcgFile::ProgramSwapResult PcgFile::moveProgramWithinBank(int bank, int fromNumber, int toNumber) {
     return moveRecordWithinBank(/*isProgram=*/true, bank, fromNumber, toNumber);
+}
+
+PcgFile::CompactBankResult PcgFile::compactProgramBank(int bank) {
+    CompactBankResult result;
+    const BankLocation* loc = bankLocation(/*isProgram=*/true, bank);
+    if (loc == nullptr) {
+        result.error = "No such Program bank";
+        return result;
+    }
+    const int count = static_cast<int>(loc->numRecords);
+
+    // Read every record and classify it before anything is written.
+    std::vector<std::vector<uint8_t>> records(static_cast<size_t>(count));
+    std::vector<int> realSlots, emptySlots;
+    for (int i = 0; i < count; ++i) {
+        auto bytes = recordBytes(/*isProgram=*/true, bank, i);
+        if (!bytes) {
+            result.error = "Couldn't read a Program record";
+            return result;
+        }
+        records[static_cast<size_t>(i)] = std::move(*bytes);
+        auto info = std::find_if(programs_.begin(), programs_.end(),
+                                 [&](const ProgramInfo& p) { return p.bank == bank && p.number == i; });
+        const bool isEmpty = info == programs_.end() || looksLikeEmptyProgramName(info->name);
+        (isEmpty ? emptySlots : realSlots).push_back(i);
+    }
+
+    // newSlot[old] -- real Programs first, then the empty slots, each in order.
+    std::vector<int> newSlot(static_cast<size_t>(count));
+    int next = 0;
+    for (int old : realSlots) newSlot[static_cast<size_t>(old)] = next++;
+    for (int old : emptySlots) newSlot[static_cast<size_t>(old)] = next++;
+
+    // Snapshot who references each slot that moves, before any write.
+    struct Moving {
+        int from, to;
+        std::vector<std::pair<int, int>> setlistRefs;
+        std::vector<TimbreReference> timbreRefs;
+    };
+    std::vector<Moving> moving;
+    for (int old = 0; old < count; ++old) {
+        const int to = newSlot[static_cast<size_t>(old)];
+        if (to == old) continue;
+        moving.push_back({old, to, findSetlistReferences(/*isProgram=*/true, bank, old), findCombiTimbreReferences(bank, old)});
+    }
+    if (moving.empty()) {
+        result.ok = true;  // already compact
+        return result;
+    }
+
+    for (const auto& m : moving) putRecordBytes(/*isProgram=*/true, bank, m.to, records[static_cast<size_t>(m.from)]);
+
+    // findCombiTimbreReferences() only finds anything for a bank with a
+    // confirmed Timbre code, so rawCode is valid whenever timbreRefs is non-empty.
+    const int rawCode = confirmedTimbreCodeForProgramBank(bank);
+    for (const auto& m : moving) {
+        for (const auto& [setlistIndex, songIndex] : m.setlistRefs) repointOneSetlistSlot(setlistIndex, songIndex, bank, m.to);
+        for (const auto& t : m.timbreRefs) repointOneCombiTimbre(t.combiBank, t.combiNumber, t.timbreIndex, m.to, rawCode);
+        result.setlistRefsRepointed += static_cast<int>(m.setlistRefs.size());
+        result.combiRefsRepointed += static_cast<int>(m.timbreRefs.size());
+    }
+    for (int old : realSlots) {
+        if (newSlot[static_cast<size_t>(old)] != old) ++result.moved;
+    }
+    result.ok = true;
+    return result;
 }
 
 PcgFile::ProgramSwapResult PcgFile::moveProgramToBank(int srcBank, int srcNumber, int dstBank, int dstNumber,

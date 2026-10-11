@@ -43,8 +43,13 @@ small screen.
   its samples come from: orange = user samples (a .KSC user bank or
   Sampling mode), light gray = a Korg EXs library, none = ROM only --
   shown wherever that Program appears or is referenced.
-- **Duplicates**: byte-for-byte identical Programs, groupable and
-  resolvable in one click.
+  Expanding a Combi lists its switched-on Timbres with their MIDI channel
+  ("Ch 1".."Ch 16", "Gbl"); "(vol 0)" marks one that is on but silent.
+- **Duplicates**: byte-for-byte identical Programs and Combis (empty slots
+  left out). Click a copy to keep it and resolve the others into it
+  (Shift+click: show it in the opposite pane). The "by bank pair" view
+  resolves every duplicate between two banks at once, e.g. keep U-C,
+  clear the U-CC copies.
 - **Internals**: raw structural info, mostly for debugging the file itself.
 
 The filter box does a live, display-only substring search -- it narrows what
@@ -94,6 +99,13 @@ Right-click any row, or click its **⋯** button, for a small menu with
 **Reset entry** -- clears that one slot back to a blank, clearly-marked
 placeholder ("- Init Setlist -", "- Init Combi -", or the bank's own factory
 Init Program). Immediate, no undo, same as every other write in this app.
+
+The **⋯** in the Programs/Combis table header offers **Reset all entries**:
+it resets every row currently shown (after all filters), after one
+confirmation. A Program row's menu also has **Compact bank**: all real
+Programs of that bank move up in order, the empty slots go to the end, and
+Set List/Combi references follow (experimental -- not yet verified on a
+real Kronos).
 
 ## Cross-links and navigating between panes
 

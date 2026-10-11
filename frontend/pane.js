@@ -469,8 +469,44 @@ function refCell(text, unavailable) {
 // or a second action gets added, not a second hand-rolled copy of the
 // button/column). `items` is `showRowContextMenu()`'s own `[{label,
 // onSelect}]` shape, passed straight through.
-function menuCell(items) {
-  const td = document.createElement("td");
+// Header-row "Reset all entries" for the Programs and Combis tables -- resets
+// exactly the rows the table is showing right now (every filter applied),
+// not every entry in the file. `resetOne(entry)` is the per-row bridge call
+// (window.resetProgram/resetCombi) the row's own "Reset entry" already uses.
+// Stops at the first failure, reporting how many already went through.
+// Returns how many were reset (0 when cancelled) -- the caller does its own
+// refresh, since Programs and Combis refresh differently.
+async function resetVisibleEntries(rows, { isProgram, resetOne, showToast }) {
+  if (rows.length === 0) return 0;
+  const confirmed = await window.showConfirmDialog(`You are resetting ${rows.length} entries.`, {
+    confirmLabel: "Yes",
+    cancelLabel: "No",
+    isDanger: true,
+  });
+  if (!confirmed) return 0;
+  let done = 0;
+  for (const entry of rows) {
+    const result = await resetOne(entry);
+    if (!result.ok) {
+      const label = formatBankNumber({ isProgram, bank: entry.bank, number: entry.number });
+      showToast(`Reset failed at ${label} (${done} of ${rows.length} done): ${result.error}`, { isError: true });
+      break;
+    }
+    done++;
+  }
+  return done;
+}
+
+// The header-row "⋯" that opens resetVisibleEntries() above -- appended as
+// the last <th> of `table`'s header row.
+function appendResetAllHeaderMenu(table, onResetAll) {
+  table.querySelector("thead tr").appendChild(menuCell([{ label: "Reset all entries…", onSelect: onResetAll }], "th"));
+}
+
+// `tag` is "th" for a table-level menu in the header row (see
+// appendResetAllHeaderMenu() above) -- same button, same menu scaffolding.
+function menuCell(items, tag = "td") {
+  const td = document.createElement(tag);
   td.className = "row-menu-cell";
   const btn = document.createElement("button");
   btn.type = "button";
@@ -512,6 +548,7 @@ function createLibraryPanels(
     onDropProgram,
     onSwapProgram,
     onMoveProgram,
+    onCompactProgramBank,
     onJumpToInstrument,
     onJumpToSetlist,
     onRefreshOppositeLibrary,
@@ -671,7 +708,7 @@ function createLibraryPanels(
 
   const programsPanel = createProgramsPanel(
     { panelTable: panelTables.programs, bankFilterRow: bankFilterRows.programs, selectControlRow: selectControlRows.programs },
-    { getDatasetId, getFilterText, getSlotFilter: () => getSlotFilter("programs"), getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
+    { getDatasetId, getFilterText, getSlotFilter: () => getSlotFilter("programs"), getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onCompactProgramBank, onJumpToSetlist, onJumpToInstrument, log, showToast }
   );
 
   const duplicatesPanel = createDuplicatesPanel(
@@ -817,7 +854,7 @@ function createLibraryPanels(
   };
 }
 
-function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, onMoveProgram, onCopySetlist, getOpposite, log, showToast }) {
+function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, onMoveProgram, onCompactProgramBank, onCopySetlist, getOpposite, log, showToast }) {
   root.innerHTML = `
     <div class="pane-header">
       <div class="pane-header-row dataset-select-row">
@@ -1173,6 +1210,7 @@ function createPane(paneId, root, { onDropEntry, onDropProgram, onSwapProgram, o
     onDropProgram,
     onSwapProgram,
     onMoveProgram,
+    onCompactProgramBank,
     onJumpToInstrument: jumpToInstrument,
     onJumpToSetlist: jumpToSetlistEntry,
     onRefreshOppositeLibrary: refreshOppositeLibrary,

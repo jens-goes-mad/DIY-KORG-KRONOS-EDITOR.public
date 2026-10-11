@@ -34,7 +34,7 @@
 // keys to keep, or null.
 function createProgramsPanel(
   { panelTable, bankFilterRow, selectControlRow },
-  { getDatasetId, getFilterText, getSlotFilter, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onJumpToSetlist, onJumpToInstrument, log, showToast }
+  { getDatasetId, getFilterText, getSlotFilter, getProgramBankType, onDropProgram, onSwapProgram, onMoveProgram, onCompactProgramBank, onJumpToSetlist, onJumpToInstrument, log, showToast }
 ) {
   let programs = [];
   let expandedProgramKey = null;  // `${bank}-${number}` of the one expanded usage row, if any
@@ -110,6 +110,37 @@ function createProgramsPanel(
     }
     log(`[Library:Programs] Reset ${label} to its bank's Init Program.`);
     await refresh();
+  }
+
+  // Header row's "Reset all entries" -- the visible rows only, see pane.js's
+  // resetVisibleEntries().
+  async function resetAllEntries(rows) {
+    const done = await resetVisibleEntries(rows, {
+      isProgram: true,
+      resetOne: (p) => window.resetProgram(getDatasetId(), p.bank, p.number),
+      showToast,
+    });
+    if (done === 0) return;
+    log(`[Library:Programs] Reset ${done} of ${rows.length} Programs to their bank's Init Program.`);
+    await refresh();
+  }
+
+  // Row menu's "Compact bank" -- confirms with this bank's counts (from the
+  // full list, not just the filtered rows: a compact always moves the whole
+  // bank), then app.js's onCompactProgramBank() does the write + refresh.
+  async function compactBank(bank) {
+    const inBank = programs.filter((p) => p.bank === bank);
+    const empty = inBank.filter((p) => looksLikeEmptyProgramName(p.name)).length;
+    const bankName = PROGRAM_BANK_NAMES[bank];
+    const confirmed = await window.showConfirmDialog(
+      `Compact ${bankName}? Its ${inBank.length - empty} Programs move up in their current order, so its ${empty} ` +
+        "empty slots end up at the end of the bank. Set List and Combi references follow their Programs. " +
+        "This can't be undone.",
+      { confirmLabel: "Compact", isDanger: true }
+    );
+    if (!confirmed) return;
+    log(`[Library:Programs] Compacting ${bankName}.`);
+    await onCompactProgramBank(getDatasetId(), bank);
   }
 
   function refreshBankButtons() {
@@ -267,7 +298,8 @@ function createProgramsPanel(
       "<thead><tr><th>Bank</th><th>Name</th><th " +
       "title=\"HD-1 or EXi -- not yet cross-checked against a real backup, see docs/external/README.md\">Type</th>" +
       "<th title=\"Set List references\">#STL</th>" +
-      "<th title=\"Combi references\">#CMB</th><th></th></tr></thead><tbody></tbody>";
+      "<th title=\"Combi references\">#CMB</th></tr></thead><tbody></tbody>";
+    appendResetAllHeaderMenu(table, () => resetAllEntries(rows));
     const tbody = table.querySelector("tbody");
 
     for (const p of rows) {
@@ -323,7 +355,10 @@ function createProgramsPanel(
       // pane.js's menuCell() is the ONE place this button/column exists --
       // pane-combi-editor.js's identical column calls the exact same
       // function, not a second hand-rolled copy.
-      const rowMenuItems = [{ label: "Reset entry…", onSelect: () => resetEntry(p) }];
+      const rowMenuItems = [
+        { label: "Reset entry…", onSelect: () => resetEntry(p) },
+        { label: `Compact bank ${PROGRAM_BANK_NAMES[p.bank]}…`, onSelect: () => compactBank(p.bank) },
+      ];
       tr.append(
         bankCell(true, p.bank, p.number),
         nameTd,
@@ -670,7 +705,7 @@ function createDuplicatesPanel(
             "Its own content is left exactly as-is -- it genuinely differs from Src, so nothing is cleared or overwritten."
           : isProgram
             ? `Fold ${label} into Src -- clears its own bytes to its bank's Init Program, repoints its Combi/Set List references to Src.`
-            : `Fold ${label} into Src -- repoints its Set List references to Src (its own content is left untouched -- no Init Combi template exists yet).`;
+            : `Fold ${label} into Src -- repoints its Set List references to Src and resets it to a blank Init Combi.`;
         duplCheckbox.addEventListener("change", () => {
           if (duplCheckbox.checked) resolvePicker.dupl.add(entryKey);
           else resolvePicker.dupl.delete(entryKey);
@@ -707,46 +742,156 @@ function createDuplicatesPanel(
     }
   }
 
+  // Runs one resolve per job ({src: {bank, number}, targets: [{bank, number}]}
+  // -- fold `targets` into `src`) through the bridge, then ONE summary toast
+  // and ONE reload of everything that can show the change. Stops at the first
+  // failure (still reloading, since earlier jobs did write). Returns whether
+  // every job worked. Shared by the resolve picker (applyResolvePicker()), a
+  // copy button in an expanded group (keepCopy()) and the bank-pair bulk
+  // resolve (resolveBankPair()).
+  async function resolveJobs(isProgram, jobs, requireByteExactMatch) {
+    const total = { targets: 0, cleared: 0, clearSkipped: 0, setlist: 0, combi: 0, combiSkipped: 0 };
+    let failure = null;
+    let done = 0;
+    for (const { src, targets } of jobs) {
+      const result = isProgram
+        ? await window.resolveDuplicateProgram(getDatasetId(), src.bank, src.number, targets, requireByteExactMatch)
+        : await window.resolveDuplicateCombis(getDatasetId(), src.bank, src.number, targets, requireByteExactMatch);
+      if (!result.ok) {
+        failure = result.error;
+        break;
+      }
+      done++;
+      total.targets += targets.length;
+      total.cleared += (isProgram ? result.clearedPrograms : result.clearedCombis) || 0;
+      total.clearSkipped += result.clearSkipped || 0;
+      total.setlist += result.setlistRefsRepointed || 0;
+      total.combi += result.combiRefsRepointed || 0;
+      total.combiSkipped += result.combiRefsSkipped || 0;
+    }
+
+    if (failure) {
+      showToast(jobs.length > 1 ? `${failure} (stopped after ${done} of ${jobs.length} groups)` : failure, { isError: true });
+    }
+    if (done > 0) {
+      // requireByteExactMatch=false never clears anything (clearedPrograms
+      // is always 0 there -- see PcgFile::resolveDuplicates()'s own doc
+      // comment), so that toast line is worded around "consolidated"/
+      // repointing only, never "cleared".
+      const groups = jobs.length > 1 ? ` in ${done} group(s)` : "";
+      const combiPart =
+        `${total.combi} Combi Timbre(s)` +
+        (total.combiSkipped ? `, skipped ${total.combiSkipped} Combi Timbre(s) (unconfirmed bank)` : "");
+      if (!failure) {
+        showToast(
+          requireByteExactMatch
+            ? isProgram
+              ? `Resolved ${total.targets} duplicate(s)${groups} -- cleared ${total.cleared}, repointed ${total.setlist} Set List slot(s), ${combiPart}`
+              : `Resolved ${total.targets} duplicate(s)${groups} -- reset ${total.cleared} to Init Combi, ` +
+                `repointed ${total.setlist} Set List slot(s)` +
+                (total.clearSkipped
+                  ? `; ${total.clearSkipped} kept their content (no "Init Combi" in their bank to reset from).`
+                  : ".")
+            : isProgram
+              ? `Consolidated ${total.targets} variant(s)${groups} -- repointed ${total.setlist} Set List slot(s), ${combiPart}`
+              : `Consolidated ${total.targets} variant(s)${groups} -- repointed ${total.setlist} Set List slot(s).`
+        );
+      }
+      // Same reload chain the old per-copy "Keep only this" button used --
+      // see its own comments (now removed) for why each step is needed.
+      await onNeedsFullReload();
+      await onRefreshOppositeLibrary(getDatasetId());
+      if (total.setlist > 0) await onSetlistRefsRepointed(getDatasetId());
+    }
+    return !failure;
+  }
+
+  // A copy button in an expanded "Same content, different location" group
+  // (buildDuplicateGroupRow()): keep THIS copy and fold every other copy of
+  // the group into it -- the one-click version of the resolve picker with
+  // Src = this copy and every other copy checked. Stays on the Duplicates
+  // tab (reported 2026-10-11: these buttons used to jump to the slot, which
+  // switched tabs when the user expected to pick the keeper); the reload in
+  // resolveJobs() drops the solved group from the list. Confirmed first --
+  // for Programs the folded-in copies are reset to their Init Program.
+  async function keepCopy(group, keep, isProgram) {
+    const others = group.filter((e) => e.bank !== keep.bank || e.number !== keep.number);
+    if (others.length === 0) return;
+    const label = formatBankNumber({ isProgram, bank: keep.bank, number: keep.number }, keep.bankType);
+    const confirmed = await window.showConfirmDialog(
+      isProgram
+        ? `Keep ${label} and resolve its ${others.length} duplicate(s)? Their Combi/Set List references move to ` +
+            `${label}, and their own slots are reset to their bank's Init Program. This can't be undone.`
+        : `Keep ${label} and resolve its ${others.length} duplicate(s)? Their Set List references move to ` +
+            `${label}, and their own slots are reset to a blank Init Combi. This can't be undone.`,
+      { confirmLabel: "Keep", isDanger: true }
+    );
+    if (!confirmed) return;
+    // An open picker would hold this group's pre-resolve entries.
+    if (resolvePicker) closeResolvePicker();
+    await resolveJobs(isProgram, [{ src: keep, targets: others.map((e) => ({ bank: e.bank, number: e.number })) }], /*requireByteExactMatch=*/true);
+  }
+
+  // "Same content, bank pairs" view (renderBankPairsTable()): every bank pair
+  // that shares at least one byte-exact duplicate group, e.g. U-C + U-CC.
+  // Built from the groups currently visible (name filter applied). Each pair
+  // keeps the groups that have copies in BOTH banks; a group spanning three
+  // banks shows up under each of its pairs.
+  function buildBankPairs(groups) {
+    const pairs = new Map();  // "a-b" (a < b) -> { a, b, groups }
+    for (const group of groups) {
+      const banks = [...new Set(group.map((e) => e.bank))].sort((x, y) => x - y);
+      for (let i = 0; i < banks.length; i++) {
+        for (let j = i + 1; j < banks.length; j++) {
+          const key = `${banks[i]}-${banks[j]}`;
+          if (!pairs.has(key)) pairs.set(key, { a: banks[i], b: banks[j], groups: [] });
+          pairs.get(key).groups.push(group);
+        }
+      }
+    }
+    return [...pairs.values()].sort((p, q) => q.groups.length - p.groups.length || p.a - q.a || p.b - q.b);
+  }
+
+  // Bulk resolve for one bank pair (RFC 2026-10-11): in every group of the
+  // pair, keep the copy in `keepBank` (its lowest-numbered one, if it has
+  // several) and fold every copy in `foldBank` into it. Copies in any other
+  // bank, and extra copies within `keepBank` itself, are left alone -- those
+  // groups stay listed. Same per-group resolve as keepCopy(), one confirm
+  // and one reload for the whole batch.
+  async function resolveBankPair(pair, keepBank, isProgram) {
+    const foldBank = keepBank === pair.a ? pair.b : pair.a;
+    const bankNames = isProgram ? PROGRAM_BANK_NAMES : COMBI_BANK_NAMES;
+    const jobs = pair.groups.map((group) => {
+      const keep = group.filter((e) => e.bank === keepBank).sort((x, y) => x.number - y.number)[0];
+      const targets = group.filter((e) => e.bank === foldBank).map((e) => ({ bank: e.bank, number: e.number }));
+      return { src: { bank: keep.bank, number: keep.number }, targets };
+    });
+    const copies = jobs.reduce((sum, job) => sum + job.targets.length, 0);
+    const confirmed = await window.showConfirmDialog(
+      `Keep ${bankNames[keepBank]} and resolve ${copies} duplicate(s) in ${bankNames[foldBank]} ` +
+        `(${jobs.length} group(s))? ` +
+        (isProgram
+          ? `Their Combi/Set List references move to the ${bankNames[keepBank]} copies, and the ${bankNames[foldBank]} ` +
+            "slots are reset to their bank's Init Program."
+          : `Their Set List references move to the ${bankNames[keepBank]} copies, and the ${bankNames[foldBank]} ` +
+            "slots are reset to a blank Init Combi.") +
+        " This can't be undone.",
+      { confirmLabel: "Resolve", isDanger: true }
+    );
+    if (!confirmed) return;
+    if (resolvePicker) closeResolvePicker();  // could hold pre-resolve entries
+    await resolveJobs(isProgram, jobs, /*requireByteExactMatch=*/true);
+  }
+
   async function applyResolvePicker() {
     if (!resolvePicker || resolvePicker.src == null || resolvePicker.dupl.size === 0) return;
     const { isProgram, requireByteExactMatch } = resolvePicker;
-    const srcParts = resolvePicker.src.split("-").map(Number);
-    const [srcBank, srcNumber] = srcParts;
+    const [srcBank, srcNumber] = resolvePicker.src.split("-").map(Number);
     const targets = [...resolvePicker.dupl].map((key) => {
       const [bank, number] = key.split("-").map(Number);
       return { bank, number };
     });
-
-    const result = isProgram
-      ? await window.resolveDuplicateProgram(getDatasetId(), srcBank, srcNumber, targets, requireByteExactMatch)
-      : await window.resolveDuplicateCombis(getDatasetId(), srcBank, srcNumber, targets, requireByteExactMatch);
-    if (!result.ok) {
-      showToast(result.error, { isError: true });
-      return;
-    }
-    // requireByteExactMatch=false never clears anything (clearedPrograms is
-    // always 0 there -- see PcgFile::resolveDuplicates()'s own doc
-    // comment), so that toast line is worded around "consolidated"/
-    // repointing only, never "cleared".
-    showToast(
-      requireByteExactMatch
-        ? isProgram
-          ? `Resolved ${targets.length} duplicate(s) -- cleared ${result.clearedPrograms}, repointed ` +
-              `${result.setlistRefsRepointed} Set List slot(s), ${result.combiRefsRepointed} Combi Timbre(s)` +
-              (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
-          : `Resolved ${targets.length} duplicate(s) -- repointed ${result.setlistRefsRepointed} Set List slot(s).`
-        : isProgram
-          ? `Consolidated ${targets.length} variant(s) -- repointed ${result.setlistRefsRepointed} Set List slot(s), ` +
-              `${result.combiRefsRepointed} Combi Timbre(s)` +
-              (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
-          : `Consolidated ${targets.length} variant(s) -- repointed ${result.setlistRefsRepointed} Set List slot(s).`
-    );
-
-    // Same reload chain the old per-copy "Keep only this" button used --
-    // see its own comments (now removed) for why each step is needed.
-    await onNeedsFullReload();
-    await onRefreshOppositeLibrary(getDatasetId());
-    if (result.setlistRefsRepointed > 0) await onSetlistRefsRepointed(getDatasetId());
+    if (!(await resolveJobs(isProgram, [{ src: { bank: srcBank, number: srcNumber }, targets }], requireByteExactMatch))) return;
 
     // "Sidebar stays open" (explicit request) -- re-sync it to whatever the
     // FRESH data says post-reload (onNeedsFullReload() re-fetches
@@ -792,16 +937,12 @@ function createDuplicatesPanel(
   }
 
   // One duplicate group's expanded detail -- every copy in the group gets a
-  // plain navigation button (jumps there, same click/Shift-click/Shift+Cmd-
-  // click convention as buildUsageRow()'s Combi jump button below -- per
-  // explicit request that Duplicates navigate "as usual"). No write action
-  // lives here at all (2026-08-25, replaces an earlier "click a copy to
-  // resolve the WHOLE group" design, and the "Keep only this"-per-copy
-  // button that briefly replaced it) -- resolving now happens exclusively
-  // through the group title row's own "..." menu button (renderExact-
-  // DuplicatesTable() below), which opens a picker sidebar letting the user
-  // choose SPECIFIC duplicates to fold in rather than an all-or-nothing
-  // whole group. `isProgram` only affects the informational text shown:
+  // "keep this one" button (keepCopy(): fold every other copy into it, stay
+  // on Duplicates). Back again since 2026-10-11, per direct request: these
+  // were plain jump-to-slot buttons from 2026-08-25 on, and clicking one to
+  // pick the keeper switched tabs instead. The group title row's "..." menu
+  // (renderExactDuplicatesTable() below) still opens the picker sidebar for
+  // folding in only SPECIFIC copies. `isProgram` only affects the informational text shown:
   // Programs show a Combi-usage count (n/a for unconfirmed banks -- see
   // refCell's own comment in pane.js), Combis don't (a Combi isn't
   // referenced BY other Combis).
@@ -830,18 +971,15 @@ function createDuplicatesPanel(
           : ` (Set List #${entry.setlistReferenceCount})`
       );
       navBtn.title =
-        `Jump to ${label}. Shift+click: opposite pane. Shift+Cmd+click: opposite pane, ` +
-        "same coordinate, keep its own dataset.";
+        `Keep ${label} and resolve the other ${group.length - 1} cop${group.length > 2 ? "ies" : "y"} into it (asks first). ` +
+        "Shift+click: show it in the opposite pane instead. Shift+Cmd+click: same, keep the opposite pane's own dataset.";
       navBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        onJumpToInstrument({
-          isProgram,
-          bank: entry.bank,
-          number: entry.number,
-          from: null,
-          toOpposite: ev.shiftKey,
-          keepOppositeDataset: ev.metaKey,
-        });
+        ev.stopPropagation();  // don't also collapse the group row
+        if (ev.shiftKey) {
+          onJumpToInstrument({ isProgram, bank: entry.bank, number: entry.number, from: null, toOpposite: true, keepOppositeDataset: ev.metaKey });
+          return;
+        }
+        keepCopy(group, entry, isProgram);
       });
       row.appendChild(navBtn);
     }
@@ -857,12 +995,67 @@ function createDuplicatesPanel(
   // Returns a DOM node (a table, or an empty-state message) rather than
   // appending itself, matching renderNameCollisionTable() below so render()
   // can place either kind of section the same way.
-  function renderExactDuplicatesTable(groups, isProgram, emptyMessage) {
+  // Byte-exact groups the shared name filter keeps -- used by both
+  // renderExactDuplicatesTable() and renderBankPairsTable().
+  function visibleExactGroups(groups) {
     const needle = getFilterText().trim().toLowerCase();
-    const visibleGroups = groups.filter((group) => {
+    return groups.filter((group) => {
       const groupName = group[0].name || "(empty)";
       return !needle || groupName.toLowerCase().includes(needle);
     });
+  }
+
+  // "Same content, bank pairs" view: one row per bank pair sharing byte-exact
+  // duplicates (buildBankPairs()), showing both banks as buttons plus the
+  // group count. Clicking a bank keeps that bank's copies and resolves the
+  // other bank's copies into them (resolveBankPair(), asks first).
+  function renderBankPairsTable(groups, isProgram, emptyMessage) {
+    const pairs = buildBankPairs(visibleExactGroups(groups));
+    if (pairs.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "usage-empty";
+      empty.textContent = emptyMessage;
+      return empty;
+    }
+
+    const bankNames = isProgram ? PROGRAM_BANK_NAMES : COMBI_BANK_NAMES;
+    const table = document.createElement("table");
+    table.className = "table is-fullwidth is-hoverable is-narrow";
+    table.innerHTML =
+      colgroupHtml([8, 4]) +
+      "<thead><tr><th title=\"Click the bank whose copies you want to keep\">Keep bank</th><th>Groups</th></tr></thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody");
+
+    for (const pair of pairs) {
+      const tr = document.createElement("tr");
+      const banksTd = document.createElement("td");
+      const row = document.createElement("div");
+      row.className = "bank-filter-row";
+      for (const [keepBank, foldBank] of [
+        [pair.a, pair.b],
+        [pair.b, pair.a],
+      ]) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "button is-small bank-filter-button";
+        btn.textContent = bankNames[keepBank];
+        btn.title =
+          `Keep the ${bankNames[keepBank]} copies and resolve the ${bankNames[foldBank]} copies into them ` +
+          `(${pair.groups.length} group(s), asks first).`;
+        btn.addEventListener("click", () => resolveBankPair(pair, keepBank, isProgram));
+        row.appendChild(btn);
+      }
+      banksTd.appendChild(row);
+      const countTd = document.createElement("td");
+      countTd.textContent = String(pair.groups.length);
+      tr.append(banksTd, countTd);
+      tbody.appendChild(tr);
+    }
+    return table;
+  }
+
+  function renderExactDuplicatesTable(groups, isProgram, emptyMessage) {
+    const visibleGroups = visibleExactGroups(groups);
 
     if (visibleGroups.length === 0) {
       const empty = document.createElement("div");
@@ -1070,12 +1263,15 @@ function createDuplicatesPanel(
     return table;
   }
 
-  // The two views available on EITHER sub-tab, chosen via the dropdown
+  // The views available on EITHER sub-tab, chosen via the dropdown
   // render() builds below -- kept as one lookup table rather than inlined
   // per-branch logic so both sub-tabs (Programs/Combi) share exactly the
-  // same option list/order.
+  // same option list/order. "banks" is the bank-pair bulk resolve view
+  // (renderBankPairsTable(), 2026-10-11) over the same byte-exact groups
+  // as "content".
   const DUPLICATE_VIEWS = [
     ["content", "Same content, different location"],
+    ["banks", "Same content, by bank pair (bulk resolve)"],
     ["name", "Same name, different content"],
   ];
 
@@ -1146,14 +1342,15 @@ function createDuplicatesPanel(
     content.appendChild(tableScroll);
 
     const isProgram = activeSubTab === "programs";
+    const exactGroups = isProgram ? duplicateGroups : combiDuplicateGroups;
+    const noExactMessage = isProgram ? "No byte-exact duplicate Programs found." : "No byte-exact duplicate Combis found.";
+    const view = activeView[activeSubTab];
     const table =
-      activeView[activeSubTab] === "content"
-        ? renderExactDuplicatesTable(
-            isProgram ? duplicateGroups : combiDuplicateGroups,
-            isProgram,
-            isProgram ? "No byte-exact duplicate Programs found." : "No byte-exact duplicate Combis found."
-          )
-        : renderNameCollisionTable(
+      view === "content"
+        ? renderExactDuplicatesTable(exactGroups, isProgram, noExactMessage)
+        : view === "banks"
+          ? renderBankPairsTable(exactGroups, isProgram, noExactMessage)
+          : renderNameCollisionTable(
             isProgram ? programNameCollisions : combiNameCollisions,
             isProgram,
             isProgram

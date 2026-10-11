@@ -14,8 +14,18 @@ This page covers what's specific to the Combi tab.
 
 ![Combi References](DIY-CombiOverview.png)
 
-Expanding a Combi row shows all 16 Timbre slots, each with its own referenced [Program](/guide/prog)
-(when assigned) as a jump button, and its on/off/engine-type status.
+Expanding a Combi row lists every Timbre that is **switched on** (Timbres switched off are
+left out), each with:
+
+- its **MIDI channel** -- `Ch 1` to `Ch 16`, or `Gbl` for the Global channel. Timbres that
+  play together as a layer share a channel. (The channel numbers follow Korg's own parameter
+  table; matching them against what the instrument itself shows is still on the to-do list.)
+- its referenced [Program](/guide/prog) as a jump button, with the engine type.
+- **(vol 0)** and a dimmed line when the Timbre is on but its Volume is 0 -- assigned, but
+  silent.
+
+A Timbre whose Program is `INT-A 000` is listed like any other, since that is a real
+Program, too.
 
 ![Combi References](DIY-CombiTimbres.png)
 
@@ -85,7 +95,7 @@ different files; the other three rearrange gestures stay same-dataset-only for n
 ## Resetting a slot
 
 Click the **⋯** button in a Combi row's own last column (or right-click the row) for a small local
-menu with one action: **Reset entry** (the same
+menu with **Reset entry** (the same
 menu the [Programs](/guide/prog#resetting-a-slot) table uses). Confirming it clears the
 slot back to a blank "- Init Combi -" -- unlike a Program, there's no single factory
 template to write (real "Init Combi" bytes differ across banks), so the blank record is
@@ -95,7 +105,11 @@ refused rather than fabricating one. This is a single-slot reset: nothing else i
 is repointed -- any Set List slot that already referenced this exact slot keeps pointing at
 it, and will now show the reset content instead.
 
-This applies immediately once confirmed -- no undo, same as every other write in this app.
+The **⋯** button in the table's header row offers **Reset all entries**, which resets every
+row currently shown (after all filters, including the Set List filter) -- same as the
+[Programs](/guide/prog#resetting-a-slot) table's.
+
+Both apply immediately once confirmed -- no undo, same as every other write in this app.
 
 ## Duplicates
 
@@ -106,17 +120,16 @@ differences are called out below.
 
 ### Same content, different location
 
-Groups Combis that are byte-for-byte identical, one row per group. Expand a group to see
-every copy as a plain jump button, and use the group title row's own **⋯** button to open
-the same **resolve picker** side panel the Programs version uses -- a **Src** radio (the
-copy to keep) plus a **Dupl** checkbox per other copy (choose any subset), a **Resolve**
-button once both are set. Resolving repoints every checked Dupl's Set List references to
-Src -- **unlike the Programs version, the checked copies' own content is left untouched**:
-there's no confirmed "Init Combi" template to reset them to yet, so rather than guess at
-one, this only ever repoints references, never clears bytes. Since nothing gets cleared, a
-resolved Combi keeps showing up in this same group afterward (it's still byte-identical) --
-the picker stays open and simply reflects that, so it's still there to fold in on a later
-pass if you want to. The toast reports exactly how many Set List slots were repointed.
+Groups Combis that are byte-for-byte identical, one row per group; empty "Init Combi" slots
+are left out. Everything works as on the Programs sub-tab: click a copy to keep it (Shift+click
+to show it in the opposite pane), the group title row's **⋯** opens the **resolve picker**,
+and the **by bank pair (bulk resolve)** view resolves whole bank pairs at once.
+
+Resolving repoints every folded-in copy's Set List references to the kept one and resets the
+copy to a blank `- Init Combi -` -- the same blank record [Reset entry](#resetting-a-slot)
+writes, taken from a real "Init Combi" in the copy's own bank. If that bank has no "Init
+Combi" left, the copy keeps its content (its references still move) and the toast says how
+many couldn't be reset.
 
 ### Same name, different content
 
@@ -131,10 +144,8 @@ the same kind of thing here.
 
 This check also has the same **⋯** menu on its title row, opening the resolve picker in
 **Consolidate** mode -- see [Programs](/guide/prog#same-name-different-content) for the
-full explanation. Combis are already the "never clears bytes" case even in the byte-exact
-check above, so consolidating different-content Combis behaves exactly the same way as
-resolving byte-exact ones: only Set List references move, a checked Dupl's own content
-(genuinely different here, unlike the byte-exact case) is always left completely alone.
+full explanation. As there, consolidating never resets anything: only Set List references
+move, and a checked Dupl's own (genuinely different) content is left completely alone.
 
 ## See also
 

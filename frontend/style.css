@@ -1108,14 +1108,21 @@ td.has-comment {
   white-space: nowrap;
 }
 
+/* MIDI channel ("Ch 16"/"Gbl") between the Timbre label and its reference --
+   fixed width for the same column-alignment reason as .timbre-label. */
+.timbre-channel {
+  flex: 0 0 3.5em;
+  color: var(--text-dim);
+}
+
 .timbre-name {
   flex: 1;
   min-width: 0;
 }
 
-/* A real reference that's just currently switched off -- still worth a
-   visual cue since it still counts as a reference for anything safety-
-   related (e.g. "can this Program be deleted"), just visually muted. */
+/* Muted look for a reference that's present but not sounding -- a Combi
+   Timbre on at Volume 0 (pane-combi-editor.js's buildTimbreRow()), or a
+   Program usage reached only via an Off Timbre (pane-program-editor.js). */
 .timbre-inactive-ref {
   color: var(--text-dim);
   font-style: italic;

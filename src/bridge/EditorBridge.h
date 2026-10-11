@@ -358,6 +358,10 @@ public:
     // intervening range to make room -- see
     // PcgFile::moveProgramWithinBank()'s own doc comment.
     choc::value::Value moveProgramWithinBank(const choc::value::ValueView& args);
+    // [datasetId, bank] -> {ok, moved, setlistRefsRepointed,
+    // combiRefsRepointed}. See PcgFile::compactProgramBank()'s own doc
+    // comment. Refuses while any Program of that bank is open in an editor.
+    choc::value::Value compactProgramBank(const choc::value::ValueView& args);
 
     // [datasetId, srcBank, srcNumber, dstBank, dstNumber] -> {ok,
     // setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped} or

@@ -26,6 +26,22 @@
 // (pane-setlist-editor.js/pane.js) need one for real display strings.
 const TIMBRE_STATUS_OFF = 0;
 
+// Switched on but Volume 0 -- assigned yet silent. `volume` is -1 when the
+// record was too short to read it (EditorBridge::combiToValue()), so only an
+// actual 0 counts.
+function isTimbreVolumeZero(t) {
+  return t.status !== TIMBRE_STATUS_OFF && t.volume === 0;
+}
+
+// A Timbre's raw MIDI channel (TimbreRef::midiChannel in PcgFile.h: 0-15 =
+// channel 1-16, 16 = Global, per Korg's own table) as display text. Anything
+// else (-1 unreadable, or a value outside Korg's range) shows as "Ch ?".
+function formatTimbreChannel(raw) {
+  if (raw === 16) return "Gbl";
+  if (raw >= 0 && raw <= 15) return `Ch ${raw + 1}`;
+  return "Ch ?";
+}
+
 // Combis table: filter/search + per-bank filter buttons + a Combis-only Set
 // List filter dropdown (elements.bankFilterRow/selectControlRow -- the
 // shared coordinator in pane.js owns their surrounding DOM/show-hide, this
@@ -186,13 +202,9 @@ function createCombisPanel(
   // confirmed bank, also shows the engine type (getProgramBankType(), same
   // per-bank map the Programs panel's own bank-filter buttons use) and the
   // actual Program name via findProgram() (pane-program-editor.js's
-  // createProgramsPanel().findProgram, handed down as a callback). A Timbre
-  // can hold a real reference while switched off (status != Off is NOT the
-  // same thing as isDefault -- see TimbreRef's doc comment in PcgFile.h),
-  // so that's called out explicitly rather than hidden -- it still counts
-  // as "this Combi references that Program." Only ever called for a
-  // non-default Timbre -- buildTimbreRow() below skips isDefault ones
-  // entirely before calling this, so there's no "--" case to handle here.
+  // createProgramsPanel().findProgram, handed down as a callback). Only
+  // ever called for a Timbre that's switched on -- buildTimbreRow() below
+  // skips Off ones entirely before calling this.
   // Returns `{ref, name}` rather than one combined string -- buildTimbreRow()
   // renders them as two separately-aligned columns, so the Program name
   // isn't a plain divider/quote suffix hanging off a variable-length ref.
@@ -249,8 +261,9 @@ function createCombisPanel(
       }
     }
     // Kept apart from `ref` so the sample icon can sit right after the
-    // engine type, before "(off)" (setLabelWithSampleIcon()'s suffix).
-    const refSuffix = t.status === TIMBRE_STATUS_OFF ? " (off)" : "";
+    // engine type, before "(vol 0)" (setLabelWithSampleIcon()'s suffix):
+    // switched on but Volume 0 -- assigned yet silent.
+    const refSuffix = isTimbreVolumeZero(t) ? " (vol 0)" : "";
     // `programBank`/`bankPresent` (not just `ref`) are returned too --
     // buildTimbreRow() below needs both to know WHETHER a jump target
     // exists (only for a confirmed bank that's actually present in this
@@ -273,31 +286,42 @@ function createCombisPanel(
     heading.textContent = "Timbre Program references:";
     td.appendChild(heading);
 
-    // Default (unassigned, "--") Timbres are omitted entirely rather than
-    // listed dimmed -- a 16-Timbre Combi that only really uses 2 or 3
-    // doesn't need 13 "--" lines to scroll past. One Timbre per line (no
+    // Off Timbres are omitted entirely rather than listed dimmed -- a
+    // 16-Timbre Combi that only really uses 2 or 3 doesn't need 13 lines to
+    // scroll past. Filtered on status only, NOT isDefault (2026-10-11, per
+    // direct request): isDefault means "Program reference is 0/0", which is
+    // also a real INT-A 000 reference -- e.g. K1_20260418.PCG's U-A 000
+    // Timbre 4 is on at Volume 118 pointing there, and used to be hidden.
+    // An Off Timbre that still holds a reference is hidden too; the Programs
+    // table's usage counts still include it (TimbreRef's doc comment in
+    // PcgFile.h). One Timbre per line (no
     // multi-column packing -- see .timbre-list in style.css) so a long
     // Program reference has the row's full width to wrap into instead of
     // wrapping awkwardly inside a half-width column. `i` stays the
     // Timbre's own ORIGINAL 1-16 slot number even with entries skipped --
     // this must read as "which of the Combi's 16 physical Timbre slots",
     // not a renumbered count of however many are shown.
-    const activeTimbres = combi.timbres.filter((t) => !t.isDefault);
+    const activeTimbres = combi.timbres.filter((t) => t.status !== TIMBRE_STATUS_OFF);
     if (activeTimbres.length === 0) {
       const none = document.createElement("div");
       none.className = "usage-empty";
-      none.textContent = "No Timbres assigned -- all 16 are unused defaults.";
+      none.textContent = "All 16 Timbres are switched off.";
       td.appendChild(none);
     } else {
       const list = document.createElement("ul");
       list.className = "usage-list timbre-list";
       combi.timbres.forEach((t, i) => {
-        if (t.isDefault) return;
+        if (t.status === TIMBRE_STATUS_OFF) return;
         const li = document.createElement("li");
-        li.className = t.status === TIMBRE_STATUS_OFF ? "timbre-inactive-ref" : "";
+        // Dimmed when it's on at Volume 0 -- assigned but silent.
+        li.className = isTimbreVolumeZero(t) ? "timbre-inactive-ref" : "";
         const label = document.createElement("span");
         label.className = "timbre-label";
         label.textContent = `Timbre ${i + 1}:`;
+        const channel = document.createElement("span");
+        channel.className = "timbre-channel";
+        channel.textContent = formatTimbreChannel(t.midiChannel);
+        channel.title = "MIDI channel";
         const { ref, refSuffix, name, programBank, bankPresent, sampleKind } = formatTimbreRef(t);
         // A button, same look/behavior as the Setlist table's own Bank
         // button (pane-setlist-editor.js) -- only when `programBank` is
@@ -339,7 +363,7 @@ function createCombisPanel(
         const nameSpan = document.createElement("span");
         nameSpan.className = "timbre-name";
         nameSpan.textContent = name;
-        li.append(label, refSpan, nameSpan);
+        li.append(label, channel, refSpan, nameSpan);
         list.appendChild(li);
       });
       td.appendChild(list);
@@ -379,6 +403,22 @@ function createCombisPanel(
     await onSetlistRefsRepointed(getDatasetId());
   }
 
+  // Header row's "Reset all entries" -- the visible rows only, see pane.js's
+  // resetVisibleEntries(). Same reload chain as resetEntry() above, run once
+  // after the whole batch.
+  async function resetAllEntries(rows) {
+    const done = await resetVisibleEntries(rows, {
+      isProgram: false,
+      resetOne: (c) => window.resetCombi(getDatasetId(), c.bank, c.number),
+      showToast,
+    });
+    if (done === 0) return;
+    log(`[Library:Combis] Reset ${done} of ${rows.length} Combis to a blank Init Combi.`);
+    await onNeedsFullReload();
+    await onRefreshOppositeLibrary(getDatasetId());
+    await onSetlistRefsRepointed(getDatasetId());
+  }
+
   function render() {
     const needle = getFilterText().trim().toLowerCase();
     const rows = filterBySlots(filterByName(combis, needle), getSlotFilter())
@@ -393,7 +433,8 @@ function createCombisPanel(
     table.innerHTML =
       colgroupHtml([1.6, 3, null, 0.9, 0.8]) +
       "<thead><tr><th>Bank</th><th>Name</th><th>Set Lists</th>" +
-      "<th title=\"Set List references\">#STL</th><th></th></tr></thead><tbody></tbody>";
+      "<th title=\"Set List references\">#STL</th></tr></thead><tbody></tbody>";
+    appendResetAllHeaderMenu(table, () => resetAllEntries(rows));
     const tbody = table.querySelector("tbody");
 
     for (const c of rows) {

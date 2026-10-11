@@ -209,19 +209,25 @@
       // status is the raw kronos::TimbreStatus value now (Off=0/Internal=1/
       // External=2/Ex2=3), matching EditorBridge's own contract -- see
       // pane-combi-editor.js's TIMBRE_STATUS_OFF.
-      { number: 0, rawBankCode: 1, bankName: "", status: 1, isDefault: false },
-      { number: 15, rawBankCode: 20, bankName: "", status: 1, isDefault: false },
-      // A real reference that's currently switched off -- exercises the
-      // "referenced but inactive" display case in mock mode too.
-      { number: 90, rawBankCode: 0, bankName: "", status: 0, isDefault: false },
+      // midiChannel is raw (0-15 = Ch 1-16, 16 = Global) -- Timbres 1 and 2
+      // share a channel, like real layered Combis do.
+      { number: 0, rawBankCode: 1, bankName: "", status: 1, isDefault: false, volume: 127, midiChannel: 0 },
+      // On but Volume 0 -- exercises the "(vol 0)" marker.
+      { number: 15, rawBankCode: 20, bankName: "", status: 1, isDefault: false, volume: 0, midiChannel: 0 },
+      // A real reference that's currently switched off -- hidden in the
+      // Combi Timbre list, still counted as a Program usage.
+      { number: 90, rawBankCode: 0, bankName: "", status: 0, isDefault: false, volume: 100, midiChannel: 2 },
       // GM (raw code 6, confirmed 2026-08-12) -- permanently indexless, so
       // bankName IS populated here (unlike the entries above) -- exercises
       // the "confirmed by name, no jump-to-Program button, no Program
       // name" display case in mock mode too.
-      { number: 91, rawBankCode: 6, bankName: "GM", status: 1, isDefault: false },
+      { number: 91, rawBankCode: 6, bankName: "GM", status: 1, isDefault: false, volume: 90, midiChannel: 16 },
+      // On, pointing at INT-A 000 (Program 0/0 -- isDefault, but still
+      // listed since only Off hides a Timbre now).
+      { number: 0, rawBankCode: 0, bankName: "", status: 1, isDefault: true, volume: 118, midiChannel: 3 },
     ];
     for (let i = timbres.length; i < 16; i++) {
-      timbres.push({ number: 0, rawBankCode: 0, bankName: "", status: 0, isDefault: true });
+      timbres.push({ number: 0, rawBankCode: 0, bankName: "", status: 0, isDefault: true, volume: 127, midiChannel: i });
     }
     return timbres;
   }
@@ -799,15 +805,12 @@
     return ok({ clearedPrograms, setlistRefsRepointed, combiRefsRepointed, combiRefsSkipped: 0 });
   };
 
-  // Mirrors PcgFile::resolveDuplicateCombis() -- deliberately NOT symmetric
-  // with resolveDuplicateProgram() above: no real Init Combi byte capture
-  // exists yet (see that method's own doc comment in PcgFile.cpp), so the
-  // other duplicate Combis' own content is left untouched here too, only
-  // their Set List references move -- true in EITHER requireByteExactMatch
-  // mode, unlike the Program version above (Combis never clear bytes at
-  // all, see PcgFile.cpp's own doc comment). Same explicit `targets` model
-  // and `requireByteExactMatch` meaning/default as resolveDuplicateProgram()
-  // above (2026-08-25) -- see its own comment.
+  // Mirrors PcgFile::resolveDuplicateCombis() -- same explicit `targets`
+  // model and `requireByteExactMatch` meaning/default as
+  // resolveDuplicateProgram() above. With requireByteExactMatch, each
+  // folded-in Combi is reset to a blank Init Combi (the real backend copies
+  // one from the same bank via resetCombi(); here just the vacated-slot name,
+  // which is all the mock's duplicate detection looks at).
   window.resolveDuplicateCombis = (datasetId, bank, number, targets, requireByteExactMatch = true) => {
     const dataset = datasets[datasetId];
     if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
@@ -827,6 +830,7 @@
     }
 
     let setlistRefsRepointed = 0;
+    let clearedCombis = 0;
     for (const dup of duplicates) {
       for (const setlistIndex of Object.keys(dataset.songs)) {
         for (const song of dataset.songs[setlistIndex]) {
@@ -836,16 +840,54 @@
           setlistRefsRepointed++;
         }
       }
+      if (requireByteExactMatch) {
+        dup.name = "- Init Combi -";
+        clearedCombis++;
+      }
     }
 
-    if (setlistRefsRepointed > 0) markEdited(dataset);
-    return ok({ setlistRefsRepointed });
+    if (setlistRefsRepointed > 0 || clearedCombis > 0) markEdited(dataset);
+    return ok({ setlistRefsRepointed, clearedCombis, clearSkipped: 0 });
   };
 
   // Mirrors PcgFile::resetProgram() -- the single-slot "reset entry" half of
   // resolveDuplicateProgram() above, with no repointing: anything already
   // referencing (bank, number) keeps pointing at it and will just show the
   // reset Init Program content now, same as the real backend.
+  // Mirrors PcgFile::compactProgramBank(): real Programs of `bank` move up in
+  // order, empty ones to the end; Set List and Combi Timbre references follow.
+  window.compactProgramBank = (datasetId, bank) => {
+    const dataset = datasets[datasetId];
+    if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
+    const inBank = dataset.programs.filter((p) => p.bank === bank).sort((a, b) => a.number - b.number);
+    if (inBank.length === 0) return fail("No such Program bank");
+    const order = [...inBank.filter((p) => !looksLikeEmptyProgramName(p.name)), ...inBank.filter((p) => looksLikeEmptyProgramName(p.name))];
+    const newNumber = new Map(order.map((p, i) => [p.number, i]));
+    let moved = 0;
+    let setlistRefsRepointed = 0;
+    let combiRefsRepointed = 0;
+    for (const p of inBank) {
+      if (newNumber.get(p.number) !== p.number && !looksLikeEmptyProgramName(p.name)) moved++;
+    }
+    for (const setlistIndex of Object.keys(dataset.songs)) {
+      for (const song of dataset.songs[setlistIndex]) {
+        if (!song.isProgram || song.bank !== bank || newNumber.get(song.number) === song.number) continue;
+        song.number = newNumber.get(song.number);
+        setlistRefsRepointed++;
+      }
+    }
+    for (const combi of dataset.combis) {
+      for (const t of combi.timbres) {
+        if (t.isDefault || t.rawBankCode !== bank || newNumber.get(t.number) === t.number) continue;
+        t.number = newNumber.get(t.number);
+        combiRefsRepointed++;
+      }
+    }
+    for (const p of inBank) p.number = newNumber.get(p.number);
+    if (moved > 0) markEdited(dataset);
+    return ok({ moved, setlistRefsRepointed, combiRefsRepointed });
+  };
+
   window.resetProgram = (datasetId, bank, number) => {
     const dataset = datasets[datasetId];
     if (!dataset) return fail(`Dataset ${datasetId} has no file loaded`);
@@ -1240,7 +1282,9 @@
 
     const byName = {};
     for (const p of dataset.programs) {
-      if (!p.name) continue;  // empty slots (makeFakePrograms()'s copyProgram() target) aren't "duplicates" of each other
+      // Empty/Init slots aren't "duplicates" of each other -- same rule as
+      // PcgFile::findDuplicatePrograms() (pane.js's looksLikeEmptyProgramName()).
+      if (looksLikeEmptyProgramName(p.name)) continue;
       (byName[p.name] = byName[p.name] || []).push(p);
     }
     const groups = Object.values(byName)
@@ -1261,7 +1305,7 @@
 
     const byName = {};
     for (const c of dataset.combis) {
-      if (!c.name) continue;
+      if (!c.name || looksLikeEmptyCombiName(c.name)) continue;  // same rule as PcgFile::findDuplicateCombis()
       (byName[c.name] = byName[c.name] || []).push(c);
     }
     const groups = Object.values(byName).filter((g) => g.length >= 2);

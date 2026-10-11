@@ -118,9 +118,7 @@ struct ProgramInfo {
 // Kronos.txt", see docs/content/format/index.md) and cross-checked against this project's
 // own real Combi samples. `Off` is what every genuinely-unassigned Timbre
 // slot shows; the lower 5 bits of the same byte are NOT part of this --
-// they hold the Timbre's own 0-based index, a redundant field unrelated to
-// on/off state (confirmed by watching it count 0..15 across a real Combi's
-// 16 Timbres regardless of status).
+// they hold the Timbre's MIDI channel (TimbreRef::midiChannel below).
 enum class TimbreStatus { Off, Internal, External, Ex2, Unknown };
 
 // One Combi Timbre's Program reference, read directly from the Combi's raw
@@ -146,6 +144,20 @@ struct TimbreRef {
     // that Program" for anything safety-related (e.g. deciding whether a
     // Program is safe to delete) -- only isDefault means "nothing here."
     bool isDefault = true;
+    // The Timbre's own "Volume" (0-127) -- see decodeCombiTimbreVolume() in
+    // CombiDecoder.h for where it's read and how it was confirmed. -1 when
+    // the record is too short to hold it.
+    int volume = -1;
+    // Raw "MIDI Channel" -- the status byte's lower 5 bits (docs/external/
+    // KORG/CombiAndSongTimbreSet.txt: "Timbre1 > MIDI Channel", SysEx 4804
+    // bits 4~0, `00~10` -> `1~Global`). Earlier misread as the Timbre's own
+    // 0-based index (it often counts up across unused slots); disproven
+    // 2026-10-11 against K1_20260418.PCG, Combi U-A 001 "Separate Ways",
+    // whose Timbres 1 and 2 share one channel on the real unit and both
+    // store 1 here. 0-15 = channel 1-16, 16 = Global per Korg's table (the
+    // +1 display mapping itself isn't hardware-checked yet). -1 when the
+    // record is too short to hold it.
+    int midiChannel = -1;
 };
 
 // Returns the confirmed bank name for a raw Combi Timbre bank code (e.g.
@@ -437,6 +449,31 @@ public:
     // follow it to its own new position. Returns ok=false with `error` set
     // if the bank or either index is out of range.
     ProgramSwapResult moveProgramWithinBank(int bank, int fromNumber, int toNumber);
+
+    // "Compact bank" (Programs table row menu, 2026-10-11): moves every real
+    // Program in `bank` up, in its current order, so all empty slots
+    // (looksLikeEmptyProgramName() -- Korg's "Init Program" and this app's
+    // own reset template) end up at the end of the bank, also in their
+    // current order. The same outcome as a series of moveProgramWithinBank()
+    // calls, done as ONE permutation: every record is read first, every Set
+    // List slot and Combi Timbre referencing a slot that moves is snapshotted,
+    // then the records are written to their new slots and each snapshotted
+    // reference is repointed by identity -- a search-and-repoint per step
+    // would chain (slot 5 -> 4, then the same reference 4 -> 3, ...).
+    // Not repointed (same as moveProgramWithinBank()): a Program's own Drum
+    // Track Program reference (format doc §5.7) and Timbres stored as Program
+    // 0/0 (TimbreRef::isDefault). Record header bytes 0-3 travel with their
+    // record, as in every other move. `moved` = how many real Programs
+    // changed slot (0 = bank already compact, nothing written). Returns
+    // ok=false with `error` set if the bank doesn't exist.
+    struct CompactBankResult {
+        bool ok = false;
+        std::string error;
+        int moved = 0;
+        int setlistRefsRepointed = 0;
+        int combiRefsRepointed = 0;
+    };
+    CompactBankResult compactProgramBank(int bank);
 
     // Moves a Program into a specific slot in a DIFFERENT bank, overwriting
     // whatever was there, and repoints every Set List slot and Combi Timbre
@@ -888,6 +925,11 @@ public:
         bool ok = false;
         std::string error;
         int setlistRefsRepointed = 0;
+        // resolveDuplicateCombis() with requireByteExactMatch only: folded-in
+        // copies reset to a blank Init Combi, and those that couldn't be
+        // (their bank has no "Init Combi" donor, see resetCombi()).
+        int clearedCombis = 0;
+        int clearSkipped = 0;
     };
 
     // Swaps two Combis' entire raw content (same or different bank) and
@@ -899,31 +941,32 @@ public:
     // either (bank, number) doesn't exist in this file.
     CombiRearrangeResult swapCombis(int bankA, int numberA, int bankB, int numberB);
 
-    // Deliberately NOT symmetric with resolveDuplicates() above (its
-    // Program equivalent): this repoints exactly the targets' (each a
-    // {bank, number} pair, same "explicit subset, not the whole group"
-    // model as resolveDuplicates() -- see its own doc comment) Set List
-    // references to (keepBank, keepNumber) but NEVER clears their own raw
-    // bytes to an Init Combi template the way resolveDuplicates() clears
-    // Programs -- no real Init Combi byte capture exists yet (resources/
-    // only has Init-Program-HD1.raw/-EXi.raw), so fabricating placeholder
-    // bytes isn't something this project's own "no guessing" rule allows.
-    // The targeted Combis are left exactly as they were -- still there,
-    // just no longer referenced by any Set List once this runs. Combis are
-    // only ever referenced by Set List slots (never by anything else --
-    // Combi Timbres reference Programs, never other Combis), so there's no
-    // Timbre-repointing dimension the Program version has either.
+    // Combi equivalent of resolveDuplicates() above: repoints exactly the
+    // targets' (each a {bank, number} pair, same "explicit subset, not the
+    // whole group" model as resolveDuplicates() -- see its own doc comment)
+    // Set List references to (keepBank, keepNumber). Combis are only ever
+    // referenced by Set List slots (Combi Timbres reference Programs, never
+    // other Combis), so there's no Timbre-repointing dimension here.
     //
     // `requireByteExactMatch` picks which of the Duplicates panel's two
     // checks this call is servicing, same meaning as resolveDuplicates()'s
-    // own parameter -- true ("Same content, different location") validates
-    // every target's contentHash actually matches (keepBank, keepNumber)'s
-    // own before repointing (the real trust boundary against the JS
-    // frontend); false ("Same name, different content") skips that check
-    // entirely, since these targets are expected to genuinely differ. This
-    // method never clears bytes in EITHER mode (see above), so unlike the
-    // Program version the two modes only ever differ in this one
-    // validation step, nothing else.
+    // own parameter:
+    //  - true ("Same content, different location"): validates every
+    //    target's contentHash matches (keepBank, keepNumber)'s own before
+    //    repointing (the real trust boundary against the JS frontend), then
+    //    resets each target to a blank Init Combi via resetCombi()
+    //    (2026-10-11, per direct request -- before that the copies were left
+    //    in place, so a resolved group never left the Duplicates list).
+    //    There's still no shipped Init Combi template; resetCombi() copies a
+    //    real "Init Combi" from the target's own bank. A target whose bank
+    //    has none keeps its content and is counted in `clearSkipped` (the
+    //    repoint still counts as done), the rest in `clearedCombis`. A target
+    //    that's already empty (name contains "init combi") isn't reset or
+    //    counted at all -- resetting empty slots only made new duplicate
+    //    groups out of them.
+    //  - false ("Same name, different content"): no hash check and never
+    //    clears anything -- these targets genuinely differ, and their content
+    //    isn't recoverable.
     //
     // Returns ok=false with `error` set if (keepBank, keepNumber) doesn't
     // exist in this file, or on any target validation failure.

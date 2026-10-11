@@ -66,7 +66,8 @@ per platform. One CMake project, verified by CI on all four targets -- see
 
 The file format side: container/chunk parsing, all 128 Set Lists, per-slot parameters
 (Program/Combi reference, Color, Volume, Hold Time, Font size, Transpose, Comment), the
-Program/Combi instrument-name cross-reference, and Combi Timbre-to-Program references with
+Program/Combi instrument-name cross-reference, Combi Timbre-to-Program references (plus each
+Timbre's on/off status, MIDI channel and Volume) with
 all 20 Program banks' raw bank codes now confirmed -- cross-checked against Korg's own SysEx
 documentation and an independent third-party reverse-engineering effort where either exists,
 never trusted blindly. Which specific EXi synthesis engine (AL-1, CX-3, STR-1, MS-20EX,
@@ -95,7 +96,9 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   by drag-and-drop with matching gestures on both -- swap, move within or between banks,
   or copy onto an empty slot -- with every affected Set List reference repointed
   automatically. Every Set List/Program/Combi row also has a **Reset entry** action back
-  to a blank, recognizably-marked placeholder. Copying a Combi onto an empty slot works
+  to a blank, recognizably-marked placeholder; the Programs/Combis tables can also reset
+  every visible row at once, and a Program bank can be compacted (real Programs move up,
+  empty slots to the end -- experimental). Copying a Combi onto an empty slot works
   *across datasets* too: every Program its Timbres depend on is matched byte-for-byte
   against the destination file, and a sliding panel lets you choose where to place any
   that don't exist there yet before the copy applies.
@@ -103,9 +106,12 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   clicking one jumps straight to it, with per-pane Back/Forward history that returns you to
   the exact row you came from, not just its category. Shift+click any of these to jump in
   the *opposite* pane instead, switching it to the same dataset first if needed.
-- A Duplicates panel that finds byte-for-byte identical Programs and can resolve a group in
-  one click: keep one copy, clear the rest back to a real blank slot, and repoint every
-  Set List/Combi reference that pointed at a cleared one to the copy you kept.
+- A Duplicates panel that finds byte-for-byte identical Programs and Combis (empty slots
+  left out) and can resolve a group in one click: keep one copy, clear the rest back to a
+  real blank slot, and repoint every Set List/Combi reference that pointed at a cleared one
+  to the copy you kept -- or resolve every duplicate between two banks at once.
+- Combi Timbre lists show each switched-on Timbre's MIDI channel and flag Timbres at
+  Volume 0.
 - Save-to-file for a pane's edited dataset via a native Save dialog.
 
 ## Contributing

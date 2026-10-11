@@ -461,7 +461,8 @@ void testDecodeCombiFields() {
     for (size_t i = 0; i < name.size(); ++i) record[4 + i] = static_cast<uint8_t>(name[i]);
     record[kTimbreBaseOffset] = 42;                             // Timbre 0 -> Program number 42
     record[kTimbreBaseOffset + 1] = 3;                          // Timbre 0 -> raw bank code 3
-    record[kTimbreBaseOffset + 2] = static_cast<uint8_t>(3 << 5);  // status External
+    record[kTimbreBaseOffset + 2] = static_cast<uint8_t>((3 << 5) | 16);  // status External, MIDI channel Global
+    record[kTimbreBaseOffset + 5] = 111;                        // Timbre 0 -> Volume 111
 
     kronos::CombiFields fields = kronos::decodeCombiFields(record.data(), record.size(), 2, 9);
     CHECK_EQ(fields.bank, 2, "decodeCombiFields keeps the caller-supplied bank");
@@ -473,6 +474,10 @@ void testDecodeCombiFields() {
     CHECK(fields.timbres[0].status == kronos::TimbreStatus::External);
     CHECK(!fields.timbres[0].isDefault);
     CHECK(fields.timbres[1].isDefault);  // untouched -- genuinely unassigned
+    CHECK_EQ(fields.timbres[0].volume, 111, "Timbre 0 volume");
+    CHECK_EQ(fields.timbres[1].volume, 0, "Timbre 1 volume");
+    CHECK_EQ(fields.timbres[0].midiChannel, 16, "Timbre 0 MIDI channel (raw 16 = Global), independent of status bits");
+    CHECK_EQ(fields.timbres[1].midiChannel, 0, "Timbre 1 MIDI channel");
 
     // Truncated record: shorter than even the Timbre area needs -- every
     // Timbre degrades to a default (isDefault=true) rather than reading OOB.
@@ -480,6 +485,8 @@ void testDecodeCombiFields() {
     kronos::CombiFields shortFields = kronos::decodeCombiFields(tooShort.data(), tooShort.size(), 0, 0);
     CHECK_EQ(shortFields.name, std::string(), "decodeCombiFields on a truncated record yields an empty name");
     CHECK(shortFields.timbres[0].isDefault);
+    CHECK_EQ(shortFields.timbres[0].volume, -1, "truncated record yields volume -1");
+    CHECK_EQ(shortFields.timbres[0].midiChannel, -1, "truncated record yields MIDI channel -1");
 }
 
 void testHashProgramRecord() {
@@ -1774,7 +1781,11 @@ void testProgramSwap() {
 // List slot) and "Empty Target" (unreferenced) -- a same-type destination
 // bank for moveProgramToBank(). Bank 2 (EXi, MBK1, DIFFERENT type): one
 // Program, purely to exercise moveProgramToBank()'s engine-type refusal.
-std::vector<uint8_t> buildProgramMoveFixture() {
+// `bank0Names` overrides bank 0's five names (testCompactProgramBank() puts
+// empty "Init Program" slots between the real ones); the Set List slot and
+// Combi Timbre still point at numbers 1 and 2 respectively.
+std::vector<uint8_t> buildProgramMoveFixture(
+    const std::vector<std::string>& bank0Names = {"Program 0", "Program A", "Program B", "Program C", "Program D"}) {
     constexpr uint32_t kSongsPerSetlist = 128;
     constexpr size_t kRecordSize = 28;
     constexpr size_t kSbkHeaderSize = 40;
@@ -1801,13 +1812,9 @@ std::vector<uint8_t> buildProgramMoveFixture() {
     for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
 
     std::vector<uint8_t> pbk1BankA;
-    pushU32BE(pbk1BankA, 5);
+    pushU32BE(pbk1BankA, static_cast<uint32_t>(bank0Names.size()));
     pushU32BE(pbk1BankA, static_cast<uint32_t>(kBankRecordSize));
-    pushNameRecord(pbk1BankA, "Program 0", kBankRecordSize);
-    pushNameRecord(pbk1BankA, "Program A", kBankRecordSize);
-    pushNameRecord(pbk1BankA, "Program B", kBankRecordSize);
-    pushNameRecord(pbk1BankA, "Program C", kBankRecordSize);
-    pushNameRecord(pbk1BankA, "Program D", kBankRecordSize);
+    for (const auto& name : bank0Names) pushNameRecord(pbk1BankA, name, kBankRecordSize);
 
     std::vector<uint8_t> pbk1BankB;
     pushU32BE(pbk1BankB, 2);
@@ -1856,6 +1863,68 @@ std::vector<uint8_t> buildProgramMoveFixture() {
     pushZeros(data, 12);
     appendChunk(data, "PCG1", pcg1Content);
     return data;
+}
+
+// compactProgramBank(): bank 0 = [Init, A, Init, B, D] with Song A -> number
+// 1 (A) and Combi Timbre 2 -> number 2 (an Init slot). After compacting:
+// [A, B, D, Init(was 0), Init(was 2)]; Song A follows A to 0, the Timbre
+// follows its empty slot to 4 (empty slots keep their order and references).
+void testCompactProgramBank() {
+    const std::vector<std::string> names = {"Init Program", "Program A", "Init Program", "Program B", "Program D"};
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildProgramMoveFixture(names), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result = pcg.compactProgramBank(0);
+        CHECK(result.ok);
+        if (!result.ok) std::fprintf(stderr, "  compactProgramBank() error: %s\n", result.error.c_str());
+        CHECK_EQ(result.moved, 3, "A, B and D each moved up");
+        CHECK_EQ(result.setlistRefsRepointed, 1, "Song A followed Program A");
+        CHECK_EQ(result.combiRefsRepointed, 1, "Combi Timbre 2 followed its slot");
+
+        const std::vector<std::string> expected = {"Program A", "Program B", "Program D", "Init Program", "Init Program"};
+        for (int i = 0; i < 5; ++i) {
+            auto p = pcg.decodeProgram(0, i);
+            CHECK(p.has_value());
+            if (p) CHECK_EQ(p->name, expected[static_cast<size_t>(i)], "compacted order");
+        }
+        CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 0, "Song A now points at number 0");
+        CHECK_EQ(pcg.setlists()[0].songs[0].instrumentName, std::string("Program A"), "Song A still shows Program A");
+        auto combi = pcg.decodeCombi(0, 0);
+        CHECK(combi.has_value());
+        if (combi) CHECK_EQ(combi->timbres[2].number, 4, "Combi Timbre 2 followed its (empty) slot from 2 to 4");
+
+        // Second run: already compact, nothing written.
+        auto again = pcg.compactProgramBank(0);
+        CHECK(again.ok);
+        CHECK_EQ(again.moved, 0, "an already compact bank moves nothing");
+        CHECK(!pcg.compactProgramBank(99).ok);
+    }
+
+    // Equivalence with the existing single-step move: the same order built
+    // with moveProgramWithinBank() gives the same Programs and references.
+    {
+        kronos::PcgFile a, b;
+        std::string error;
+        CHECK(a.loadFromMemory(buildProgramMoveFixture(names), error));
+        CHECK(b.loadFromMemory(buildProgramMoveFixture(names), error));
+        a.compactProgramBank(0);
+        b.moveProgramWithinBank(0, 1, 0);  // A -> 0: [A, Init, Init, B, D]
+        b.moveProgramWithinBank(0, 3, 1);  // B -> 1: [A, B, Init, Init, D]
+        b.moveProgramWithinBank(0, 4, 2);  // D -> 2: [A, B, D, Init, Init]
+        for (int i = 0; i < 5; ++i) {
+            auto ra = a.programRecordBytes(0, i);
+            auto rb = b.programRecordBytes(0, i);
+            CHECK(ra && rb && *ra == *rb);
+        }
+        CHECK_EQ(a.setlists()[0].songs[0].params.number, b.setlists()[0].songs[0].params.number, "same Set List result");
+        auto ca = a.decodeCombi(0, 0);
+        auto cb = b.decodeCombi(0, 0);
+        CHECK(ca && cb && ca->timbres[2].number == cb->timbres[2].number);
+    }
 }
 
 void testProgramMove() {
@@ -2177,7 +2246,10 @@ void testFindNameCollisions() {
 // 1), one referencing the one that'll be superseded (number 0) -- so
 // resolveDuplicateCombis() has a real repoint to do AND a real "already
 // correct, leave alone" case to not double-count.
-std::vector<uint8_t> buildCombiDuplicateFixture() {
+// `withInitDonor` appends a 4th Combi (number 3) named exactly "Init Combi" --
+// the same-bank donor resetCombi() needs, so resolveDuplicateCombis() can
+// reset the folded-in copy. Without it, the reset is skipped (clearSkipped).
+std::vector<uint8_t> buildCombiDuplicateFixture(bool withInitDonor = false) {
     constexpr uint32_t kSongsPerSetlist = 128;
     constexpr size_t kRecordSize = 28;
     constexpr size_t kSbkHeaderSize = 40;
@@ -2211,13 +2283,17 @@ std::vector<uint8_t> buildCombiDuplicateFixture() {
     for (uint32_t k = 2; k < kSongsPerSetlist; ++k) pushZeros(sbk1, kSbkRecordSize);
 
     std::vector<uint8_t> cbk1BankA;
-    pushU32BE(cbk1BankA, 3);
+    pushU32BE(cbk1BankA, withInitDonor ? 4 : 3);
     pushU32BE(cbk1BankA, static_cast<uint32_t>(kCombiRecordSize));
     auto solo = makeCbkCombiRecord("Solo", kCombiRecordSize);
     cbk1BankA.insert(cbk1BankA.end(), solo.begin(), solo.end());  // number 0 -- unique, never referenced
     auto twin = makeCbkCombiRecord("Twin", kCombiRecordSize);
     cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 1
     cbk1BankA.insert(cbk1BankA.end(), twin.begin(), twin.end());  // number 2 -- byte-identical to number 1
+    if (withInitDonor) {
+        auto donor = makeCbkCombiRecord("Init Combi", kCombiRecordSize);
+        cbk1BankA.insert(cbk1BankA.end(), donor.begin(), donor.end());  // number 3 -- resetCombi()'s donor
+    }
 
     std::vector<uint8_t> sls1Content;
     appendChunk(sls1Content, "SDB1", sdb1);
@@ -2258,7 +2334,8 @@ void testFindAndResolveDuplicateCombis() {
     }
 
     // --- resolveDuplicateCombis(): keep number 2, repoints number 1's Set
-    // List reference, leaves number 1's own bytes untouched --------------
+    // List reference. This fixture's bank has no "Init Combi" donor, so the
+    // reset is skipped and number 1's own bytes stay untouched ------------
     {
         kronos::PcgFile pcg;
         std::string error;
@@ -2280,12 +2357,50 @@ void testFindAndResolveDuplicateCombis() {
         CHECK_EQ(pcg.setlists()[0].songs[0].params.number, 2, "Song A repointed to number 2");
         CHECK_EQ(pcg.setlists()[0].songs[1].params.number, 2, "Song B still references number 2 (already correct)");
 
-        // The duplicate's OWN bytes are untouched -- still there, still
-        // named "Twin", per this method's own doc comment: no Init Combi
-        // template exists yet to clear it to.
+        // No donor in this bank -> no reset: still there, still "Twin".
+        CHECK_EQ(result.clearedCombis, 0, "nothing reset without an Init Combi donor");
+        CHECK_EQ(result.clearSkipped, 1, "the one target's reset was skipped");
         auto stillThere = pcg.decodeCombi(0, 1);
         CHECK(stillThere.has_value());
         if (stillThere) CHECK_EQ(stillThere->name, std::string("Twin"), "the duplicate's own content is untouched");
+    }
+
+    // --- Same resolve with an "Init Combi" donor in the bank: the folded-in
+    // copy is reset, so the duplicate group is gone afterwards -----------
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(/*withInitDonor=*/true), error);
+        CHECK(loaded);
+        if (!loaded) return;
+
+        auto result =
+            pcg.resolveDuplicateCombis(/*keepBank=*/0, /*keepNumber=*/2, /*targets=*/{{0, 1}}, /*requireByteExactMatch=*/true);
+        CHECK(result.ok);
+        if (!result.ok) {
+            std::fprintf(stderr, "  resolveDuplicateCombis() error: %s\n", result.error.c_str());
+            return;
+        }
+        CHECK_EQ(result.setlistRefsRepointed, 1, "Song A's reference still moves to number 2");
+        CHECK_EQ(result.clearedCombis, 1, "the folded-in copy was reset");
+        CHECK_EQ(result.clearSkipped, 0, "nothing skipped with a donor present");
+
+        auto reset = pcg.decodeCombi(0, 1);
+        CHECK(reset.has_value());
+        if (reset) CHECK_EQ(reset->name, std::string("- Init Combi -"), "the folded-in copy is now a vacated Init Combi");
+        auto kept = pcg.decodeCombi(0, 2);
+        CHECK(kept.has_value());
+        if (kept) CHECK_EQ(kept->name, std::string("Twin"), "the kept copy is untouched");
+        CHECK_EQ(pcg.findDuplicateCombis().size(), static_cast<size_t>(0), "no duplicate group left after the reset");
+
+        // Resetting "Solo" too leaves numbers 0 and 1 as byte-identical
+        // "- Init Combi -" slots (same donor, same name patch) -- empty
+        // slots never form a duplicate group.
+        CHECK(pcg.resetCombi(0, 0).ok);
+        auto c0 = pcg.combiRecordBytes(0, 0);
+        auto c1 = pcg.combiRecordBytes(0, 1);
+        CHECK(c0 && c1 && *c0 == *c1);
+        CHECK_EQ(pcg.findDuplicateCombis().size(), static_cast<size_t>(0), "empty slots are left out of duplicate groups");
     }
 
     // --- Rejected: no such Combi to keep ---------------------------------
@@ -2307,20 +2422,21 @@ void testFindAndResolveDuplicateCombis() {
 // "Solo" (number 0) and "Twin" (number 1) in buildCombiDuplicateFixture()
 // are genuinely different content -- the exact pair testFindAndResolve-
 // DuplicateCombis() above proves gets REJECTED when requireByteExactMatch=
-// true; this proves it's ACCEPTED when false. Combis never clear bytes in
-// EITHER mode (PcgFile.h's own doc comment on resolveDuplicateCombis()), so
-// unlike the Program version there's no clearedPrograms-style count to
-// check -- "Solo"'s own content simply staying "Solo" IS the assertion.
+// true; this proves it's ACCEPTED when false. This mode never clears
+// anything (PcgFile.h's own doc comment on resolveDuplicateCombis()) --
+// "Solo"'s own content staying "Solo" (with a donor available) IS the
+// assertion.
 void testResolveDuplicateCombisConsolidateDifferentContent() {
     kronos::PcgFile pcg;
     std::string error;
-    bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(), error);
+    bool loaded = pcg.loadFromMemory(buildCombiDuplicateFixture(/*withInitDonor=*/true), error);
     CHECK(loaded);
     if (!loaded) return;
 
     auto result = pcg.resolveDuplicateCombis(/*keepBank=*/0, /*keepNumber=*/1, /*targets=*/{{0, 0}},
                                               /*requireByteExactMatch=*/false);
     CHECK(result.ok);
+    CHECK_EQ(result.clearedCombis + result.clearSkipped, 0, "consolidate mode never attempts a reset");
     if (!result.ok) {
         std::fprintf(stderr, "  resolveDuplicateCombis() error: %s\n", result.error.c_str());
         return;
@@ -2425,12 +2541,9 @@ void testResolveDuplicateCombisSelective() {
         if (untouchedDup) CHECK_EQ(untouchedDup->name, std::string("Twin"), "the un-targeted duplicate's content is untouched");
 
         // Still findable as the SAME 3-member duplicate group as before --
-        // unlike the Program version, resolving a Combi duplicate never
-        // clears its bytes (this method's own doc comment), so number 2 is
-        // still byte-identical to numbers 1 and 3 even though its Set List
-        // reference already moved. Confirms resolving one member doesn't
-        // make it invisible to a follow-up resolve round (the sidebar's own
-        // "stays open" model) -- there's still a real reason to come back.
+        // this fixture's bank has no "Init Combi" donor, so number 2's reset
+        // is skipped and it stays byte-identical to numbers 1 and 3 even
+        // though its Set List reference already moved.
         auto groups = pcg.findDuplicateCombis();
         CHECK_EQ(groups.size(), static_cast<size_t>(1), "numbers 1, 2, and 3 still form one byte-exact group");
         if (groups.size() == 1) CHECK_EQ(groups[0].size(), static_cast<size_t>(3), "content hashing is unaffected by resolve -- all three copies remain");
@@ -3818,6 +3931,7 @@ int main() {
     testResetProgram();
     testProgramSwap();
     testProgramMove();
+    testCompactProgramBank();
     testCombiRearrange();
     testResetCombi();
     testCombiCrossDatasetCopy();

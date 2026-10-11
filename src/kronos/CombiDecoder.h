@@ -155,16 +155,11 @@ int decodeCombiTimbreVolume(const uint8_t* record, size_t recordSize, int timbre
 //     Volume was decoded.
 //   - Deliberately NOT included this pass: a "MIDI" category. Korg's own
 //     reference table lists a per-Timbre "MIDI Channel" at the SAME byte
-//     TimbreStatus already reads (SysEx offset 4804, bits 4~0) -- but
-//     TimbreStatus's own doc comment in PcgFile.h already documents THIS
-//     project's independently-confirmed finding that those exact bits are
-//     a Timbre's own 0-based index (confirmed by watching it count 0..15
-//     across a real Combi's 16 Timbres), not a MIDI channel. Real,
-//     unresolved conflict between two sources -- flagged rather than
-//     silently picking one, per this project's own no-guessing rule; a
-//     "MIDI" category needs this settled first (a real Combi where the
-//     Timbre index count DOESN'T hold, or an independent second reference,
-//     would settle it either way).
+//     TimbreStatus already reads (SysEx offset 4804, bits 4~0). This
+//     project first misread those bits as the Timbre's own 0-based index;
+//     settled 2026-10-11 as the MIDI channel (TimbreRef::midiChannel's doc
+//     comment in PcgFile.h). A named "MIDI channel" divergence line hasn't
+//     been asked for yet.
 // `recordA`/`recordB` are that slot's own raw CBK1 record bytes in each
 // file (PcgFile::combiRecordBytes()); `a`/`b` are that slot's already-
 // decoded CombiInfo (for the Timbre-reference tier, and the contentHash

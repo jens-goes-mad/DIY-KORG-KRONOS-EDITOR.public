@@ -73,8 +73,8 @@ constexpr size_t kNameOffset = 4;
 constexpr size_t kNameLength = 24;
 
 // Top 3 bits of the status byte (offset+2 within a Timbre block) -- see
-// TimbreStatus's doc comment in PcgFile.h. The lower 5 bits are a separate,
-// unrelated field (the Timbre's own 0-based index) and are ignored here.
+// TimbreStatus's doc comment in PcgFile.h. The lower 5 bits are a separate
+// field (the MIDI channel, TimbreRef::midiChannel) and are ignored here.
 TimbreStatus decodeTimbreStatus(uint8_t statusByte) {
     switch ((statusByte >> 5) & 0x07) {
         case 0: return TimbreStatus::Off;
@@ -141,8 +141,10 @@ CombiFields decodeCombiFields(const uint8_t* record, size_t recordSize, int bank
             ref.number = record[h];
             ref.rawBankCode = record[h + 1];
             ref.status = decodeTimbreStatus(record[h + 2]);
+            ref.midiChannel = record[h + 2] & 0x1F;
             ref.isDefault = (ref.number == 0 && ref.rawBankCode == 0);
         }
+        ref.volume = decodeCombiTimbreVolume(record, recordSize, i);
         fields.timbres.push_back(ref);
     }
     return fields;

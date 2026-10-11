@@ -2453,6 +2453,35 @@ To check on real hardware (owner, noted 2026-09-30):
     "Women Choir Aahs"), plus U-D 076/077/103/104/107/108 and U-CC 087. If
     they are not user samples, drop OldRam from `hd1PlayedSampleSources()`'s
     `user` case.
+  - Combi Timbre MIDI channel (noted 2026-10-11; decoded and shown in the
+    Combi Timbre list as "Ch N"/"Gbl", format doc §6.1):
+    - K1_20260418.PCG, Combi **U-A 001** "Separate Ways": Timbres 1+2 store
+      raw 1, Timbres 3+4 raw 2, Timbre 5 raw 3. Korg's table says raw 0 =
+      channel 1, so the app shows Ch 2 / Ch 2 / Ch 3 / Ch 3 / Ch 4. Does the
+      Kronos show the same channels? If it's off by one, fix
+      `formatTimbreChannel()` (pane-combi-editor.js).
+    - Find a Timbre set to "Global" on the unit and confirm it stores raw 16.
+    - About 16,300 Timbres per K1/K2 file are on and point at INT-A 000
+      (Program 0/0); since 2026-10-11 the Combi Timbre list shows them (it
+      hides Off Timbres only). Are they really used, or placeholders that
+      don't sound -- e.g. on a channel nothing plays? Example: U-A 000
+      "I dont wanna miss a thin" Timbre 4 (INT-A 000, on, Volume 118, raw
+      channel 4). If they're placeholders, find the field that tells them
+      apart before filtering them again.
+    - Related, not changed: the Programs table's #CMB/usage counts still
+      ignore Program 0/0 Timbres (`TimbreRef::isDefault`), so INT-A 000's
+      Combi usage is undercounted if those Timbres are real.
+  - Program moves / "Compact bank" (noted 2026-10-11; `compactProgramBank()`
+    gives byte-for-byte the same result as the existing single moves):
+    - Save a compacted bank (K1: U-G, U-EE and U-GG have gaps) and load it
+      on the Kronos -- do the moved Programs play and appear in order?
+    - Record header bytes 0-3 travel with each Program (format doc §5.7:
+      slot 0 holds counter-like values). Does the unit care when a
+      different record lands in slot 0?
+    - A Program's Drum Track Program reference (bytes 2692-2693) is never
+      repointed by any move. Its bank byte numbering isn't decoded (values
+      16/24/25 in PRELOAD.PCG). Does a Drum Track still play the right drum
+      Program after its target moved?
 
 Deferred on purpose (recorded when the related work shipped):
   - Init Combi records differ by 40+ unexplained bytes across banks, so
@@ -2581,6 +2610,7 @@ Archived entries (full text in STATE-ARCHIVE.md):
   #112 [BUILT, 2026-10-01] Cross Dataset filter dropdown in the PGM/COMBI panes (all four modes), shared result store, PcgFile::editCount()
   #113 [BUILT, 2026-10-02] screenshot scenes: `kronos_editor --scene <file>` regenerates all 17 app screenshots (Hugo docs + README), byte-identical run to run (docs/screenshots/)
   #114 [BUILT, 2026-10-02] one Cross Dataset Find runs all four searches; resolve keeps the panes' filter picks
+  #115 [BUILT, 2026-10-11] Reset all entries, Combi Timbre MIDI channel + vol 0, Duplicates keep-click + bank-pair bulk resolve + Combi reset, empty slots out of Duplicates, Compact bank
 
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 

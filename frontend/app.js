@@ -266,17 +266,44 @@ async function onSwapProgram(source, target) {
       (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
   );
 
-  // Both positions are in the SAME dataset (checked above) -- refresh every
-  // pane currently showing it, same "which panes need refreshing" pattern
-  // onDropProgram/onCopySetlist already use. A swap can repoint Set List
-  // slots too (unlike a copy), so the Setlist tab needs refreshing as well
-  // when that happened, not just the Library tables.
+  // Both positions are in the SAME dataset (checked above). A swap can
+  // repoint Set List slots too (unlike a copy), so the Setlist tab needs
+  // refreshing as well when that happened, not just the Library tables.
+  await refreshPanesAfterProgramRearrange(target.datasetId, result.setlistRefsRepointed);
+}
+
+// Refreshes every pane currently showing `datasetId` after a Program
+// swap/move/compact -- same "which panes need refreshing" pattern
+// onDropProgram/onCopySetlist already use. The Setlist tab only when Set
+// List slots were actually repointed.
+async function refreshPanesAfterProgramRearrange(datasetId, setlistRefsRepointed) {
   for (const pane of Object.values(panes)) {
-    if (pane.getCurrentDatasetId() === target.datasetId) {
+    if (pane.getCurrentDatasetId() === datasetId) {
       await pane.refreshLibrary();
-      if (result.setlistRefsRepointed > 0) await pane.refreshEntries();
+      if (setlistRefsRepointed > 0) await pane.refreshEntries();
     }
   }
+}
+
+// "Compact bank" (a Program row's menu, pane-program-editor.js -- which
+// asks for confirmation first): every real Program in `bank` moves up, all
+// empty slots end up at the end (PcgFile::compactProgramBank()).
+async function onCompactProgramBank(datasetId, bank) {
+  const result = await window.compactProgramBank(datasetId, bank);
+  const bankName = PROGRAM_BANK_NAMES[bank];
+  if (!result.ok) {
+    showToast(`Compact failed: ${result.error}`, { isError: true });
+    return;
+  }
+  if (result.moved === 0) {
+    showToast(`${bankName} is already compact.`);
+    return;
+  }
+  showToast(
+    `Compacted ${bankName} -- moved ${result.moved} Program(s), repointed ${result.setlistRefsRepointed} Set List ` +
+      `slot(s), ${result.combiRefsRepointed} Combi Timbre(s)`
+  );
+  await refreshPanesAfterProgramRearrange(datasetId, result.setlistRefsRepointed);
 }
 
 // Drop a Program row BEFORE/AFTER another one (pane-program-editor.js's own
@@ -315,15 +342,8 @@ async function onMoveProgram(source, target) {
       (result.combiRefsSkipped ? `, skipped ${result.combiRefsSkipped} Combi Timbre(s) (unconfirmed bank)` : "")
   );
 
-  // Same "which panes need refreshing" pattern onSwapProgram above uses --
-  // a move can repoint Set List slots too, so the Setlist tab needs
-  // refreshing as well when that happened, not just the Library tables.
-  for (const pane of Object.values(panes)) {
-    if (pane.getCurrentDatasetId() === target.datasetId) {
-      await pane.refreshLibrary();
-      if (result.setlistRefsRepointed > 0) await pane.refreshEntries();
-    }
-  }
+  // A move can repoint Set List slots too, same as a swap.
+  await refreshPanesAfterProgramRearrange(target.datasetId, result.setlistRefsRepointed);
 }
 
 // "Copy all to opposite" (the Setlist panel's setlist-info row, pane.js) --
@@ -359,6 +379,7 @@ document.querySelectorAll(".pane").forEach((root) => {
     onDropProgram,
     onSwapProgram,
     onMoveProgram,
+    onCompactProgramBank,
     onCopySetlist,
     // Lazy on purpose -- at THIS point in the forEach loop, the opposite
     // pane may not exist in `panes` yet (both panes are created in the same

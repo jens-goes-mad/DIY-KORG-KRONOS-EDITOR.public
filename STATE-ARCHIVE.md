@@ -4830,3 +4830,42 @@ CLEAN UP -- noted 2026-08-15:
         Dataset A, Dataset B, Find, THEN the mode toggle (right above the
         result it switches) -- the dropdowns and Find act on all modes.
         Sidebar harness 62/62 (new order check), filter harness 47/47.
+  115. **BUILT (2026-10-11)**: Programs/Combis/Duplicates batch, all per the
+      owner's RFCs in one session.
+      - **Reset all entries**: the Programs and Combis tables' header row has
+        the same ⋯ menu as a row, with "Reset all entries…" -- resets the
+        rows currently visible (every filter applied), after a "You are
+        resetting n entries. Yes/No" dialog. Shared helper
+        `resetVisibleEntries()` (pane.js).
+      - **Combi Timbre list**: only Off Timbres are hidden now (no longer
+        Program 0/0 -- K1 U-A 000 Timbre 4 is on, Volume 118, INT-A 000, and
+        was hidden). Each line shows the MIDI channel; "(vol 0)" + dimmed
+        for an On Timbre at Volume 0. `TimbreRef::volume` (already confirmed
+        offset 5) and `TimbreRef::midiChannel` added to the decoder/bridge.
+      - **Format correction**: the Timbre status byte's lower 5 bits are the
+        MIDI channel (Korg's table), NOT the Timbre's own index as §6.1 used
+        to say -- K1 U-A 001 "Separate Ways" Timbres 1+2 share a channel on
+        the unit and both store 1. Channel display mapping (raw 0 = Ch 1) is
+        from Korg's table, not yet hardware-checked (see BLIND SPOTS).
+      - **Duplicates**: clicking a copy in an expanded group keeps it and
+        resolves the others into it (was a jump that switched tabs);
+        Shift+click jumps to the opposite pane. New view "Same content, by
+        bank pair (bulk resolve)": `[U-C] [U-CC] n`, click the bank to keep.
+        One `resolveJobs()` serves picker, copy click and bulk resolve (one
+        toast, one reload). Combi resolve (byte-exact mode) now resets the
+        folded-in copies via `resetCombi()` -- skipped for already-empty
+        copies and counted when the bank has no Init Combi donor. Empty
+        slots (Init Program / Init Combi) are left out of both duplicate
+        finders: K1 Programs 62 -> 58 groups, Combis 4 -> 1.
+      - **Compact bank** (Program row menu): `PcgFile::compactProgramBank()`
+        moves real Programs up, empty slots to the end, one permutation with
+        snapshotted Set List / Combi Timbre referrers. Byte-identical to the
+        same result built from `moveProgramWithinBank()` calls on every
+        gapped bank of K1 and setlist_test_2 (<10 ms per bank). Drum Track
+        references and header bytes 0-3: same gaps as every move -- see the
+        hardware checklist.
+      Verified: `pcg_file_test` green (new: Timbre volume/channel decode,
+      Combi resolve with/without donor, empty slots excluded,
+      compactProgramBank order/references/equivalence); real-file smoke
+      tests against K1/K2/PRELOAD/Narf as noted above. Not clicked through
+      in the native app.

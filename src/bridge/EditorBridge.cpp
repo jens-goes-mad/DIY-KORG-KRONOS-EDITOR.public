@@ -293,6 +293,12 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
         // doc comment in PcgFile.h). Exposed separately so the UI can show
         // "referenced but inactive" rather than conflating the two.
         tv.setMember("status", static_cast<int>(t.status));
+        // 0-127, -1 if unreadable -- with status, drives the Combi table's
+        // "(vol 0)" marker (pane-combi-editor.js's isTimbreVolumeZero()).
+        tv.setMember("volume", t.volume);
+        // Raw 0-16 (16 = Global), -1 if unreadable -- the JS side formats it
+        // (pane-combi-editor.js's formatTimbreChannel()).
+        tv.setMember("midiChannel", t.midiChannel);
         timbres.addArrayElement(tv);
     }
     v.setMember("timbres", timbres);
@@ -1206,6 +1212,31 @@ choc::value::Value EditorBridge::moveProgramWithinBank(const choc::value::ValueV
     return value;
 }
 
+choc::value::Value EditorBridge::compactProgramBank(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int bank = intArg(args, 1);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    // Same reasoning as moveProgramWithinBank() above, for the whole bank --
+    // any of its records may be rewritten.
+    for (const auto& [lockedDataset, lockedBank, lockedNumber] : m_lockedProgramRecords) {
+        if (lockedDataset == datasetId && lockedBank == bank) {
+            return makeError("Can't compact: a Program in this bank is open in an editor.");
+        }
+    }
+
+    auto result = file->compactProgramBank(bank);
+    if (!result.ok) return makeError(result.error);
+
+    auto value = makeOk();
+    value.setMember("moved", result.moved);
+    value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    value.setMember("combiRefsRepointed", result.combiRefsRepointed);
+    return value;
+}
+
 choc::value::Value EditorBridge::moveProgramToBank(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     const int srcBank = intArg(args, 1);
@@ -1291,6 +1322,8 @@ choc::value::Value EditorBridge::resolveDuplicateCombis(const choc::value::Value
 
     auto value = makeOk();
     value.setMember("setlistRefsRepointed", result.setlistRefsRepointed);
+    value.setMember("clearedCombis", result.clearedCombis);
+    value.setMember("clearSkipped", result.clearSkipped);
     return value;
 }
 

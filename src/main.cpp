@@ -172,6 +172,8 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
     view.bind("swapProgram", [&bridge](const choc::value::ValueView& args) { return bridge.swapProgram(args); });
     view.bind("moveProgramWithinBank",
                [&bridge](const choc::value::ValueView& args) { return bridge.moveProgramWithinBank(args); });
+    view.bind("compactProgramBank",
+               [&bridge](const choc::value::ValueView& args) { return bridge.compactProgramBank(args); });
     view.bind("moveProgramToBank",
                [&bridge](const choc::value::ValueView& args) { return bridge.moveProgramToBank(args); });
     view.bind("resolveDuplicateProgram", [&bridge](const choc::value::ValueView& args) {

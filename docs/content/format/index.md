@@ -836,7 +836,7 @@ both sources agree at every point they overlap.
 record (i.e. `recordOffset + 4806 + timbreIndex * 188`), regardless of how
 many Timbres are actually in use -- this stride does **not** vary with
 content, an earlier "variable-length" theory was tested and disproven.
-Each block's first 3 bytes:
+Decoded fields within each block:
 
 ```
 offset  field
@@ -844,10 +844,25 @@ offset  field
 1       raw bank code (see §6.2 -- NOT the same index space as §5.2's
         Program bank list; some other, absolute Kronos-internal numbering)
 2       status byte -- top 3 bits ((byte >> 5) & 0x07): 0=Off, 1=Internal,
-        3=External (MIDI), 4=Ex2 (expansion board). Lower 5 bits are a
-        separate, unrelated field: the Timbre's own 0-based index (0..15),
-        confirmed by watching it count up regardless of status.
+        3=External (MIDI), 4=Ex2 (expansion board). Lower 5 bits
+        (byte & 0x1F) are the Timbre's MIDI channel -- see below.
+5       Volume (0-127)
 ```
+
+**MIDI channel (status byte, lower 5 bits) -- CONFIRMED 2026-10-11.** Korg's
+own table (`docs/external/KORG/CombiAndSongTimbreSet.txt`, "Timbre1 > MIDI
+Channel", SysEx 4804 bits 4~0, `00~10` -> `1~Global`) puts the MIDI channel
+here. This document used to call these bits "the Timbre's own 0-based index",
+because they often count up across a Combi's unused Timbre slots. That was
+wrong: in `K1_20260418.PCG`, Combi U-A 001 "Separate Ways" Timbres 1 and 2 are
+on the same MIDI channel on the real unit, and both store raw value 1 here
+(Timbres 3/4 store 2, Timbre 5 stores 3). Raw 0-15 = channel 1-16, 16 =
+Global per Korg's table -- that +1 display mapping is taken from Korg's table
+and not yet checked on the hardware itself.
+
+**Volume (offset 5)** -- Korg's "Timbre1 > Volume", SysEx 4807; confirmed
+against `K1_20260418.PCG`/`K2_20260401.PCG` (see `decodeCombiTimbreVolume()`
+in `CombiDecoder.h`).
 
 **Off does not imply "no reference stored"**: a Timbre can hold a genuine,
 non-zero Program number/bank while its status is Off (e.g. temporarily

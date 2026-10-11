@@ -109,13 +109,35 @@ panes only ever copies.
 ## Resetting a slot
 
 Click the **⋯** button in a Program row's own last column (or right-click the row) for a small
-local menu with one action: **Reset entry**. Confirming it writes that bank's factory Init Program (HD-1 or EXi, whichever matches the
+local menu. **Reset entry** writes that bank's factory Init Program (HD-1 or EXi, whichever matches the
 slot) straight over it -- the same content a brand-new, never-touched slot has. This is a
 single-slot reset: unlike resolving a [duplicate](#duplicates) below, nothing else in the
 file is repointed -- any Set List slot or Combi Timbre that already referenced this exact
 slot keeps pointing at it, and will now show the reset content instead.
 
-This applies immediately once confirmed -- no undo, same as every other write in this app.
+The same **⋯** button in the table's **header row** offers **Reset all entries**: it resets
+every row the table is showing right now -- after the name filter, the bank buttons and the
+Cross Dataset filter -- not every Program in the file. Narrow the list down first, then
+confirm "You are resetting *n* entries". The [Combi](/guide/combi#resetting-a-slot) table
+has the same header button.
+
+Both apply immediately once confirmed -- no undo, same as every other write in this app.
+
+## Compacting a bank
+
+A Program row's **⋯** menu also has **Compact bank** (named after that row's bank, e.g.
+"Compact bank U-G"). It moves every real Program of the bank up, keeping their order, so all
+empty slots (`Init Program`, or a slot this app reset) end up at the end of the bank. Every
+Set List slot and Combi Timbre that references a moved Program follows it, the same as a
+[drag move](#reordering-programs-by-drag-and-drop) -- a compact gives exactly the result of
+doing those moves one by one. It always works on the whole bank, even if filters hide some
+of its rows, and is refused while one of the bank's Programs is open in an editor window.
+
+**Not yet verified on a real Kronos** -- treat a compacted bank as experimental until it has
+been saved and loaded on the instrument. Two known gaps, shared with drag moves: a Program's
+own **Drum Track** Program reference is not updated when its target drum Program moves (see
+[The file format](/format) §5.7), so avoid compacting banks that hold drum Programs used by a
+Drum Track; and a few unexplained header bytes travel with each Program to its new slot.
 
 ## Duplicates
 
@@ -130,10 +152,16 @@ checks exist for both Programs and Combis. This page covers the Programs sub-tab
 ### Same content, different location
 
 Groups Programs that are byte-for-byte identical (a real hash of the raw record, not just a
-matching name), one row per group. Expand a group to see every copy as a plain jump button --
-same click/Shift+click/Shift+Cmd+click convention as every other cross-reference in this app,
-see [Jumping between panes](/guide#jumping-to-a-program-combi-or-set-list-slot). Clicking a
-copy never writes anything; resolving is a separate, deliberate step below.
+matching name), one row per group. Empty slots (`Init Program`, or a slot this app reset)
+are left out -- every backup has dozens of identical blank slots, and there is nothing to
+resolve about them.
+
+Expand a group to see every copy as a button. **Click a copy to keep it**: after a
+confirmation, every *other* copy in the group is resolved into it (exactly what the resolve
+picker below does with that copy as Src and everything else checked), and the group
+disappears from the list -- you stay on the Duplicates tab. **Shift+click** a copy to show it
+in the opposite pane instead (Shift+Cmd+click: same, keeping the opposite pane's own
+dataset), see [Jumping between panes](/guide#jumping-to-a-program-combi-or-set-list-slot).
 
 Click the **⋯** button beside a group's own title row (visible whether the group is expanded
 or not) to open the **resolve picker**, a side panel listing every copy in that group with two
@@ -155,6 +183,17 @@ This applies immediately -- no confirmation step, no undo, same as every other w
 app -- and shows a toast reporting exactly what changed. The picker stays open afterward and
 re-lists whatever's left in the group, so folding in a large group a few copies at a time
 (or checking your work) doesn't mean reopening it each time.
+
+### Same content, by bank pair (bulk resolve)
+
+A third view in the same dropdown, over the same byte-identical groups: one row per **pair
+of banks** that share duplicates, e.g. `[U-C] [U-CC]  15` -- these two banks have 15
+duplicate groups in common (typical after a bank was copied as a backup). **Click the bank
+whose copies you want to keep**: after one confirmation, in every one of those groups the
+kept bank's copy (its lowest-numbered one, if it has several) stays and every copy in the
+other bank is resolved into it, exactly as above -- cleared, with its Set List and Combi
+references moved to the kept copy. Copies in any third bank are left alone, so a group that
+spans three banks stays listed. The name filter applies here too.
 
 ### Same name, different content
 
