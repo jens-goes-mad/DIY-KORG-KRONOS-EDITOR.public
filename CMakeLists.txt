@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.21)
 
+# No in-source builds. A configure run in the repo root (`cmake .`) silently
+# created a second build tree there and never touched build/, so a rebuild
+# after a `git pull` left the app the developer actually runs stale, while
+# its frontend (loaded from disk in Debug) was already new -- and calling a
+# bridge function the old binary didn't have just did nothing (2026-10-11).
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR
+        "In-source builds are not supported. Configure into build/ instead:\n"
+        "  cmake -S . -B build && cmake --build build\n"
+        "This attempt already left CMakeCache.txt and CMakeFiles/ in the repo root -- delete them.")
+endif()
+
 # Must be set before project() to take effect -- ignored on non-Apple
 # platforms. Without this, the binary's minimum-OS load command
 # (LC_BUILD_VERSION) just takes whatever the build machine's own SDK
