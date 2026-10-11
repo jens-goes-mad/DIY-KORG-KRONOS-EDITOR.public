@@ -137,6 +137,7 @@ Outside of my day job, I’m reverse-engineering the Korg Kronos's backup file f
 on top of it. It's a return to low-level, byte-level detective work -- no official spec, just diffing real backup files
 against known ground truth -- mixed with C++, HTML/JS, CHOC, and modern component-based software architecture.
 A passion project fueled by curiosity, stubbornness, and my AI pair programmer: Claude.
+And coffee -- if you'd like to buy me one, I'm on [Ko-fi](https://ko-fi.com/diykorgkronoseditor).
 
 ## Music!
 

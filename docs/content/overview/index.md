@@ -134,6 +134,13 @@ findings, and bug reports are welcome. The project lives on GitHub:
 Source-available under the [PolyForm Noncommercial License 1.0.0](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/LICENSE)
 -- free for any noncommercial use; commercial use needs a separate agreement first.
 
+## Support
+
+DIY Kronos Editor is an after-hours project. If it saved you an evening of scrolling
+through Set Lists on the Kronos's own screen, you can buy me a coffee on
+[Ko-fi](https://ko-fi.com/diykorgkronoseditor) -- it keeps the late-night byte hunting
+going. Thank you!
+
 ## Why (the personal version)
 
 The Kronos's own Set List and Combi/Program browsing on the hardware is workable but

@@ -1,6 +1,7 @@
 # DIY Kronos Editor
 
 [![Build Kronos Editor (native)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/actions/workflows/native-build.yml/badge.svg)](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR.public/actions/workflows/native-build.yml)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support%20this%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/diykorgkronoseditor)
 
 A cross-platform, cross-architecture editor for Korg Kronos `.PCG`/`.SNG`
 files.
@@ -344,6 +345,13 @@ frontend/
   components/kronos/          -- standalone, byte-level-tested UI pieces (see Architecture direction above)
 third_party/choc/            -- vendored from DIY-MIDI-METRONOME/EDITOR
 ```
+
+## Support
+
+DIY Kronos Editor is an after-hours project, free for any noncommercial use. If it saved
+you an evening of scrolling through Set Lists on the Kronos's own screen, you can buy me
+a coffee on [Ko-fi](https://ko-fi.com/diykorgkronoseditor) -- it keeps the late-night
+byte hunting going. Thank you!
 
 ## License
 

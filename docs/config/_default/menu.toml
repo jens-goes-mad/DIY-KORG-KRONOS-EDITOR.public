@@ -22,4 +22,11 @@ url = "mailto:jens@diy-pedalboard.de"
 vendor = "font-awesome-solid"
 icon = "mail"
 
+[[social]]
+identifier = "ko-fi"
+name = "Support on Ko-fi"
+url = "https://ko-fi.com/diykorgkronoseditor"
+[social.params]
+icon = "coffee"
+
 # https://icons.hugomods.com/docs/vendors/#tabler-icons
