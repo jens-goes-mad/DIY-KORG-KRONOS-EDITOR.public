@@ -135,7 +135,12 @@ between.
   in the other pane is blocked (with an explanatory popup) rather than
   risking one edit silently overwriting the other's -- see
   [App architecture & components](https://jens-goes-mad.github.io/DIY-KORG-KRONOS-EDITOR.public/components/)
-  for exactly how that's implemented.
+  for exactly how that's implemented. The table header's **⋯** menu copies,
+  resets or compacts the Set List and **prints** it: a leadsheet (song name,
+  comment, slot number, two pages per A4 sheet) opened in the browser, with
+  set breaks and the gig date taken from "---- SET BREAK ----" /
+  "---- GIG 2025-10-28 ----" marker slots (row menu: Reset to SET BREAK /
+  Reset to GIG).
 - **Programs / Combis / Duplicates**: browse every Program and Combi on the
   unit directly (not just through Set List slots), filter by bank (a
   None/All/Invert row bulk-toggles the bank filter), see which Set List slots
