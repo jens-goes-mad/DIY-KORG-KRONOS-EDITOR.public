@@ -1,10 +1,12 @@
 #include "EditorBridge.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 
 #include "kronos/CombiDecoder.h"
 #include "platform/NativeFileDialog.h"
+#include "platform/OpenInBrowser.h"
 
 #ifdef EDITOR_EMBED_RESOURCES
 #include "generated/EmbeddedResources.h"
@@ -723,6 +725,42 @@ choc::value::Value EditorBridge::saveFileDialog(const choc::value::ValueView& ar
 
     auto result = makeOk();
     result.setMember("path", *path);
+    return result;
+}
+
+choc::value::Value EditorBridge::openHtmlInBrowser(const choc::value::ValueView& args) {
+    if (!kronos::isOpenInBrowserSupported()) {
+        return makeError("Opening the export in a browser isn't supported on this platform yet.");
+    }
+
+    std::string fileName;
+    for (char c : stringArg(args, 0)) {
+        const bool safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+                          c == '_' || c == '.';
+        fileName += safe ? c : '_';
+    }
+    while (!fileName.empty() && fileName.front() == '.') fileName.erase(0, 1);  // no ".." or hidden files
+    if (fileName.empty()) fileName = "export";
+    if (fileName.size() < 5 || fileName.compare(fileName.size() - 5, 5, ".html") != 0) fileName += ".html";
+
+    std::error_code ec;
+    const auto dir = std::filesystem::temp_directory_path(ec) / "kronos-editor-print";
+    if (ec) return makeError("No temporary folder available: " + ec.message());
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return makeError("Couldn't create " + dir.string() + ": " + ec.message());
+
+    const auto path = dir / fileName;
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        const std::string html = stringArg(args, 1);
+        out.write(html.data(), static_cast<std::streamsize>(html.size()));
+        if (!out) return makeError("Couldn't write " + path.string());
+    }
+
+    if (!kronos::openInDefaultBrowser(path.string())) return makeError("The system couldn't open " + path.string());
+
+    auto result = makeOk();
+    result.setMember("path", path.string());
     return result;
 }
 

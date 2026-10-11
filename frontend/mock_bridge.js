@@ -329,6 +329,15 @@
     return ok({ path });
   };
 
+  // EditorBridge::openHtmlInBrowser() writes a temp file and opens it in the
+  // default browser; in mock mode we already ARE in a browser, so a new tab
+  // on a blob: URL shows the same page.
+  window.openHtmlInBrowser = (fileName, html) => {
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    if (!window.open(url, "_blank")) return fail("The browser blocked the new tab (pop-up blocker?)");
+    return ok({ path: fileName });
+  };
+
   window.listDatasets = () =>
     Promise.resolve(
       Object.entries(datasets).map(([datasetId, d]) => ({

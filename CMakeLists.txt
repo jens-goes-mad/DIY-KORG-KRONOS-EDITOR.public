@@ -83,6 +83,7 @@ add_executable(kronos_editor
     src/main.cpp
     src/bridge/EditorBridge.cpp
     src/platform/NativeFileDialog.cpp
+    src/platform/OpenInBrowser.cpp
     src/platform/WindowCapture.cpp
     src/scenes/SceneScript.cpp
     src/kronos/PcgFile.cpp

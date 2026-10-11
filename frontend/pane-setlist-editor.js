@@ -129,6 +129,16 @@ function loadSlotCodecs() {
   return slotCodecsPromise;
 }
 
+// This app's visible name for a deliberately cleared Set List slot (Reset
+// entry) -- see resetEntry()'s comment below.
+const INIT_SETLIST_NAME = "- Init Setlist -";
+
+// Marker-slot names (SET BREAK / GIG), loaded the same lazy way as the
+// codecs above.
+function loadSetlistMarkers() {
+  return import("./components/kronos/setlist-markers.js");
+}
+
 // Shared across every pane instance (both "A" and "B" are separate
 // createSetlistPanel() closures) -- keyed by "datasetId:setlistIndex:
 // songIndex", value is the paneId currently holding at least one editor
@@ -400,24 +410,56 @@ function createSetlistPanel(
   // look different" reason "- Init Combi -"/"- Init Program (HD1) -" exist.
   // Reuses commitSlotBytes()/commitNameBytes() -- the SAME write path
   // every other edit on this row goes through, not a second one.
-  async function resetEntry(entry) {
+  // `name` other than the default: the "Reset to SET BREAK…" / "Reset to
+  // GIG…" marker slots (components/kronos/setlist-markers.js) -- the same
+  // blank slot, just a different visible name.
+  async function resetEntry(entry, name = INIT_SETLIST_NAME) {
     const confirmed = await window.showConfirmDialog(
-      `Reset slot ${kronosNumber(entry.index)} ("${entry.label || "(empty)"}") to a blank "- Init Setlist -"? This can't be undone.`,
+      `Reset slot ${kronosNumber(entry.index)} ("${entry.label || "(empty)"}") to a blank "${name}"? This can't be undone.`,
       { confirmLabel: "Reset", isDanger: true }
     );
     if (!confirmed) return;
-    const result = await resetSlot(entry);
+    await resetEntryConfirmed(entry, name);
+  }
+
+  async function resetEntryConfirmed(entry, name) {
+    const result = await resetSlot(entry, name);
     if (!result.ok) {
       showToast(`Reset failed: ${result.error}`, { isError: true });
       return;
     }
-    showToast(`Reset slot ${kronosNumber(entry.index)} to a blank "- Init Setlist -".`);
+    showToast(`Reset slot ${kronosNumber(entry.index)} to a blank "${name}".`);
+  }
+
+  // "Reset to GIG…" (slot 000 only): asks for the gig date in the same
+  // confirm dialog -- lit-html renders a DOM node passed as the message
+  // as-is, and Enter confirms. Defaults to today (local date).
+  async function resetToGig(entry) {
+    const markers = await loadSetlistMarkers();
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const message = document.createElement("div");
+    const text = document.createElement("p");
+    text.textContent = `Reset slot ${kronosNumber(entry.index)} ("${entry.label || "(empty)"}") to a blank GIG marker for this date? This can't be undone.`;
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "input is-small mt-2";
+    input.value = today;
+    message.append(text, input);
+    setTimeout(() => input.focus(), 0);
+    const confirmed = await window.showConfirmDialog(message, { confirmLabel: "Reset", isDanger: true });
+    if (!confirmed) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.value)) {
+      showToast("No valid date entered -- nothing changed.", { isError: true });
+      return;
+    }
+    await resetEntryConfirmed(entry, markers.gigMarkerName(input.value));
   }
 
   // The write behind resetEntry() above, without asking -- also the
   // per-row step of the header menu's "Reset entries" (pane.js's
   // resetVisibleEntries()). Returns {ok, error}.
-  async function resetSlot(entry) {
+  async function resetSlot(entry, name = INIT_SETLIST_NAME) {
     const [currentParams, currentName, codecs] = await Promise.all([getSlotBytes(entry), getNameBytes(entry), loadSlotCodecs()]);
     if (currentParams == null || currentName == null) {
       return { ok: false, error: "couldn't read the slot's current bytes" };
@@ -433,8 +475,8 @@ function createSetlistPanel(
     // never be touched: on a Set List's FIRST slot specifically, it's the
     // only byte pattern that identifies where the Set List's own name
     // record ends and its 128 songs begin), the 24-byte name field
-    // replaced with the visibility marker.
-    const nameOk = await commitNameBytes(entry, codecs.encodeSlotName(currentName, "- Init Setlist -"));
+    // replaced with the visibility marker (or a marker-slot name).
+    const nameOk = await commitNameBytes(entry, codecs.encodeSlotName(currentName, name));
     return paramsOk && nameOk ? { ok: true } : { ok: false, error: "see the log for details" };
   }
 
@@ -901,7 +943,13 @@ function createSetlistPanel(
       // shared column/scaffolding (pane.js's menuCell()/showRowContextMenu())
       // as the Programs and Combis tables already use, not a third
       // hand-rolled copy.
-      const rowMenuItems = [{ label: "Reset entry…", onSelect: () => resetEntry(entry) }];
+      // Marker slots (setlist-markers.js): GIG only at slot 000, so a Set
+      // List has at most one; SET BREAK anywhere.
+      const rowMenuItems = [
+        { label: "Reset entry…", onSelect: () => resetEntry(entry) },
+        { label: "Reset to SET BREAK…", onSelect: async () => resetEntry(entry, (await loadSetlistMarkers()).SET_BREAK_NAME) },
+      ];
+      if (entry.index === 0) rowMenuItems.push({ label: "Reset to GIG…", onSelect: () => resetToGig(entry) });
       tr.addEventListener("contextmenu", (ev) => showRowContextMenu(ev, rowMenuItems));
 
       // Drop ONTO a row copies that slot over this one; drop on the top/
@@ -1110,7 +1158,44 @@ function createSetlistPanel(
         title: "Moves every song up, in order; empty slots go to the end.",
         onSelect: () => compactSetlistNow(),
       },
+      {
+        label: "Print Setlist…",
+        disabled: !hasSetlist,
+        title: "Opens a printable leadsheet (song names + comments, two pages per A4 sheet) in your browser.",
+        onSelect: () => printSetlist(),
+      },
     ];
+  }
+
+  // Header menu "Print Setlist…": the WHOLE Set List (not just the filtered
+  // rows), freshly fetched so comment edits made since the last render are
+  // included. setlist-print.js builds a self-contained HTML page; the
+  // bridge writes it to a temp file and opens it in the default browser,
+  // whose print dialog does the printing / "Save as PDF".
+  async function printSetlist() {
+    const datasetId = getDatasetId();
+    const setlistIndex = currentSetlistIndex;
+    const [{ buildPrintModel, buildPrintDocument }, slots] = await Promise.all([
+      import("./components/kronos/setlist-print.js"),
+      window.getEntries(datasetId, setlistIndex),
+    ]);
+    const s = setlists.find((x) => x.index === setlistIndex);
+    const setlist = {
+      name: s ? s.name : `Set List ${kronosNumber(setlistIndex)}`,
+      slots: slots.map((e) => ({ index: e.index, name: e.label, comment: e.comment })),
+    };
+    const model = buildPrintModel(setlist, { isEmpty: looksLikeEmptySetlistName });
+    if (!model.rows.some((row) => row.type === "song")) {
+      showToast(`${setlistLabel(setlistIndex)} has no songs to print.`, { isError: true });
+      return;
+    }
+    const fileName = `setlist-${kronosNumber(setlistIndex)}-${setlist.name}`;
+    const result = await window.openHtmlInBrowser(fileName, buildPrintDocument(model));
+    if (!result.ok) {
+      showToast(`Print failed: ${result.error}`, { isError: true });
+      return;
+    }
+    showToast(`Opened ${setlistLabel(setlistIndex)} in your browser -- print it from there.`);
   }
 
   // `slots` null = all of them.
@@ -1135,7 +1220,7 @@ function createSetlistPanel(
       showToast,
     });
     if (done === 0) return;
-    showToast(`Reset ${done} slot(s) to a blank "- Init Setlist -".`);
+    showToast(`Reset ${done} slot(s) to a blank "${INIT_SETLIST_NAME}".`);
     await refreshEntries();
   }
 

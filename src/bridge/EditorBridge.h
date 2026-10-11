@@ -214,6 +214,17 @@ public:
     // NativeFileDialog.cpp doesn't support yet.
     choc::value::Value saveFileDialog(const choc::value::ValueView& args);
 
+    // [fileName, html] -> {ok, path} or {ok:false, error}. Writes `html` to
+    // <system temp dir>/kronos-editor-print/<fileName> (overwriting an
+    // earlier export of the same name) and opens it in the default browser
+    // (src/platform/OpenInBrowser.h) -- the Setlist's "Print Setlist…"
+    // export (frontend/components/kronos/setlist-print.js), which leaves
+    // printing/"Save as PDF" to the browser. `fileName` is reduced to
+    // letters, digits, '-', '_' and '.', with ".html" appended if missing,
+    // so it can never point outside that folder. macOS-only for now, like
+    // the file dialogs above.
+    choc::value::Value openHtmlInBrowser(const choc::value::ValueView& args);
+
     // Library browser (read-only) -- see docs/content/format/index.md and STATE.md's
     // Program/Combi Library Editor plan for scope/roadmap.
     choc::value::Value listPrograms(const choc::value::ValueView& args);          // [datasetId]

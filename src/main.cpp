@@ -140,6 +140,8 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
     view.bind("saveFileAs", [&bridge](const choc::value::ValueView& args) { return bridge.saveFileAs(args); });
     view.bind("saveFileDialog",
                [&bridge](const choc::value::ValueView& args) { return bridge.saveFileDialog(args); });
+    view.bind("openHtmlInBrowser",
+               [&bridge](const choc::value::ValueView& args) { return bridge.openHtmlInBrowser(args); });
     view.bind("listPrograms",
                [&bridge](const choc::value::ValueView& args) { return bridge.listPrograms(args); });
     view.bind("listCombis", [&bridge](const choc::value::ValueView& args) { return bridge.listCombis(args); });

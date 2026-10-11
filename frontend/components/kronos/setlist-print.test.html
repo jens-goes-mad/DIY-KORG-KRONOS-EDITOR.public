@@ -1,0 +1,61 @@
+<!doctype html>
+<!--
+  Browser harness for setlist-print.js -- no native build, no CHOC. Serve
+  frontend/ statically (e.g. `python3 -m http.server` inside frontend/) and
+  open /components/kronos/setlist-print.test.html.
+
+  Shows the generated leadsheet for the real "emergency exit" Set List
+  (setlist-print-fixture.js), either as stored (no markers) or re-arranged
+  with a GIG marker and SET BREAK slots. "Open as page" replaces this page
+  with the generated document itself -- the same thing the app will hand to
+  the browser -- so it can be printed or saved as PDF directly. `?raw=1`
+  (optionally `&markers=0`) does that on load, for headless print-to-pdf.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>setlist-print test harness</title>
+<style>
+  body { font-family: sans-serif; margin: 16px; }
+  iframe { width: 100%; height: 80vh; border: 1px solid #999; }
+  label { margin-right: 16px; }
+</style>
+</head>
+<body>
+<h1>setlist-print.js</h1>
+<p>
+  <label><input type="checkbox" id="markers" checked> GIG + SET BREAK markers (demo arrangement)</label>
+  <button id="open">Open as page</button>
+</p>
+<iframe id="preview" title="Generated leadsheet"></iframe>
+<script type="module">
+  import { buildPrintModel, buildPrintDocument } from "./setlist-print.js";
+  import { EMERGENCY_EXIT_SETLIST, demoGigArrangement } from "./setlist-print-fixture.js";
+
+  // Same rule as pane.js's looksLikeEmptySetlistName(), which the app passes in.
+  const isEmpty = (name) => !name || /init setlist/i.test(name);
+
+  function documentFor(withMarkers) {
+    const setlist = withMarkers ? demoGigArrangement(EMERGENCY_EXIT_SETLIST) : EMERGENCY_EXIT_SETLIST;
+    return buildPrintDocument(buildPrintModel(setlist, { isEmpty }));
+  }
+
+  function openAsPage(withMarkers) {
+    document.open();
+    document.write(documentFor(withMarkers));
+    document.close();
+  }
+
+  const params = new URLSearchParams(location.search);
+  if (params.get("raw") === "1") {
+    openAsPage(params.get("markers") !== "0");
+  } else {
+    const markers = document.getElementById("markers");
+    const render = () => (document.getElementById("preview").srcdoc = documentFor(markers.checked));
+    markers.addEventListener("change", render);
+    document.getElementById("open").addEventListener("click", () => openAsPage(markers.checked));
+    render();
+  }
+</script>
+</body>
+</html>

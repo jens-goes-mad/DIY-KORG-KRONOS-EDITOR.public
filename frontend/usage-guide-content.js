@@ -99,6 +99,9 @@ Right-click any row, or click its **⋯** button, for a small menu with
 **Reset entry** -- clears that one slot back to a blank, clearly-marked
 placeholder ("- Init Setlist -", "- Init Combi -", or the bank's own factory
 Init Program). Immediate, no undo, same as every other write in this app.
+A Setlist row's menu also has **Reset to SET BREAK** and, on slot 000 only,
+**Reset to GIG** (asks for the date) -- blank marker slots for **Print
+Setlist** (below).
 
 The **⋯** in the Programs/Combis table header offers **Reset all entries**:
 it resets every row currently shown (after all filters), after one
@@ -111,7 +114,12 @@ The **⋯** in the Setlist table header offers: **Copy entire Setlist to
 opposite** and **Copy entries from Setlist to opposite** (only the rows
 shown, each to the same slot number -- both only when the opposite pane
 shows a different Set List of the same dataset), **Reset entries** (the rows
-shown) and **Compact Setlist** (songs move up, empty slots to the end).
+shown), **Compact Setlist** (songs move up, empty slots to the end) and
+**Print Setlist** (a leadsheet of song names and comments, two pages per A4
+sheet, opened in your browser -- print it or save it as PDF from there; macOS
+only for now). A `---- SET BREAK ----` slot ends a set (each set starts on a
+new page); a `---- GIG 2025-10-28 ----` slot puts the gig date in every page
+header.
 
 ## Cross-links and navigating between panes
 

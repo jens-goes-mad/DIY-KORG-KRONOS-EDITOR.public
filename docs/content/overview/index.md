@@ -103,6 +103,9 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   *across datasets* too: every Program its Timbres depend on is matched byte-for-byte
   against the destination file, and a sliding panel lets you choose where to place any
   that don't exist there yet before the copy applies.
+- A printable Set List leadsheet (song names and comments, two pages per A4 sheet, set
+  breaks and gig date from specially named slots), opened in the browser for printing or
+  saving as PDF -- macOS only for now.
 - Cross-links between everywhere a Program/Combi/Set List slot references another --
   clicking one jumps straight to it, with per-pane Back/Forward history that returns you to
   the exact row you came from, not just its category. Shift+click any of these to jump in

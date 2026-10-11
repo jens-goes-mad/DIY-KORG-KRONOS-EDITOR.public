@@ -2625,6 +2625,8 @@ Archived entries (full text in STATE-ARCHIVE.md):
   #114 [BUILT, 2026-10-02] one Cross Dataset Find runs all four searches; resolve keeps the panes' filter picks
   #115 [BUILT, 2026-10-11] Reset all entries, Combi Timbre MIDI channel + vol 0, Duplicates keep-click + bank-pair bulk resolve + Combi reset, empty slots out of Duplicates, Compact bank
   #116 [BUILT, 2026-10-11] Setlist header menu (copy entire/entries to opposite, reset entries, compact), "Copy all" button removed, Set List name marker kept per slot (bug fix)
+  #117 [BUILT, 2026-10-11] "Print Setlist…": leadsheet HTML (2 A4-landscape pages per A4 sheet) opened in the default browser; SET BREAK / GIG marker slot names (macOS only)
+  #118 [BUILT, 2026-10-11] Setlist row menu "Reset to SET BREAK…" / "Reset to GIG…" (slot 000, date input); print layout: slot number as last column, comments 15pt
 
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 

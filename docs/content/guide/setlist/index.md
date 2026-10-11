@@ -76,8 +76,11 @@ that's only meaningful inside its own file.
 ## Resetting a slot
 
 Click the **⋯** button in a slot's own last column (or right-click the row) for a small
-local menu with one action: **Reset entry** (the same menu the [Programs](/guide/prog#resetting-a-slot)
-and [Combi](/guide/combi#resetting-a-slot) tables use). Confirming it clears the slot back
+local menu: **Reset entry** (the same menu the [Programs](/guide/prog#resetting-a-slot)
+and [Combi](/guide/combi#resetting-a-slot) tables use), plus **Reset to SET BREAK** and,
+on slot 000 only, **Reset to GIG** -- the same blank slot, named as one of the
+[printout's marker slots](#printing-a-set-list) instead. Reset to GIG asks for the gig date
+(today by default). Confirming Reset entry clears the slot back
 to a blank **"- Init Setlist -"** -- no Program/Combi reference, and Color/Volume/Font
 size/Transpose/Comment all back to their defaults. Unlike a Program or Combi reset, this
 needs no factory template or live donor: a genuinely untouched Set List slot's own bytes
@@ -93,10 +96,11 @@ This applies immediately once confirmed -- no undo, same as every other write in
 Ctrl/Cmd-click a row to mark it (a green left-edge stripe). This is groundwork for a future
 bulk action -- right now it's purely visual bookkeeping and doesn't do anything on its own.
 
-## Set List menu: copy, reset, compact
+## Set List menu: copy, reset, compact, print
 
 The **⋯** button in the table's header row (the same button every row has) opens the Set
-List-wide actions. Each one asks for confirmation first and applies immediately -- no undo.
+List-wide actions. Each one that changes the Set List asks for confirmation first and applies
+immediately -- no undo. **Print Setlist** changes nothing (see [Printing a Set List](#printing-a-set-list)).
 
 - **Copy entire Setlist to opposite** -- overwrites all 128 slots of the Set List the
   *opposite* pane is showing with this one's, slot for slot -- handy for starting a gig's
@@ -116,6 +120,35 @@ The two copy items are only available when the opposite pane shows a **different
 of the same dataset** -- a slot's Program/Combi reference is just a bank/number, which means
 something else in another file (the same reason [drag-and-drop](#reordering-and-copying-slots-by-drag-and-drop)
 won't copy slots across datasets either). Hover a greyed-out item to see why it's off.
+
+## Printing a Set List
+
+**Print Setlist** in the header menu turns the whole Set List (not just the filtered rows)
+into a leadsheet and opens it in your default browser; print it from there, or choose "Save
+as PDF" in the print dialog. Print on A4 with margins set to "None", scale 100%, and the
+browser's own headers/footers switched off.
+
+- Each A4 portrait sheet holds two A4-landscape pages, scaled to A5 and stacked, with a
+  dashed cut line in between -- the classic "2 pages per sheet" printout, in one step.
+- Every page starts with a grey header row (set number, gig date, Set List name); every
+  song is one row: song name, the slot's comment exactly as stored (line breaks and the
+  spaces used for alignment on the Kronos screen are kept), and the Kronos slot number in
+  the last column. A song is never split across two pages.
+- Empty slots (blank or `- Init Setlist -`) are left out.
+
+Two slot names have a special meaning for the printout. They are ordinary slot names, so
+they're stored on the Kronos and survive every save and load:
+
+- `---- SET BREAK ----` ends a set: printed as a grey "End of set *n*" bar, and the next set
+  starts on a new page with its own set number in the header.
+- `---- GIG 2025-10-28 ----` (any date, `YYYY-MM-DD`) puts the gig date into every page
+  header and isn't printed itself. `GIG 2025-10-28` in the Set List's own name works too.
+
+Create them with the row menu's **Reset to SET BREAK** / **Reset to GIG** (see
+[Resetting a slot](#resetting-a-slot)), or type the name into the
+[General](#editing-a-slot-general-and-comment) editor's Name field. They count as used
+slots: drag-and-drop won't copy over them. Opening the browser is macOS-only for now; on
+Windows/Linux the menu item reports that it isn't supported yet.
 
 ## Editing a slot: General and Comment
 

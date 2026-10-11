@@ -4901,3 +4901,61 @@ CLEAN UP -- noted 2026-08-15:
       Verified: `pcg_file_test` green (new: copySetlist slot list,
       compactSetlist, marker preserved on every name write); real-file
       smoke test above. Not clicked through in the native app.
+  117. **BUILT (2026-10-11)**: "Print Setlist…" in the Setlist header menu,
+      replacing the owner's LibreOffice Calc leadsheet (A4 landscape, then
+      re-exported "2 pages per sheet" onto A4 portrait). Options weighed
+      first: jsPDF/pdfmake, Typst, plain HTML + the browser's print dialog
+      -- the last chosen as the lightest (no PDF library, no new
+      dependency, templates are plain HTML/CSS).
+      - `frontend/components/kronos/setlist-print.js`: pure
+        `parseGigDate()`/`isSetBreakName()`/`buildPrintModel()`/`packRows()`
+        plus `buildPrintDocument()`, which returns one self-contained HTML
+        page. Row heights vary a lot (comments wrap), so the page measures
+        every row in the browser that prints it and packs them greedily
+        (`packRows()`, embedded via its own source) -- a row is never split,
+        each set starts on a new page. Each half sheet is an A4-landscape
+        page scaled by 1/sqrt(2), so font sizes read like the Calc original.
+        Comments are printed as stored (`white-space: pre-wrap` keeps the
+        alignment spaces); keyword formatting ("Ref", "Str", "[1]") is a
+        later idea, not built.
+      - Marker slot names, an app convention (ordinary names, so they live
+        on the Kronos): `---- SET BREAK ----` (grey "End of set n" bar, next
+        set on a new page) and `---- GIG 2025-10-28 ----` (exactly 24 chars;
+        date into every page header, not printed itself; `GIG yyyy-mm-dd` in
+        the Set List name works too). Menu items that create them ("Reset
+        to GIG" / "Reset to SET BREAK") are the planned next step, not built.
+        Empty-slot detection is passed in (`looksLikeEmptySetlistName()`),
+        not copied.
+      - Bridge `openHtmlInBrowser([fileName, html])`: writes
+        `<temp>/kronos-editor-print/<sanitized name>.html` and opens it via
+        `src/platform/OpenInBrowser.{h,cpp}` (NSWorkspace openURL:).
+        Windows/Linux return "not supported yet" -- same policy as
+        NativeFileDialog.cpp, nothing written blind. Mock bridge opens a
+        blob: URL in a new tab.
+      Verified: `setlist-print.test.js` (27 checks, run under JavaScriptCore)
+      against the owner's real Set List 001 "emergency exit" from
+      K1_20260418.PCG (67 songs, `setlist-print-fixture.js`); headless
+      Chrome print-to-PDF of the harness gives 7 A4 portrait pages; the real
+      app (a throwaway scene clicking the menu item, reverted) wrote
+      `setlist-001-emergency_exit.html` and opened it in the browser.
+  118. **BUILT (2026-10-11)**: marker-slot menu items + print layout tweaks,
+      per the owner's feedback on entry 117.
+      - Setlist row menu: **Reset to SET BREAK…** (every row) and **Reset to
+        GIG…** (slot 000 only, so at most one per Set List). Both are Reset
+        entry with a different name: `resetEntry()`/`resetSlot()` take a
+        `name` (default `INIT_SETLIST_NAME`), no second write path. The GIG
+        date comes from an `<input type="date">` passed as the confirm
+        dialog's message (lit-html renders a DOM node as-is), today by
+        default.
+      - Marker names/parsing moved to `components/kronos/setlist-markers.js`
+        (`SET_BREAK_NAME`, `gigMarkerName()`, `parseGigDate()`,
+        `isSetBreakName()`), used by both the row menu and setlist-print.js.
+        Markers are not "empty" for `looksLikeEmptySetlistName()`, so
+        drag-and-drop won't copy over them (checked in the test).
+      - Print layout: song name | comment | Kronos slot number (last column,
+        like the Calc original's "Kronos" column); set and gig date share the
+        first header cell; comments 15pt (was 12pt; 13pt tried first).
+      Verified: `setlist-print.test.js` 31 checks; real app (throwaway scene,
+      reverted): Reset to GIG on slot 000 + Reset to SET BREAK on slot 024 +
+      Print -- the exported page's model had gigDate = today, slot 024 as
+      "End of set 1", slot 025 in set 2.
