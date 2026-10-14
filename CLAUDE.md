@@ -62,6 +62,17 @@ against the raw file) against real bytes -- not just by reasoning about hex dump
   and-drop and `library.js`'s Programs drag-and-drop were found to be independently
   hand-written near-duplicates, discussed, and deliberately left unmerged for now with
   the reasoning written down.
+- **The app glue is copied into DIY-MASCHINE-MIKRO's editor app** (2026-10-14, that
+  repo's STATE.md D12): the CHOC window and the native <-> JS bridge serve as its
+  baseline. If a bug is found in that glue or it needs refactoring, move it into SHARED
+  (diy-shared) as the common base for all apps and switch both projects to it -- never
+  fix the two copies separately.
+- **MIDI is NOT part of that shared glue.** This app's MIDI subsystem (CoreMIDI, the
+  SysEx transport) stays in the private companion submodule, macOS only for now -- a
+  decision made long ago (see below). The Maschine editor uses **RtMidi** instead
+  (cross-platform, its own code, 2026-10-15). If this app ever needs MIDI beyond macOS or
+  outside the private build, look at that RtMidi layer first (and move it into SHARED
+  rather than copying it back).
 - **This repo has an optional private companion submodule** (`private/diy-korg-kronos-
   editor`, added 2026-08-16 -- see STATE.md) for functionality judged too large/open-
   ended a maintenance surface for this free OSS project (the SGX-2/EXi Program parameter
