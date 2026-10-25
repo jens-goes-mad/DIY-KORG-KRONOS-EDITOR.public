@@ -490,6 +490,31 @@ openFileButton.addEventListener("click", async () => {
 //
 // A pending screenshot scene (`--scene`, see scene-runner.js) takes over startup
 // instead: it decides itself which datasets are open where.
+//
+// Once startup is done, an "editor-ready" event on window hands extensions
+// (an optional private module's scripts) `openDataset(path)` -- the same way
+// in as a startup file: opened, shown in a pane, a toast if it fails;
+// resolves to whether it opened. The same detail stays in window.editorReady
+// for a script that arrives after the event.
+async function openDatasetFromPath(path) {
+  topbarLoadingText.textContent = `Loading ${path.split(/[\\/]/).pop()}...`;
+  topbarLoading.hidden = false;
+  try {
+    const result = await window.openFile(path);
+    if (!result.ok) {
+      showToast(`${path}: ${result.error}`, { isError: true });
+      return false;
+    }
+    await showOpenedDataset(result);
+    return true;
+  } catch (err) {
+    showToast(String(err), { isError: true });
+    return false;
+  } finally {
+    topbarLoading.hidden = true;
+  }
+}
+
 (async () => {
   if (typeof window.getPendingScene === "function") {
     const pending = await window.getPendingScene();
@@ -498,29 +523,17 @@ openFileButton.addEventListener("click", async () => {
       return;
     }
   }
-  if (typeof window.getStartupFiles !== "function") return;
-  let files = [];
-  try {
-    files = await window.getStartupFiles();
-  } catch (err) {
-    return;
-  }
-  for (const path of files) {
-    topbarLoadingText.textContent = `Loading ${path.split(/[\\/]/).pop()}...`;
-    topbarLoading.hidden = false;
+  if (typeof window.getStartupFiles === "function") {
+    let files = [];
     try {
-      const result = await window.openFile(path);
-      if (!result.ok) {
-        showToast(`${path}: ${result.error}`, { isError: true });
-        continue;
-      }
-      await showOpenedDataset(result);
+      files = await window.getStartupFiles();
     } catch (err) {
-      showToast(String(err), { isError: true });
-    } finally {
-      topbarLoading.hidden = true;
+      files = [];
     }
+    for (const path of files) await openDatasetFromPath(path);
   }
+  window.editorReady = { openDataset: openDatasetFromPath };
+  window.dispatchEvent(new CustomEvent("editor-ready", { detail: window.editorReady }));
 })();
 
 // Called from native code (src/main.cpp's own closeRequested handler, via

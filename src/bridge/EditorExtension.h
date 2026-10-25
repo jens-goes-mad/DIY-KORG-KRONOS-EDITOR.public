@@ -1,9 +1,14 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
+#include <vector>
 
+// WebView first (main.cpp: on Linux it pulls in GTK, which
+// choc_DesktopWindow.h needs).
 #include "choc/gui/choc_WebView.h"
+#include "choc/gui/choc_DesktopWindow.h"
 #include "EditorBridge.h"
 
 // The ENTIRE extension-point surface this repo exposes to an optional
@@ -52,4 +57,24 @@ struct EditorExtensionContext {
 // that submodule's own CMakeLists.txt is actually present) is what keeps a
 // build without it from ever referencing this at all.
 void registerPrivateEditorExtensions(choc::ui::WebView& view, EditorExtensionContext& ctx);
+
+// The app's own lifecycle, for a module that adds command-line modes of its
+// own. Same rule as above: declared here, defined only in the private
+// module, never referenced without EDITOR_HAS_PRIVATE_MODULE.
+//
+// First thing main() does, before it reads its own arguments (`args` =
+// argv[1..]): the module removes every argument it handles, so main() never
+// mistakes one for a file to open. Returning false makes main() exit at
+// once with `exitCode`.
+bool consumePrivateEditorArguments(std::vector<std::string>& args, int& exitCode);
+
+// Asked first by every window's resource loader, in every build type: a
+// file the module serves itself, or nullopt for the app's own lookup.
+std::optional<choc::ui::WebView::Options::Resource> fetchPrivateEditorResource(const std::string& path);
+
+// Once, for the main window, right after main() created it.
+void privateEditorMainWindowCreated(choc::ui::DesktopWindow& window, choc::ui::WebView& view);
+
+// What main() finally returns: `appExitCode`, or the module's own.
+int privateEditorExitCode(int appExitCode);
 #endif

@@ -457,17 +457,24 @@ int main(int argc, char** argv) {
     //     --scene-data <dir>    where the scene file's datasets live (default: next to <file>)
     //     --scene-only <a,b>    just these scene ids
     // Positional files are ignored in scene mode -- the scene file alone decides what's open.
+    //
+    // An optional private module sees the arguments first and takes out its
+    // own options (consumePrivateEditorArguments(), bridge/EditorExtension.h).
+    std::vector<std::string> args(argv + (argc > 0 ? 1 : 0), argv + argc);
+#ifdef EDITOR_HAS_PRIVATE_MODULE
+    if (int exitCode = 0; !consumePrivateEditorArguments(args, exitCode)) return exitCode;
+#endif
     std::vector<std::string> startupFiles;
     std::string scenePath, sceneDataDir;
     std::vector<std::string> sceneOnly;
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::string& arg = args[i];
         if (arg == "--scene" || arg == "--scene-data" || arg == "--scene-only") {
-            if (i + 1 >= argc) {
+            if (i + 1 >= args.size()) {
                 std::cerr << arg << " needs a value\n";
                 return 1;
             }
-            const std::string value = argv[++i];
+            const std::string value = args[++i];
             if (arg == "--scene") {
                 scenePath = value;
             } else if (arg == "--scene-data") {
@@ -609,6 +616,9 @@ int main(int argc, char** argv) {
 
         options.fetchResource = [resourceDir, entryHtml](const std::string& path)
             -> std::optional<choc::ui::WebView::Options::Resource> {
+#ifdef EDITOR_HAS_PRIVATE_MODULE
+            if (auto resource = fetchPrivateEditorResource(path)) return resource;
+#endif
             std::string relative = (path.empty() || path == "/") ? entryHtml : path;
             return loadFrontendResource(relative, resourceDir);
         };
@@ -824,6 +834,9 @@ int main(int argc, char** argv) {
         sceneRun->windowWidth = mainWidth;
         sceneRun->windowHeight = mainHeight;
     }
+#ifdef EDITOR_HAS_PRIVATE_MODULE
+    privateEditorMainWindowCreated(*mainWindow->window, *mainWindow->webView);
+#endif
 
 #if CHOC_APPLE
     // Guard against quitting with unsaved changes (2026-08-26, see
@@ -853,5 +866,10 @@ int main(int argc, char** argv) {
 #endif
 
     choc::messageloop::run();
-    return sceneRun ? sceneRun->exitCode : 0;
+    const int exitCode = sceneRun ? sceneRun->exitCode : 0;
+#ifdef EDITOR_HAS_PRIVATE_MODULE
+    return privateEditorExitCode(exitCode);
+#else
+    return exitCode;
+#endif
 }
