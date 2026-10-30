@@ -25,7 +25,14 @@ enum class FontSize { S, XS, M, L, XL };
 
 struct SlotParams {
     bool isProgram = true;  // true = Program, false = Combi
-    int bank = 0;           // bank index (masked to this field's own 5 bits -- see docs/content/format/index.md §4.3)
+    // The stored byte (masked to its own 5 bits -- see docs/content/format/index.md
+    // §4.3) is a raw bank CODE, the same number space as a Combi Timbre's
+    // (§6.2: USER-A = 17, USER-AA = 24, ...), not a PBK1 file-order index.
+    // `bank` is translated for Programs (programBankForConfirmedTimbreCode(),
+    // -1 for an indexless code such as GM) so every Program-side caller can
+    // keep comparing it against ProgramInfo::bank; Combis use it as-is.
+    int rawBankCode = 0;
+    int bank = 0;
     int number = 0;         // program/combi number within that bank (0-127)
     int color = 1;          // 1-based color index (1..16 -- masked to this field's own bits, see §4.3)
     int holdTime = 0;       // Hold Time value

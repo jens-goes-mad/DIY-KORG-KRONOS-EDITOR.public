@@ -992,14 +992,15 @@ function createSetlistPanel(
         labelTd.appendChild(instrumentEl);
       } else if (entry.paramsFound && !entry.instrumentName && entry.label) {
         // A real assignment exists (bank/number), but nothing in this
-        // file's instrument banks matched it -- almost always a GM/GM2
-        // reference (fixed content the file doesn't store, bank >=20 for
-        // Program / >=14 for Combi -- see README.md), occasionally a
-        // corrupt bank value in that one slot. Shown explicitly rather
-        // than silently blank, so it doesn't read as "lookup is broken."
+        // file's instrument banks matched it -- a bank this backup wasn't
+        // saved with (e.g. USER-BB in a 14-bank PRELOAD.PCG), a GM/g(d)
+        // reference (fixed content no file stores -- `bankName` names it),
+        // or occasionally a corrupt bank value in that one slot. Shown
+        // explicitly rather than silently blank, so it doesn't read as
+        // "lookup is broken."
         const instrumentEl = document.createElement("div");
         instrumentEl.className = "instrument-name instrument-name-unknown";
-        instrumentEl.textContent = `(${formatBankNumber(entry)} not in this file -- likely GM)`;
+        instrumentEl.textContent = `(${formatBankNumber(entry)} not in this file)`;
         labelTd.appendChild(instrumentEl);
       }
 

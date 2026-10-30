@@ -180,7 +180,14 @@ SlotParams readSlotParams(const uint8_t* data, size_t songOff, size_t end) {
     // treated the unused/invalid value 3 as a Program.
     params.isProgram = (typeColor & kSbkTypeMask) == 1;
     params.color = ((typeColor & kSbkTypeColorMask) >> 2) + 1;
-    params.bank = bankByte & kSbkBankMask;
+    // A raw bank code, not a file-order index -- see SlotParams::rawBankCode.
+    // CORRECTED 2026-10-31: was used directly as a PBK1 index, which only
+    // happens to hold for INT-A..F (code == index). Preload Set List slot 10
+    // (K1/PRELOAD.PCG) stores code 24 = USER-AA 039 "Human Beat Box Kit" and
+    // showed as a bare "24 039"; USER-A..C (codes 17-19) even resolved to the
+    // wrong Program (USER-EE..GG) in files with all 20 banks.
+    params.rawBankCode = bankByte & kSbkBankMask;
+    params.bank = params.isProgram ? programBankForConfirmedTimbreCode(params.rawBankCode) : params.rawBankCode;
     params.number = data[songOff + kSbkNumberOffset];
     params.holdTime = static_cast<int>(data[songOff + kSbkHoldTimeOffset]) - 1;
     params.volume = data[songOff + kSbkVolumeOffset];
@@ -804,7 +811,12 @@ std::vector<std::vector<CombiInfo>> PcgFile::findDuplicateCombis() const {
 void PcgFile::repointOneSetlistSlot(int setlistIndex, int songIndex, int toBank, int toNumber) {
     auto bytes = songRecordBytes(setlistIndex, songIndex);
     if (!bytes) return;  // shouldn't happen -- callers always have a live (setlistIndex, songIndex) in hand
-    (*bytes)[kSbkBankOffset] = static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toBank & kSbkBankMask));
+    // `toBank` is a file-order index for a Program slot; the byte stores the
+    // raw code (see readSlotParams()). Every Program bank index has one.
+    const bool isProgram = setlists_[static_cast<size_t>(setlistIndex)].songs[static_cast<size_t>(songIndex)].params.isProgram;
+    const int toCode = isProgram ? confirmedTimbreCodeForProgramBank(toBank) : toBank;
+    if (toCode < 0) return;
+    (*bytes)[kSbkBankOffset] = static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toCode & kSbkBankMask));
     (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(toNumber);
     putSongRecordBytes(setlistIndex, songIndex, *bytes);
 }
@@ -1456,12 +1468,7 @@ PcgFile::CombiRearrangeResult PcgFile::swapCombis(int bankA, int numberA, int ba
                 continue;
             }
 
-            auto bytes = songRecordBytes(setlist.index, song.index);
-            if (!bytes) continue;  // shouldn't happen -- this song was just read from setlists_ itself
-            (*bytes)[kSbkBankOffset] =
-                static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toBank & kSbkBankMask));
-            (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(toNumber);
-            putSongRecordBytes(setlist.index, song.index, *bytes);
+            repointOneSetlistSlot(setlist.index, song.index, toBank, toNumber);
             result.setlistRefsRepointed++;
         }
     }
@@ -2157,12 +2164,7 @@ PcgFile::ProgramSwapResult PcgFile::swapPrograms(int bankA, int numberA, int ban
                 continue;
             }
 
-            auto bytes = songRecordBytes(setlist.index, song.index);
-            if (!bytes) continue;  // shouldn't happen -- this song was just read from setlists_ itself
-            (*bytes)[kSbkBankOffset] =
-                static_cast<uint8_t>(((*bytes)[kSbkBankOffset] & ~kSbkBankMask) | (toBank & kSbkBankMask));
-            (*bytes)[kSbkNumberOffset] = static_cast<uint8_t>(toNumber);
-            putSongRecordBytes(setlist.index, song.index, *bytes);
+            repointOneSetlistSlot(setlist.index, song.index, toBank, toNumber);
             result.setlistRefsRepointed++;
         }
     }

@@ -146,10 +146,13 @@ function formatBankNumber(entry, bankType) {
   const label =
     entry.bank >= 0 && entry.bank < names.length
       ? `${names[entry.bank]} ${num}`
-      : // Beyond the stored bank list -- almost certainly a GM/GM2 reference
-        // (fixed content, not stored per-file) or corrupt data. Show the raw
-        // index rather than guess at a label.
-        `${entry.bank} ${num}`;
+      : entry.bankName
+        ? // A Set List slot pointing at an indexless Program bank code (GM,
+          // g(d)) -- EditorBridge::songToValue() names it.
+          `${entry.bankName} ${num}`
+        : // Beyond the stored bank list or an unconfirmed raw code -- show
+          // the raw number rather than guess at a label.
+          `${entry.rawBankCode ?? entry.bank} ${num}`;
   return entry.isProgram && bankType != null ? `${label} (${programBankTypeName(bankType)})` : label;
 }
 

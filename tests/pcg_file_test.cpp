@@ -4004,6 +4004,86 @@ void testDescribeCombiDivergence() {
 
 }  // namespace
 
+// A Set List slot's Program bank byte is a raw bank CODE (same space as a
+// Combi Timbre's, docs/content/format/index.md §6.2), not a PBK1 file-order
+// index -- found 2026-10-31 via K1/PRELOAD.PCG's Preload Set List slot 10,
+// whose byte 24 (USER-AA, index 13) showed as a bare "24 039". Needs >= 14
+// Program banks, which buildSyntheticPcgFile()'s two don't reach, so this
+// builds its own file: one Set List whose slots use the exact raw codes from
+// that real file (24/39 scaled down to record 1, 17 = USER-A, 6 = GM).
+void testSetlistProgramBankIsRawCode() {
+    constexpr uint32_t kSongsPerSetlist = 128;
+    constexpr size_t kBankRecordSize = 32;
+
+    std::vector<uint8_t> sdb1;
+    pushU32BE(sdb1, 1);
+    pushU32BE(sdb1, (kSongsPerSetlist + 1) * 28);
+    pushNameRecord(sdb1, "Preload Set List", 28);
+    for (uint32_t k = 0; k < kSongsPerSetlist; ++k) pushZeros(sdb1, 28);
+
+    std::vector<uint8_t> sbk1;
+    pushU32BE(sbk1, 1);
+    pushU32BE(sbk1, static_cast<uint32_t>(40 + kSongsPerSetlist * 542));
+    pushZeros(sbk1, 40);
+    for (auto [code, number] : {std::pair{24, 1}, std::pair{17, 0}, std::pair{6, 1}}) {
+        auto rec = makeSbkSongRecord(/*isProgram=*/true, code, number, 1, 0, 127, 0, 0, 0, "");
+        sbk1.insert(sbk1.end(), rec.begin(), rec.end());
+    }
+    for (uint32_t k = 3; k < kSongsPerSetlist; ++k) pushZeros(sbk1, 542);
+
+    std::vector<uint8_t> sls1Content;
+    appendChunk(sls1Content, "SDB1", sdb1);
+    appendChunk(sls1Content, "SBK1", sbk1);
+
+    // 14 banks (INT-A..F, USER-A..G, USER-AA) -- the same count PRELOAD.PCG has.
+    std::vector<uint8_t> prg1Content;
+    for (int b = 0; b < 14; ++b) {
+        std::vector<uint8_t> bank;
+        pushU32BE(bank, 2);
+        pushU32BE(bank, static_cast<uint32_t>(kBankRecordSize));
+        pushNameRecord(bank, "B" + std::to_string(b) + " P0", kBankRecordSize);
+        pushNameRecord(bank, "B" + std::to_string(b) + " P1", kBankRecordSize);
+        appendChunk(prg1Content, "PBK1", bank);
+    }
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "SLS1", sls1Content);
+    appendChunk(pcg1Content, "PRG1", prg1Content);
+    std::vector<uint8_t> data{'K', 'O', 'R', 'G'};
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+
+    kronos::PcgFile pcg;
+    std::string error;
+    bool loaded = pcg.loadFromMemory(std::move(data), error);
+    CHECK(loaded);
+    if (!loaded) return;
+
+    const auto& songs = pcg.setlists()[0].songs;
+    CHECK_EQ(songs[0].params.rawBankCode, 24, "slot 0: raw code 24 kept");
+    CHECK_EQ(songs[0].params.bank, 13, "slot 0: raw code 24 = USER-AA = file-order index 13");
+    CHECK_EQ(songs[0].instrumentName, std::string("B13 P1"), "slot 0 resolves to USER-AA's Program, not blank");
+    CHECK_EQ(songs[1].params.bank, 6, "slot 1: raw code 17 = USER-A = index 6");
+    CHECK_EQ(songs[1].instrumentName, std::string("B6 P0"), "slot 1 resolves to USER-A's Program");
+    CHECK_EQ(songs[2].params.bank, -1, "slot 2: raw code 6 = GM, no file-order index");
+    CHECK_EQ(songs[2].instrumentName, std::string(), "slot 2: GM has no stored Program to name");
+
+    CHECK_EQ(pcg.programSetlistUsages(13, 1).size(), size_t{1}, "USER-AA 001 is used by exactly slot 0");
+    CHECK_EQ(pcg.setlistUsageCounts(true)[13][1], 1, "usage counts are keyed by file-order index too");
+
+    // Writing back must store the raw code again, not the index.
+    auto result = pcg.swapPrograms(13, 0, 13, 1);
+    CHECK(result.ok);
+    CHECK_EQ(result.setlistRefsRepointed, 1, "the swap repoints slot 0");
+    auto bytes = pcg.songRecordBytes(0, 0);
+    CHECK(bytes.has_value());
+    if (bytes) {
+        CHECK_EQ((*bytes)[13] & 0x1F, 24, "repointed slot still stores raw code 24, not index 13");
+        CHECK_EQ(static_cast<int>((*bytes)[14]), 0, "repointed slot now stores number 0");
+    }
+    CHECK_EQ(pcg.setlists()[0].songs[0].params.bank, 13, "re-derived params still read index 13");
+}
+
 int main() {
     testDecodeProgramFields();
     testClassifyProgramBankType();
@@ -4027,6 +4107,7 @@ int main() {
     testResolveDuplicateCombisConsolidateDifferentContent();
     testResetProgram();
     testProgramSwap();
+    testSetlistProgramBankIsRawCode();
     testProgramMove();
     testCompactProgramBank();
     testCombiRearrange();

@@ -139,7 +139,11 @@ name has no terminator at all). A slot's bank/number index directly into
 three independent ground-truth anchors the project owner gave directly
 (not guessed): "Rolling in the Deep" (Combi, bank 7 = USER-A / record 9),
 "Berlin Grand SW2 U.C." and "Rain Again" (Program, bank 0, records 0 and
-127) -- all three matched exactly. Bank values outside the stored range
+127) -- all three matched exactly. **CORRECTED 2026-10-31 (#120)**: for a
+Program slot the bank byte is a raw bank code (format doc §6.2, USER-A = 17,
+USER-AA = 24), not the file-order index -- the anchors above were all INT-A
+(code == index), so they couldn't tell the two apart; the "out-of-range =
+GM" reading below was largely USER banks. Original text kept: Bank values outside the stored range
 (>=20 for Program, >=14 for Combi) are real gaps, not bugs -- near-certainly
 GM/GM2 references (fixed MIDI-spec content, not stored per-file); a
 one-off bank-231/192 reference each looks like genuine data corruption in
@@ -2628,6 +2632,7 @@ Archived entries (full text in STATE-ARCHIVE.md):
   #117 [BUILT, 2026-10-11] "Print Setlist…": leadsheet HTML (2 A4-landscape pages per A4 sheet) opened in the default browser; SET BREAK / GIG marker slot names (macOS only)
   #118 [BUILT, 2026-10-11] Setlist row menu "Reset to SET BREAK…" / "Reset to GIG…" (slot 000, date input); print layout: slot number as last column, comments 15pt
   #119 [FIXED, 2026-10-11] Setlist "Reset entries" took ages: one native call (PcgFile::resetSetlistSlots) + one table refresh -- 128 slots in 68 ms
+  #120 [FIXED, 2026-10-31] Set List Program slot bank is a raw bank CODE (format doc §4.3/§6.2), not a file-order index: K1/PRELOAD.PCG Preload slot 10 showed "24 039" instead of U-AA 039 "Human Beat Box Kit"; USER-A..C slots resolved to USER-EE..GG names in 20-bank files, and repoints wrote the index into the byte. Fixed in readSlotParams() (SlotParams::rawBankCode + translated bank) and repointOneSetlistSlot() (both swap loops now use it); bridge sends rawBankCode/bankName (GM etc.); testSetlistProgramBankIsRawCode(). Hardware check of slot 10 = U-AA 039 still to be confirmed by the owner.
 
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 

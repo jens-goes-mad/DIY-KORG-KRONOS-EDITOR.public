@@ -229,7 +229,9 @@ choc::value::Value EditorBridge::songToValue(const kronos::Song& song) {
     // From SBK1 -- see docs/content/format/index.md §4.3-4.4 for how these were decoded.
     v.setMember("paramsFound", song.params.found);
     v.setMember("isProgram", song.params.isProgram);
-    v.setMember("bank", song.params.bank);
+    v.setMember("bank", song.params.bank);  // -1 for an indexless Program bank code (e.g. GM) -- see SlotParams
+    v.setMember("rawBankCode", song.params.rawBankCode);
+    v.setMember("bankName", kronos::timbreBankName(song.params.rawBankCode));
     v.setMember("number", song.params.number);
     v.setMember("color", song.params.color);
     v.setMember("holdTime", song.params.holdTime);
