@@ -27,6 +27,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.21"
+          # The Hugo module's go.sum lives in docs/, not the repo root where
+          # setup-go's cache looks by default ("Dependencies file is not found").
+          cache-dependency-path: docs/go.sum
 
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v3
