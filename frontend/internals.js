@@ -30,17 +30,10 @@
 // ground truth to build it with, see STATE.md -- can be added to a topic
 // later without restructuring this shell.
 //
-// IMPORTANT CAVEAT, shown directly in the UI below, not just here: a bank's
-// "index" is this file's OWN file-order position among however many
-// PRG1/CBK1 sub-bank chunks were actually found -- NOT a confirmed-stable
-// bank identity. See PcgFile::programBankInfo()'s own doc comment
-// (src/kronos/PcgFile.h) for the full reasoning: if a real backup can
-// genuinely omit a bank, every bank AFTER the gap would have its
-// position-based label silently wrong -- not just in this pane, but
-// everywhere in this app that assumes position-equals-identity (the
-// Programs/Combis tables, Timbre cross-referencing, Program copy's
-// destination checks). When fewer than the expected count are found, this
-// pane says so plainly rather than guessing which specific bank is missing.
+// A bank's `index` is its real bank number, read from the file's DIV1
+// bank masks (2026-11-15, see PcgFile.cpp's bankNumbersOf()) -- a file can
+// leave out banks anywhere, e.g. a sound pack without USER-G between
+// USER-F and USER-AA, and the grid below shows exactly which ones.
 
 // The only top-level chunks this format is known to use (direct children
 // of PCG1, see docs/content/format/index.md) -- SDB1/SBK1 are nested inside SLS1, not
@@ -66,11 +59,6 @@ const INTERNALS_TOPICS = [
 function createInternalsPanel(container, { getDatasetId, log }) {
   container.innerHTML = `
     <div class="internals-body">
-      <div class="internals-caveat">
-        Bank numbers below are this file's own file-order position, not a confirmed bank
-        identity -- if a bank was omitted when this backup was saved, positions after the
-        gap may not match their real bank (see STATE.md).
-      </div>
       <div class="internals-empty help">${NO_DATASET_MESSAGE}</div>
       <div class="internals-content" hidden>
         <div class="internals-table-wrap">
@@ -101,7 +89,7 @@ function createInternalsPanel(container, { getDatasetId, log }) {
     const foundCount = present.length;
     const expectedCount = names.length;
     return foundCount < expectedCount
-      ? `${foundCount} of ${expectedCount} expected banks found -- see the caveat above before trusting which specific bank(s) are actually missing`
+      ? `${foundCount} of ${expectedCount} banks in this file`
       : `All ${expectedCount} expected banks found`;
   }
 

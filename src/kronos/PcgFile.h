@@ -315,25 +315,13 @@ public:
     // count/stride), for an "Internals" view that wants to show what's
     // actually in a bank, not just its engine type.
     //
-    // IMPORTANT, NOT YET RESOLVED: `index` is this bank's POSITION among
-    // however many PRG1 sub-bank chunks were found, in file order -- NOT a
-    // confirmed-stable bank identity. This project has always assumed a
-    // real file contains all 20 Program banks / 14 Combi banks in one
-    // fixed canonical order (see PROGRAM_BANK_NAMES/COMBI_BANK_NAMES in
-    // frontend/pane.js), so position-equals-identity has been silently
-    // correct so far -- but if a real backup can genuinely omit banks (see
-    // topLevelChunkTags()'s own comment), that assumption breaks: a file
-    // missing, say, canonical bank 4 would have this method return only
-    // 19 entries, and its index-5-onward entries would actually BE
-    // canonical banks 5-19's data, silently mislabeled as 4-18 by every
-    // caller that assumes index-equals-canonical-position (ProgramInfo::
-    // bank, the whole Programs/Combis table, Timbre cross-referencing,
-    // copyProgramFrom()'s destination checks -- all of it). Each PRG1/CBK1
-    // sub-bank chunk's own first 4 bytes (currently read and discarded,
-    // "meaning not understood yet" -- see PcgFile.cpp) are a plausible
-    // candidate for a real per-chunk bank-identity field that would let
-    // this be fixed properly; not yet investigated with real test data
-    // that's actually missing a known bank. See STATE.md.
+    // `index` is the bank's real number (§5.1/§5.2's index), read from
+    // DIV1's bank masks -- see PcgFile.cpp's bankNumbersOf(). Until
+    // 2026-11-15 it was the chunk's file-order position, which mislabelled
+    // every bank after a gap: Narf's "Ultimate Covers" pack leaves out
+    // USER-G, so its USER-AA..FF showed as USER-G..EE and its Combis'
+    // USER-FF references found nothing. A bank the file leaves out isn't
+    // listed (same for programBankTypes()/combiBankInfo()).
     struct ProgramBankInfo {
         int index = 0;
         ProgramBankType bankType = ProgramBankType::Hd1;
@@ -342,7 +330,7 @@ public:
     };
     std::vector<ProgramBankInfo> programBankInfo() const;
 
-    // Same caveat as ProgramBankInfo -- see its own doc comment.
+    // Same `index` meaning as ProgramBankInfo -- see its own doc comment.
     struct CombiBankInfo {
         int index = 0;
         int numRecords = 0;
@@ -1262,6 +1250,17 @@ public:
     // any slot index is out of range.
     bool resetSetlistSlots(int setlistIndex, const std::vector<int>& slots, const std::string& name);
 
+    // "Insert SET BREAK before…" / "Insert GIG before…" (Setlist row menu):
+    // makes room at slot `at` by moving the songs from `at` down to the next
+    // empty slot (looksLikeEmptySetlistName()) one position down -- that
+    // empty slot is used up, every slot after it keeps its number -- then
+    // resets `at` to a blank slot named `name` (resetSetlistSlots()). A Set
+    // List always has exactly 128 slots, so without an empty slot at or
+    // below `at` nothing is written: no song is ever pushed out. Returns
+    // how many songs moved down (0 = `at` was already empty), -1 on a bad
+    // index, -2 if there's no empty slot at or below `at`.
+    int insertSetlistSlot(int setlistIndex, int at, const std::string& name);
+
     // Physically reorders every one of a Set List's 128 slots (name AND
     // params together) into alphabetical-by-name order -- `ascending` true
     // for A-Z, false for Z-A. Empty slots (no name) always sort to the end
@@ -1378,10 +1377,14 @@ private:
     // record on demand, without re-scanning the whole file's chunk
     // hierarchy every time.
     // Same shape for a CBK1 (Combi) sub-bank, minus bankType.
+    // The vectors below are indexed by bank number (DIV1, see PcgFile.cpp's
+    // bankNumbersOf()); a bank the file leaves out is a `present == false`
+    // entry with no records.
     struct BankLocation {
         size_t recordsStart = 0;
         uint32_t numRecords = 0;
         uint32_t bytesPerRecord = 0;
+        bool present = false;
     };
     struct ProgramBankLocation : BankLocation {
         ProgramBankType bankType = ProgramBankType::Hd1;  // classified once at load, see ProgramBankType's doc comment
@@ -1436,8 +1439,8 @@ private:
         ++editCount_;
     }
 
-    std::vector<ProgramBankLocation> programBankLocations_;  // index into data_, one entry per PRG1 sub-bank
-    std::vector<BankLocation> combiBankLocations_;           // index into data_, one entry per CBK1 sub-bank
+    std::vector<ProgramBankLocation> programBankLocations_;  // [bank number] -> where its records are in data_
+    std::vector<BankLocation> combiBankLocations_;           // [bank number] -> where its records are in data_
 
     // data_ offset of setlists_[i]'s first song record (i.e. right after
     // that Set List's own 40-byte SBK1 header) -- one entry per setlists_

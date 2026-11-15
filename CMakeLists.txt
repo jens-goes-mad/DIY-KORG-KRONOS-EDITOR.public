@@ -306,6 +306,9 @@ add_executable(pcg_file_test
     src/kronos/PcgFile.cpp
     src/kronos/ProgramDecoder.cpp
     src/kronos/CombiDecoder.cpp
+    # Not in kronos_editor yet: nothing in the app reads a .KSC until step 2
+    # of STATE.md's KSC plan (registry + bridge).
+    src/kronos/KscFile.cpp
 )
 
 target_include_directories(pcg_file_test PRIVATE src)

@@ -1442,16 +1442,6 @@ td.has-comment {
   overflow-x: hidden;  /* same reasoning as .entries-scroll/.library-body -- no horizontal scrollbar, ever */
 }
 
-.internals-caveat {
-  background: var(--panel);
-  border-left: 3px solid var(--bulma-warning);
-  border-radius: 4px;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
 /* Bulma's own `.help` sets `display: block` unconditionally (author-origin
    CSS), which beats the native `[hidden]` attribute's UA-stylesheet
    `display: none` regardless of specificity -- so internals.js's own

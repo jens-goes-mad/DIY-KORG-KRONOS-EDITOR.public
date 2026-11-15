@@ -88,12 +88,14 @@ detail.
   generated ones (a user sample bank loaded from a `.KSC`, or EXs127+). Cross-verified
   against a real KSC's own manifest (its UUID, and 11 multisample names). Drives the
   app's sample (waveform) icon. See §5.8.
+- **Sample library files**: `.KSC` is a plain-text load script / name manifest, `.KMP` (one
+  multisample) and `.KSF` (one sample, uncompressed 16-bit PCM) use the PCG's chunk framing;
+  MS/DS numbering cross-checked against a real 514-sample library. Not read by the app yet.
+  See §5.9.
 
 Deliberately **not** solved yet: a handful of reserved bytes whose purpose isn't known
 (byte +17 still has unexplained bits even after Font size/Transpose were found), Drum
-Kits/Wave Sequences/Global settings, how a bank is identified when a backup omits banks
-(real partial backups exist -- so far only with the *last* banks missing, which the
-file-order numbering handles; a gap in the middle is untested), and -- a real risk, not just a curiosity -- whether a Program's own KARMA-related fields
+Kits/Wave Sequences/Global settings, and -- a real risk, not just a curiosity -- whether a Program's own KARMA-related fields
 (GE/Switch/Fader Name IDs, KARMA_GE_RTP's own Generated Effect module data) are safe to
 copy verbatim between Programs at all, since `copyProgramFrom()` currently does exactly
 that with no special handling. See §8 for the full, numbered list of open questions.
@@ -192,16 +194,16 @@ a nested walk actually depends on.
 
 ```
 PCG1                                -- whole-file container
- ├─ DIV1                            -- small fixed-size table, unknown, not decoded
+ ├─ DIV1                            -- which banks the file contains (§2.1)
  ├─ SLS1                            -- Set Lists (all 128 of them -- see §3, §4)
  │   ├─ SLD1
  │   │   └─ SDB1                    -- Set List NAMES (§3)
  │   └─ STL1
  │       └─ SBK1                    -- Set List per-slot PARAMETERS (§4)
  ├─ PRG1                            -- Programs: 20 sub-banks (§5.2)
- │   └─ MBK1 / PBK1  x20            -- interleaved in file order, 10 of each tag
+ │   └─ MBK1 / PBK1  x0..20         -- in bank order, MBK1/PBK1 per bank's engine
  ├─ CMB1                            -- Combis: 14 sub-banks (§5.1)
- │   └─ CBK1  x14
+ │   └─ CBK1  x0..14
  ├─ DKT1                            -- Drum Kits -- NOT explored
  ├─ WSQ1                            -- Wave Sequences -- NOT explored
  ├─ GLB1                            -- Global settings -- NOT explored
@@ -235,6 +237,52 @@ treated a missing `SDB1` as a fatal load error -- fixed; see STATE.md entry
 `SLS1`'s total size is far larger than `SLD1` alone -- the remainder is
 `STL1`/`SBK1` (§4), which fully accounts for it (no further mystery region
 left inside `SLS1` once `SBK1`'s own header + 128 blocks are subtracted).
+
+### 2.1 DIV1 -- which banks the file contains — CONFIRMED (2026-11-15)
+
+A file can leave out any bank, not just the last ones. The bank chunks carry
+no bank number of their own (`dwX` holds no bank number either: two
+files' copies of the same bank have different values). What says which bank each
+chunk is: `DIV1`'s 44-byte content, a list of 16-bit big-endian
+`(mask, value)` pairs:
+
+```
+content offset  field
+4   u16be  Program bank mask, bits 0-15 = Program banks 0-15 (§5.2's index)
+6   u16be  0x0015 in every file seen (21; meaning not known -- see §8 #10)
+8   u16be  Program bank mask, bits 0-3 = Program banks 16-19
+10  u16be  0x0015 in every file seen
+12  u16be  Combi bank mask, bits 0-13 = Combi banks 0-13 (§5.1)
+14..       further pairs (Drum Kits, Wave Sequences, ... per the external
+           reference, §7) -- not decoded
+```
+
+Bank chunks appear in ascending bank order: the n-th `MBK1`/`PBK1` chunk is
+the Program bank of the n-th set bit, the same for `CBK1` and the Combi mask.
+
+Checked against all 17 real PCGs at hand: in every one, the set bits count
+exactly the bank chunks present. Ground truth from outside this project:
+
+| File | Program mask | Combi mask | Independent source |
+|---|---|---|---|
+| Narf "Ultimate Covers" K1X.PCG | `efff` + `0007`: banks 0-11, 13-18 (no USER-G, USER-GG) | `2000`: bank 13 (USER-G) | the pack's PDF: Combis in U-G, U-G/U-GG left free |
+| Narf "Ultimate Covers" K2.PCG | same | `1000`: bank 12 (USER-F) | the PDF: Combis in U-F |
+| `K3/20240815/Combi_UA.PCG` | none | `0080`: bank 7 (USER-A) | its name |
+| full backups (`K1_20260418.PCG`, ...) | `ffff` + `000f`: all 20 | `3fff`: all 14 | -- |
+| `K1/PRELOAD.PCG`, `K2/PRELOAD.PCG` | `6fff`: 0-11, 13, 14 (ends at USER-BB, no USER-G) | `000f`: INT-A..D | -- |
+
+With the masks, the Narf pack's Combis resolve: of their 1,002 active,
+non-default Timbre references to stored Program banks, 977 find their Program
+(24 more point at GM banks). With file order they didn't: USER-AA..FF showed as
+USER-G..EE, and 225 references pointed at a bank the editor thought absent and
+31 at Init Programs.
+The one reference still unresolved (Combi "Can't Feel My Face", Timbre 8 ->
+USER-G 124) points into a bank the pack doesn't ship -- the pack's own mistake,
+on the Kronos it plays whatever that unit has there.
+
+`bankNumbersOf()` (`PcgFile.cpp`) applies this; a file without `DIV1`, or whose
+mask doesn't count exactly the chunks present, falls back to file order (the
+only reading this project had before).
 
 ## 3. SDB1 -- Set List names — CONFIRMED
 
@@ -547,7 +595,7 @@ signal which sound engine that bank's Programs use; see §5.2 below.
 
 ### 5.1 Combi banks (`CMB1 > CBK1`) -- 14 banks
 
-Bank order (file order == this list, **CONFIRMED**):
+Bank numbers (**CONFIRMED**; which of them a file contains: §2.1):
 
 ```
 0  INT-A     4  INT-E      8  USER-B    12  USER-F
@@ -558,7 +606,7 @@ Bank order (file order == this list, **CONFIRMED**):
 
 ### 5.2 Program banks (`PRG1 > MBK1`/`PBK1`) -- 20 banks
 
-Bank order (file order == this list). **CORRECTED 2026-08-10**: this used
+Bank numbers (which of them a file contains: §2.1). **CORRECTED 2026-08-10**: this used
 to assume `INT-A..G` (7 letters, indices 0-6) followed by a `G(d)` filler
 before `USER-A` at index 8. The project owner checked directly on real
 Kronos hardware: there is no `INT-G` bank at all -- what the unit shows
@@ -831,6 +879,73 @@ files: `Narf Ultimate Covers K2.PCG` 22 user / 184 EXs; `setlist_test_2.PCG` 14 
 UUIDs only -- Old RAM not yet counted then); `K1_20260418.PCG` 44 user (14 generated + 30 Old
 RAM) / 121 EXs; factory `INIT.PCG` 0 user / 166 EXs; never an EXi Program. Open points: §8 #16.
 
+**Stereo multisamples -- CONFIRMED 2026-10-14.** A stereo multisample is stored as an `-L`/`-R`
+pair of consecutive MS numbers, and a Program zone references it by the **`-L` number with UUID
+byte 15 bit 0 set**. Ground truth: the project owner's own sampled bank
+`JB_20210616_samples_UserBank.KSC` lists its bank as `9ff2d166-15a3-41d2-8e96-120b5196ff36`
+(bit 0 clear) with MS0/1, 2/3, 4/5, 6/7, 8/9 as `-L`/`-R` pairs; every backup that uses it (about
+60 real PCG files, including `setlist_test_2.PCG` and `K1_20260418.PCG`) stores `...ff37` with MS
+Numbers 0, 2, 4, 6, 8 only -- never `ff36`, never an odd number. So any lookup of a Program's bank
+UUID in a KSC (§5.9) must ignore bit 0, as `classifyMultisampleBankUuid()` already does for the
+legacy form.
+
+### 5.9 Sample library files (`.KSC` / `.KMP` / `.KSF`) -- structure CONFIRMED 2026-10-14
+
+Sample audio is never inside a `.PCG`; a Program only holds the (bank UUID, MS Number) reference
+of §5.8. The banks themselves live in a separate file family. Checked against two real
+libraries: `KRONOS-SOUNDS/ULTIMATE COVERS narfsounds/SGC Samples/` (46 KMP, 514 KSF, every
+number below cross-checked programmatically) and the project owner's own
+`JB_20210616_samples_UserBank.KSC` (still only on the backup stick, `BACKUP/202501/`), plus a
+full-backup `KRONOS-SOUNDS/JBS/K1/PRELOAD.KSC`.
+
+**On disk**, one user bank `X`:
+
+```
+X.KSC              load script (bank UUID + list of files)
+X_UserBank.KSC     manifest (names per MS/DS number) -- generated, see below
+X/                 the bank's files
+  ABCDE017.KMP     one multisample; the 3-digit suffix is its MS Number
+  ABCDE017/        that multisample's samples: MS017000.KSF, MS017001.KSF, ...
+  ABCD0287.KSF     loose samples (not part of any multisample)
+```
+
+**`.KSC` is plain text** (`#KORG Script Version 1.0`, `#v2`; PRELOAD.KSC uses CRLF). Three
+kinds seen:
+
+| Kind | Lines after the 2-line header |
+|---|---|
+| Load script (`X.KSC`) | `#uuid:<bank UUID>`; the bank's `.KMP` files, one per line, then its loose `.KSF` files; then one `#>User.0.2.<file>` line per file of that same list, in the same order (`0.2` not decoded) |
+| Manifest (`X_UserBank.KSC`) | `#>>uuid:<UUID>.MS<n>.1.0.<name>` per multisample, `#>>uuid:<UUID>.DS<n>.1.0.<name>` per sample, footer `#>uuid:<UUID>.<msSlots>.<dsSlots>.<bank name>` (`1.0` not decoded) |
+| Full-backup list (`PRELOAD.KSC`, written next to `PRELOAD.PCG`/`.KGE`) | `#>EXS<e>.MS<n>.1.0.<name>` / `.DS<n>...` per EXs library, each library closed by `#>Bank<e>.<msSlots>.<dsSlots>.EXs<e+1> <name>` |
+
+What was checked, and how:
+- **MS Number = KMP order = filename suffix = the KMP's own `MNO1` value** -- all 46 SGC KMPs.
+  The load script's `#uuid:` equals the manifest's UUID, and the 11 Program-to-name matches of
+  §5.8 resolve through it.
+- **DS Number = a KSF's own `SNO1` value**, and resolves to the manifest's `DS<n>` name for all
+  514 SGC KSFs. 514 files but 473 DS entries: some KSFs share an `SNO1` (the same sample appears
+  in more than one KMP folder).
+- **The footer counts are number *ranges*, not line counts**: the JB manifest lists DS0-7 and
+  DS10, footer `.10.11.` (MS 0-9, DS up to 10). Gaps are real.
+- **PRELOAD.KSC lists only part of each EXs library**, and that part is not "what the backup's
+  Programs use": e.g. `#>Bank2.202.0.EXs3 Brass & Woodwinds` with 70 MS lines (indices up to 201).
+  For EXs4/6/7/17/18 every MS Number PRELOAD.PCG references is in the list (assuming `EXS<e>` =
+  legacy UUID bank number `e+2`, which fits these five but is not proven for all). What decides
+  the listed subset is **unknown**.
+
+**`.KMP` and `.KSF` are binary**, the same chunk framing as the PCG (4-byte tag + big-endian
+4-byte length; every SGC file walks to its exact end):
+- KMP: `MSP1` (16-char name + 2 bytes), `MNO1` (BE uint32 MS Number), `NAME` (24-char name),
+  `RLP1` = 18 bytes per zone: 6 not-yet-decoded bytes, then a 12-char KSF filename (in the KMP's
+  own folder); further `RLP<n>` chunks follow. A zone may name the placeholder `SKIPPEDSAMPL`
+  instead of a file (18 zones in 16 SGC KMPs, all in `-L`/`-R` stereo pairs) -- meaning unknown.
+  The 6 bytes look like a key range (`18 18`, `19 1a`, `1c 1d`...), **unverified**.
+- KSF: `SMP1`, `SNO1` (BE uint32 DS Number), `NAME`, `SMD1` = BE uint32 sample rate (SGC: 347 at
+  44100, 167 at 48000), then not-yet-decoded bytes, then 16-bit big-endian PCM (confirmed by ear,
+  2026-09-22). No compression.
+
+Nothing in this app reads these files yet; see STATE.md for the plan. Open points: §8 #16.
+
 ## 6. Combi Timbre references — CONFIRMED (Program refs), status byte CONFIRMED
 
 Each Combi record (`CMB1 > CBK1`, §5.1) has 16 Timbre slots, each optionally
@@ -1102,10 +1217,8 @@ Recorded here for later, even though nothing below is wired into
 - **`DIV1` chunk** (a `PCG1` sibling, right after the 16-byte file header):
   a table of counts/bitmasks for how many banks of each kind the file
   actually has (Program, Combi, Drum Kit, Wave Sequence, Global, DPI, Set
-  List slots) -- this project currently discovers banks by scanning for
-  chunk tags rather than reading this header, so it's an alternative
-  (unused) source of the same information, not a gap in what currently
-  works.
+  List slots). **Now used** (2026-11-15): its Program/Combi bank masks
+  are what number the bank chunks, see §2.1.
 - **Program bank count discrepancy**: the external doc's `DIV1` example
   reads `21` Program banks, but this project has only ever found/parsed
   20 `MBK1`/`PBK1` chunks in real files (§5.2). Unresolved which is
@@ -1226,6 +1339,9 @@ Recorded here for later, even though nothing below is wired into
    value actually occurs in practice remains open.
 10. Whether the external reference's `21`-Program-banks `DIV1` reading
     (§7) points at a real 21st bank this project's chunk scan is missing.
+    2026-11-15: that 21 is the `0x0015` beside each Program bank mask
+    (§2.1), the same in every file; the masks themselves only ever use
+    20 bits. Its meaning is still open.
 11. The file-header checksum flag (§1.1, byte offset 8) -- our real
     sample reads `0x01` ("checksum present" per the external reference),
     but where any such checksum would actually live, and over what range
@@ -1234,7 +1350,12 @@ Recorded here for later, even though nothing below is wired into
     an `INI1` chunk in the external reference's example (§7) -- a real
     second copy of something, or an artifact of how that document's own
     notes are ordered? Not investigated against a real file.
-13. **A more fundamental version of #4, surfaced 2026-08-07**: every
+13. **RESOLVED (2026-11-15), see §2.1**: bank numbers come from `DIV1`'s
+    bank masks. The Narf pack below turned out to leave out USER-G in the
+    *middle* (bank 12), not just its last bank -- exactly the relabelling
+    case described here, and it had been misread as harmless. Original
+    question, kept for the record: **a more fundamental version of #4,
+    surfaced 2026-08-07**: every
     Program/Combi bank "index" this project uses anywhere is actually just
     that bank's *position* among however many PRG1/CBK1 sub-bank chunks
     were found in the file, in file order -- not a confirmed bank identity
@@ -1251,10 +1372,8 @@ Recorded here for later, even though nothing below is wired into
     that would fix this properly. Not yet investigated with real test data
     that's actually missing a known bank. **Real partial backups exist (2026-09-21):** `Narf
     Ultimate Covers K2.PCG` has only 18 PRG1 sub-banks, and its Combis
-    still reference `USER-FF` -- consistent with the last banks simply
-    being omitted, which file-order numbering handles correctly. A backup
-    with a bank missing from the *middle* (the case that would relabel
-    later banks) has still not been seen.
+    still reference `USER-FF` -- read at the time as the last banks simply
+    being omitted. Wrong: see the note at the top of this item.
 14. **Mostly RESOLVED (2026-08-13), see §5.5**: a 2-byte field (offset
     2632-2633) that differs between a factory "Init Program"'s bytes in
     different banks turned out to be "Tone Adjust"/"Switch8 On Value" (a
@@ -1294,6 +1413,12 @@ Recorded here for later, even though nothing below is wired into
     the same when the same library is reloaded; Drum Kit sample references
     (`DKT1`, see #5) and EXi MOD-7's bit-packed `[PCM]` multisample fields
     are not decoded, so Drums-mode and MOD-7 Programs are never flagged.
+    Added 2026-10-14 (§5.9): the 6 bytes before each KMP `RLP1` filename
+    (key range?), the KMP `SKIPPEDSAMPL` zones, the KSF `SMD1` bytes between
+    sample rate and PCM, the `0.2` / `1.0` fields in KSC lines, and why
+    PRELOAD.KSC lists only part of each EXs library. UUID stability on
+    reload stays open -- the project owner doesn't know either, so it needs
+    a deliberate hardware test (load the same KSC twice, save, compare).
 17. **Set List name / Comment length limits on real hardware -- UNCONFIRMED**
     (the project owner's recollection, 2026-08-07, moved here from STATE.md
     on 2026-09-30): a slot's name (SDB1, §3) is single-line and truncated at

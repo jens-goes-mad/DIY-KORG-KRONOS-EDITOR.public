@@ -137,6 +137,8 @@ void bindEditorBridgeFunctions(choc::ui::WebView& view, EditorBridge& bridge) {
                [&bridge](const choc::value::ValueView& args) { return bridge.compactSetlistEntries(args); });
     view.bind("resetSetlistEntries",
                [&bridge](const choc::value::ValueView& args) { return bridge.resetSetlistEntries(args); });
+    view.bind("insertSetlistEntry",
+               [&bridge](const choc::value::ValueView& args) { return bridge.insertSetlistEntry(args); });
     view.bind("sortSetlistEntries",
                [&bridge](const choc::value::ValueView& args) { return bridge.sortSetlistEntries(args); });
     view.bind("saveFileAs", [&bridge](const choc::value::ValueView& args) { return bridge.saveFileAs(args); });

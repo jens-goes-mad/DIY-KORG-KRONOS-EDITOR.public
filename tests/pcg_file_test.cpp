@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "kronos/CombiDecoder.h"
+#include "kronos/KscFile.h"
 #include "kronos/PcgFile.h"
 #include "kronos/ProgramDecoder.h"
 
@@ -393,6 +394,93 @@ void testMultisampleBankReferences() {
     }
     const auto truncated = kronos::hd1PlayedSampleSources(init.data(), 3000);
     CHECK_EQ(truncated.user || truncated.exs, false, "a truncated record never counts");
+}
+
+// parseKsc() against verbatim excerpts of the three real KSC kinds (format
+// doc §5.9) -- the full files are not committed (one is a commercial
+// library, one is a full backup's), only these lines. Each excerpt keeps its
+// real header, real UUID, a real footer and the lines the asserts name.
+// Whole-file runs (0 unrecognized lines, every footer matching) were done
+// with a throwaway binary on 2026-10-14, see STATE.md.
+void testParseKsc() {
+    using kronos::KscKind;
+    // "SGC SAMPLES.KSC" (load script), first two of its 46 KMPs + the 17th
+    // and 44th, one loose KSF, one load directive.
+    const std::string loadScript =
+        "#KORG Script Version 1.0\n#v2\n#uuid:021cb7e1-822b-4b50-955f-4288f163f8a8\n"
+        "UPTOW000.KMP\nUPTOW001.KMP\nTHAT'002.KMP\nBARIT017.KMP\nDU_E0287.KSF\n#>User.0.2.UPTOW000.KMP\n";
+    const auto ls = kronos::parseKsc(loadScript);
+    CHECK(ls.kind == KscKind::LoadScript);
+    CHECK_EQ(ls.unrecognizedLines, 0, "load script: every line recognized");
+    CHECK_EQ(ls.banks.size(), size_t{1}, "load script: one bank");
+    if (ls.banks.size() == 1) {
+        const auto& b = ls.banks[0];
+        CHECK(b.hasUuid);
+        CHECK_EQ(static_cast<int>(b.uuid[0]), 0x02, "load script UUID byte 0");
+        CHECK_EQ(static_cast<int>(b.uuid[15]), 0xa8, "load script UUID byte 15");
+        CHECK_EQ(b.multisampleFiles.size(), size_t{4}, "load script: KMP files");
+        CHECK_EQ(b.multisampleFiles[3], std::string("BARIT017.KMP"), "load script: KMP name kept");
+        CHECK_EQ(b.sampleFiles.size(), size_t{1}, "load script: loose KSF files");
+    }
+
+    // The project owner's own sampled bank, JB_20210616_samples_UserBank.KSC
+    // (manifest, CRLF added here to cover both line ends). Real gap: no DS8/DS9.
+    const std::string manifest =
+        "#KORG Script Version 1.0\r\n#v2\r\n"
+        "#>>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff36.MS0.1.0.JB: Afria Drum        -L\r\n"
+        "#>>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff36.MS1.1.0.JB: Afria Drum        -R\r\n"
+        "#>>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff36.MS9.1.0.Mensch                -R\r\n"
+        "#>>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff36.DS7.1.0.Haze                  -R\r\n"
+        "#>>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff36.DS10.1.0.Mensch_Zwischenteil   -L\r\n"
+        "#>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff36.10.11.JB_20210616_samples\r\n";
+    const auto mf = kronos::parseKsc(manifest);
+    CHECK(mf.kind == KscKind::Manifest);
+    CHECK_EQ(mf.unrecognizedLines, 0, "manifest: every line recognized");
+    CHECK_EQ(mf.banks.size(), size_t{1}, "manifest: entries and footer land in one bank");
+    if (mf.banks.size() == 1) {
+        const auto& b = mf.banks[0];
+        CHECK_EQ(static_cast<int>(b.uuid[15]), 0x36, "manifest UUID byte 15 (stereo bit clear)");
+        CHECK_EQ(b.name, std::string("JB_20210616_samples"), "manifest footer name");
+        CHECK_EQ(b.msSlots, 10, "manifest footer MS slots");
+        CHECK_EQ(b.dsSlots, 11, "manifest footer DS slots = highest index + 1");
+        CHECK_EQ(b.multisamples.at(0), std::string("JB: Afria Drum        -L"), "inner spaces kept, CR stripped");
+        CHECK_EQ(b.multisamples.size(), size_t{3}, "manifest MS entries");
+        CHECK_EQ(b.samples.size(), size_t{2}, "manifest DS entries");
+        CHECK(b.samples.count(10) == 1 && b.samples.count(8) == 0);
+    }
+    // A stereo-flagged UUID (bit 0 set, as Programs store it) is the same bank.
+    const auto stereo = kronos::parseKsc(
+        "#KORG Script Version 1.0\n#>uuid:9ff2d166-15a3-41d2-8e96-120b5196ff37.10.11.x\n");
+    CHECK(stereo.banks.size() == 1 && mf.banks.size() == 1 && stereo.banks[0].uuid == mf.banks[0].uuid);
+
+    // PRELOAD.KSC (full backup), CRLF in the real file. Names with dots, a
+    // footer whose MS slot count (202) exceeds its listed lines.
+    const std::string preload =
+        "#KORG Script Version 1.0\r\n#v2\r\n"
+        "#>EXS0.MS11.1.0.E.Organ-Lower           \r\n"
+        "#>EXS0.DS0.1.0.Acoustic Piano 1 mp -L  \r\n"
+        "#>Bank0.229.1483.EXs1 ROM Expansion\r\n"
+        "#>EXS2.MS201.1.0.Brass Ensemble 5 f-R   \r\n"
+        "#>Bank2.202.0.EXs3 Brass & Woodwinds\r\n";
+    const auto pl = kronos::parseKsc(preload);
+    CHECK(pl.kind == KscKind::FullBackup);
+    CHECK_EQ(pl.unrecognizedLines, 0, "full backup: every line recognized");
+    CHECK_EQ(pl.banks.size(), size_t{2}, "full backup: one bank per EXs library");
+    if (pl.banks.size() == 2) {
+        CHECK(!pl.banks[0].hasUuid);
+        CHECK_EQ(pl.banks[0].exsIndex, 0, "EXS0");
+        CHECK_EQ(pl.banks[0].multisamples.at(11), std::string("E.Organ-Lower"), "name with a dot, trailing spaces trimmed");
+        CHECK_EQ(pl.banks[0].dsSlots, 1483, "Bank0 DS slots");
+        CHECK_EQ(pl.banks[1].exsIndex, 2, "EXS2");
+        CHECK_EQ(pl.banks[1].name, std::string("EXs3 Brass & Woodwinds"), "Bank2 name");
+        CHECK_EQ(pl.banks[1].msSlots, 202, "Bank2 MS slots");
+    }
+
+    CHECK(kronos::parseKsc("not a ksc\n#v2\n").kind == KscKind::Unknown);
+    CHECK(kronos::parseKsc("#KORG Script Version 1.0\n#>>uuid:zz.MS0.1.0.x\n").unrecognizedLines == 1);
+    std::array<uint8_t, 16> uuid{};
+    CHECK(kronos::parseUuid("021CB7E1-822B-4B50-955F-4288F163F8A8", uuid) && uuid[1] == 0x1c);
+    CHECK(!kronos::parseUuid("021cb7e1822b4b50955f4288f163f8a8", uuid));
 }
 
 void testClassifyProgramBankType() {
@@ -4084,11 +4172,106 @@ void testSetlistProgramBankIsRawCode() {
     CHECK_EQ(pcg.setlists()[0].songs[0].params.bank, 13, "re-derived params still read index 13");
 }
 
+// DIV1's bank masks give each bank chunk its bank number (PcgFile.cpp's
+// bankNumbersOf(), docs/content/format/index.md §2.1). The DIV1 content is
+// the real 44 bytes from Narf's "Ultimate Covers" K1X.PCG: Program banks
+// 0-11 and 13-18 (no USER-G, no USER-GG), Combi bank 13 (USER-G only) --
+// what the pack's own loading instructions say. Its 18 Program banks and one
+// Combi bank are stood in for here by tiny 2-record banks named after their
+// real bank.
+std::vector<uint8_t> buildPartialBanksPcgFile(const std::vector<uint8_t>& div1) {
+    constexpr size_t kBankRecordSize = 32;
+    const char* const kPresentProgramBanks[] = {"I-A", "I-B", "I-C", "I-D", "I-E", "I-F", "U-A", "U-B", "U-C",
+                                                "U-D", "U-E", "U-F", "U-AA", "U-BB", "U-CC", "U-DD", "U-EE", "U-FF"};
+    std::vector<uint8_t> prg1Content;
+    for (const char* bank : kPresentProgramBanks) {
+        std::vector<uint8_t> chunk;
+        pushU32BE(chunk, 2);
+        pushU32BE(chunk, static_cast<uint32_t>(kBankRecordSize));
+        pushNameRecord(chunk, std::string(bank) + " 000", kBankRecordSize);
+        pushNameRecord(chunk, std::string(bank) + " 001", kBankRecordSize);
+        appendChunk(prg1Content, "PBK1", chunk);
+    }
+
+    // Like the pack's "24K Magic": Timbre 0 plays USER-FF 000 (raw code 29).
+    const size_t kCombiRecordSize = kTimbreBaseOffset + kTimbreStride * 16;
+    auto combi = makeCbkCombiRecord("24K Magic", kCombiRecordSize);
+    combi[kTimbreBaseOffset] = 0;
+    combi[kTimbreBaseOffset + 1] = 29;
+    std::vector<uint8_t> cbk1;
+    pushU32BE(cbk1, 1);
+    pushU32BE(cbk1, static_cast<uint32_t>(kCombiRecordSize));
+    cbk1.insert(cbk1.end(), combi.begin(), combi.end());
+    std::vector<uint8_t> cmb1Content;
+    appendChunk(cmb1Content, "CBK1", cbk1);
+
+    std::vector<uint8_t> pcg1Content;
+    appendChunk(pcg1Content, "DIV1", div1);
+    appendChunk(pcg1Content, "PRG1", prg1Content);
+    appendChunk(pcg1Content, "CMB1", cmb1Content);
+    std::vector<uint8_t> data;
+    data.insert(data.end(), {'K', 'O', 'R', 'G'});
+    pushZeros(data, 12);
+    appendChunk(data, "PCG1", pcg1Content);
+    return data;
+}
+
+void testBankNumbersFromDiv1() {
+    const std::vector<uint8_t> narfDiv1 = {
+        0x00, 0x00, 0x00, 0x00, 0xef, 0xff, 0x00, 0x15, 0x00, 0x07, 0x00, 0x15, 0x20, 0x00, 0x00,
+        0x0e, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x0f, 0x01, 0x00,
+        0x00, 0x0f, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x4c, 0x00, 0xff, 0xff, 0x00, 0x00};
+    {
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildPartialBanksPcgFile(narfDiv1), error));
+
+        // Before DIV1: the 13th chunk (USER-AA) was labelled bank 12 (USER-G).
+        CHECK(!pcg.decodeProgram(12, 0).has_value());
+        CHECK(!pcg.programBankTypeAt(12).has_value());
+        CHECK(!pcg.programBankTypeAt(19).has_value());
+        CHECK_EQ(pcg.decodeProgram(11, 0)->name, std::string("U-F 000"), "last bank before the gap");
+        CHECK_EQ(pcg.decodeProgram(13, 0)->name, std::string("U-AA 000"), "first bank after the gap");
+        CHECK_EQ(pcg.decodeProgram(18, 1)->name, std::string("U-FF 001"), "USER-FF present");
+
+        const auto banks = pcg.programBankInfo();
+        CHECK_EQ(banks.size(), size_t{18}, "programBankInfo() lists present banks only");
+        CHECK_EQ(banks[12].index, 13, "programBankInfo() carries the real bank number");
+        CHECK_EQ(pcg.programBankTypes().size(), size_t{18}, "programBankTypes() lists present banks only");
+
+        // The Combi bank is USER-G (13), not INT-A.
+        CHECK_EQ(pcg.combis().size(), size_t{1}, "one Combi");
+        CHECK_EQ(pcg.combis()[0].bank, 13, "Combi bank from DIV1");
+        CHECK(pcg.decodeCombi(13, 0).has_value());
+        CHECK(!pcg.decodeCombi(0, 0).has_value());
+        CHECK_EQ(pcg.combiBankInfo().size(), size_t{1}, "combiBankInfo() lists present banks only");
+
+        // The Combi's USER-FF reference now finds its Program.
+        const auto usages = pcg.combiUsagesForProgram(18, 0);
+        CHECK_EQ(usages.size(), size_t{1}, "USER-FF 000 used by the Combi");
+        if (!usages.empty()) CHECK_EQ(usages[0].bank, 13, "usage names the Combi's real bank");
+
+        // Absent banks can't be written into.
+        CHECK(pcg.copyProgramFrom(pcg, 0, 0, 12, 0) == kronos::PcgFile::ProgramCopyError::OutOfRange);
+    }
+    {
+        // A mask that doesn't count the chunks present: file order, as before.
+        auto wrongCount = narfDiv1;
+        wrongCount[4] = 0xff;  // 0xffff: USER-G claimed too, 19 banks for 18 chunks
+        kronos::PcgFile pcg;
+        std::string error;
+        CHECK(pcg.loadFromMemory(buildPartialBanksPcgFile(wrongCount), error));
+        CHECK_EQ(pcg.decodeProgram(12, 0)->name, std::string("U-AA 000"), "fallback: file order");
+    }
+}
+
 int main() {
+    testBankNumbersFromDiv1();
     testDecodeProgramFields();
     testClassifyProgramBankType();
     testExiAlgorithmTypeRealTemplates();
     testMultisampleBankReferences();
+    testParseKsc();
     testDecodeCombiFields();
     testHashProgramRecord();
     testPcgFileEndToEnd();

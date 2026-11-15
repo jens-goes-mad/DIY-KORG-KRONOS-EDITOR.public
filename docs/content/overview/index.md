@@ -68,14 +68,17 @@ The file format side: container/chunk parsing, all 128 Set Lists, per-slot param
 (Program/Combi reference, Color, Volume, Hold Time, Font size, Transpose, Comment), the
 Program/Combi instrument-name cross-reference, Combi Timbre-to-Program references (plus each
 Timbre's on/off status, MIDI channel and Volume) with
-all 20 Program banks' raw bank codes now confirmed (Set List Program slots use the same codes) -- cross-checked against Korg's own SysEx
+all 20 Program banks' raw bank codes now confirmed (Set List Program slots use the same codes),
+and which banks a file contains read from the file itself, so sound packs that leave out banks
+in the middle (e.g. USER-G) show every bank under its real name -- cross-checked against Korg's own SysEx
 documentation and an independent third-party reverse-engineering effort where either exists,
 never trusted blindly. Which specific EXi synthesis engine (AL-1, CX-3, STR-1, MS-20EX,
 PolysixEX, MOD-7, SGX-2, EP-1) an individual EXi Program uses is confirmed too, byte-verified
 against real templates, and so is which sample bank each HD-1 oscillator zone plays --
 checked against a real `.KSC` sample library's own manifest -- so Programs that depend on a
 user sample bank (orange) or a Korg EXs library (light gray) are marked with a small waveform
-icon. Full detail, including exactly
+icon. The sample library files themselves (`.KSC` / `.KMP` / `.KSF`) are mapped out and
+checked against a real library, but the app doesn't read them yet. Full detail, including exactly
 what's still open, is in [The file format](/format).
 
 ![Main View](DIY-MainPanels.png)

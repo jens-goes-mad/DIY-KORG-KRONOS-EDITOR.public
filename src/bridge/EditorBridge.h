@@ -178,6 +178,10 @@ public:
     // error}. See PcgFile::resetSetlistSlots() -- Reset entry (one slot) and
     // Reset entries (the filtered rows) both go through this one call.
     choc::value::Value resetSetlistEntries(const choc::value::ValueView& args);
+    // [datasetId, setlistIndex, at, name] -> {ok, moved} or {ok:false,
+    // error}. See PcgFile::insertSetlistSlot() -- the row menu's "Insert SET
+    // BREAK before…" / "Insert GIG before…".
+    choc::value::Value insertSetlistEntry(const choc::value::ValueView& args);
 
     // [datasetId, setlistIndex, ascending] -> {ok} or {ok:false, error}.
     // Physically reorders every one of a Set List's 128 slots into
@@ -492,9 +496,8 @@ public:
     // bankType, numRecords, bytesPerRecord}...], combiBanks:[{index,
     // numRecords, bytesPerRecord}...]} or {ok:false, error}. Backs the
     // "Internals" pane -- see PcgFile::topLevelChunkTags()/
-    // programBankInfo()/combiBankInfo()'s own doc comments, especially the
-    // caveat that `index` is file-order position, not a confirmed-stable
-    // bank identity.
+    // programBankInfo()/combiBankInfo()'s own doc comments (`index` is the
+    // real bank number, from DIV1; banks the file leaves out aren't listed).
     choc::value::Value getDatasetInternals(const choc::value::ValueView& args);
 
     // NOT bound to JS -- this is a native-side-only hook, called by main.cpp

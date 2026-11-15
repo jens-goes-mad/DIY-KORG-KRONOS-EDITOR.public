@@ -2422,10 +2422,8 @@ meaning; #3 SBK1 +17 bits 0-2; #5 DKT1/WSQ1/GLB1/DPI1/INI1 unexplored
 (now also means Drums-mode Programs' samples are unknown -- Drum Kits
 carry their own sample UUIDs); #6 `.SQS` dialect; #7 leading spaces in
 Comments; #9 Song-type slot never seen; #10 a possible 21st bank; #11
-header checksum; #12 second SLS1/PRG1 sequence; #13 bank = file position,
-not identity (a real partial backup exists -- the Narf file has 18 of 20
-banks -- but its missing banks are the last two, so the "gap in the
-middle relabels later banks" case is still untested); #14 Init template
+header checksum; #12 second SLS1/PRG1 sequence; (#13 bank = file
+position: resolved 2026-11-15 by DIV1, entry #121); #14 Init template
 written into another bank; #15 KARMA Name-ID/GE references on copy; #16
 sample-bank references (§5.8's unverified points); #17 Set List name /
 Comment length limits on real hardware.
@@ -2448,6 +2446,11 @@ App / UI:
     sample icon yet (#110).
 
 To check on real hardware (owner, noted 2026-09-30):
+  - Sample bank UUID stability (noted 2026-10-14, owner doesn't know): load
+    the same `.KSC` twice (or on K1 and K2), save, compare the bank UUID in
+    the Programs that use it. Phases 2-5 of the KSC plan match on it.
+  - PRELOAD.KSC lists only part of each EXs library (e.g. 70 of EXs3's 202
+    multisamples): is that what is loaded on the unit (partial EXs load)?
   - K1_20260418.PCG: are the Programs that play "Smp: Old RAM" (Sampling-
     mode memory) really the owner's own sampled sounds? Counting Old RAM as
     user samples (orange icon, entry 110) added 30 orange Programs on top of
@@ -2633,6 +2636,7 @@ Archived entries (full text in STATE-ARCHIVE.md):
   #118 [BUILT, 2026-10-11] Setlist row menu "Reset to SET BREAK…" / "Reset to GIG…" (slot 000, date input); print layout: slot number as last column, comments 15pt
   #119 [FIXED, 2026-10-11] Setlist "Reset entries" took ages: one native call (PcgFile::resetSetlistSlots) + one table refresh -- 128 slots in 68 ms
   #120 [FIXED, 2026-10-31] Set List Program slot bank is a raw bank CODE (format doc §4.3/§6.2), not a file-order index: K1/PRELOAD.PCG Preload slot 10 showed "24 039" instead of U-AA 039 "Human Beat Box Kit"; USER-A..C slots resolved to USER-EE..GG names in 20-bank files, and repoints wrote the index into the byte. Fixed in readSlotParams() (SlotParams::rawBankCode + translated bank) and repointOneSetlistSlot() (both swap loops now use it); bridge sends rawBankCode/bankName (GM etc.); testSetlistProgramBankIsRawCode(). Hardware check of slot 10 = U-AA 039 still to be confirmed by the owner.
+  #121 [FIXED, 2026-11-15] Bank numbers come from DIV1's bank masks (format doc §2.1), not chunk file order: Narf "Ultimate Covers" leaves out USER-G (bank 12) in the middle, so USER-AA..FF showed as USER-G..EE, USER-FF/GG looked absent, its Combi bank showed as INT-A (really U-G/U-F) and 225+31 Timbre references hit a missing bank / Init Programs. PcgFile: readBankMasks()/bankNumbersOf(), bank-location vectors indexed by bank with `present`; absent banks skipped by programBankTypes()/programBankInfo()/combiBankInfo(), rejected by bankLocation(); no DIV1 or a mask that doesn't count the chunks -> file order as before. Internals pane caveat removed. testBankNumbersFromDiv1() (real Narf DIV1 bytes); smoke run over all 17 real PCGs: mask = chunk count in each, full backups unchanged.
 
 --- OPEN: IDEAS AND IMPROVEMENTS ---
 
@@ -2665,6 +2669,49 @@ by which repo the eventual work would actually land in. Created 2026-09-22.
     D.5 ("mark Programs whose sample is MISSING"): the KSC registry itself
     (nothing loads a .KSC yet), UUID stability on reload (RFC point 4
     below), and Drum Kit / EXi MOD-7 sample references.
+  - **UPDATE 2026-10-14: file structure confirmed, plan re-made (format doc
+    §5.9 + the stereo paragraph at the end of §5.8).** Checked by script
+    against all 46 KMP / 514 KSF of the SGC library: MS Number = KMP line
+    order in the load script = filename suffix = KMP `MNO1`; DS Number = KSF
+    `SNO1` = manifest `DS<n>`. The load-script KSC carries `#uuid:` itself.
+    **Stereo: a Program references a stereo multisample by its `-L` number
+    with UUID byte 15 bit 0 set** -- the owner's own JB bank KSC says `...ff36`,
+    all ~60 backups store `...ff37` with MS 0/2/4/6/8 only. So "JB: Africa
+    Drum"'s KSC (below) was on hand all along, the exact-byte match just
+    missed it; any registry lookup must mask bit 0. Third KSC kind found:
+    `PRELOAD.KSC` (full backup, copied to `KRONOS-SOUNDS/JBS/K1/`) names EXs
+    multisamples per library, but lists only part of each library -- not
+    the Programs' used subset either; why is open. Owner answers: the JB
+    bank (`JB_20210616_samples`) IS the owner's own sampled bank (confirms
+    the stereo reading); UUID stability on reload and the PRELOAD.KSC subset
+    are unknown -- both need a deliberate hardware test (listed under "To
+    check on real hardware"). The JB KSC itself is still only on the backup
+    stick (`BACKUP/202501/`).
+    The earlier plan file was overwritten by entry 99's plan, so this
+    replaces it. Phases, all read-only, one at a time, each with real-file
+    tests before UI:
+    0. Docs (this update) -- DONE.
+    1. `src/kronos/KscFile.{h,cpp}`: parse all three KSC kinds (text only) into
+       {bank UUID with bit 0 masked, bank name, kind, MS/DS number -> name};
+       ctest cases from real KSC lines. -- DONE 2026-10-14: `parseKsc()`/
+       `parseUuid()`, `testParseKsc()` in pcg_file_test (verbatim excerpts of
+       all three kinds; full files not committed). Throwaway run over the
+       four real KSCs: 0 unrecognized lines, every footer and count matches
+       §5.9. Only in the pcg_file_test target until step 2 uses it.
+    2. Global KSC registry (shaped like `datasets.js`'s), native dialog
+       accepting `.KSC`, bridge `registerKsc`/`listKscs`/
+       `getProgramSampleZones(dataset, bank, number)`. No persistence.
+    3. "Missing sample" icon state (old D.5): generated UUID that no
+       registered KSC knows. Set List/Combi views inherit it via the
+       referenced Program. Table refresh on registry change.
+    4. Program zone list: OSC1/OSC2 zones by name (user banks via manifest,
+       EXs via PRELOAD.KSC; ROM by number only -- no Voice Name List here).
+    5. Samples tab (`createSamplesPanel()`): registered banks, MS/DS lists,
+       "which Programs use this multisample" across loaded datasets.
+    6. KMP/KSF decode + playback (WAV wrapper + `<audio>`), after deciding
+       how multi-MB data crosses the bridge.
+    Not before ground truth: Drum Kit (DKT1) / MOD-7 references, the RLP1
+    6-byte zone header, SMD1 pre-PCM bytes, `SKIPPEDSAMPL` zones.
   Real files were pointed at same day (`.../KRONOS-SOUNDS/ULTIMATE COVERS
   narfsounds/SGC Samples/`, used by `Narf Ultimate Covers K2.PCG`) and
   hex-inspected read-only (no repo changes) -- **overturned part of the
@@ -2753,8 +2800,8 @@ by which repo the eventual work would actually land in. Created 2026-09-22.
   samples/` page, B: native `KscFile`/`KmpDecoder`/`KsfDecoder`, C: the
   Samples tab itself, D: the Program-to-sample cross-link, D.5: mark
   Programs with a missing sample [see below], E: playback feasibility)
-  lives in a Claude Code plan file, not yet copied into this repo:
-  `~/.claude/plans/hashed-drifting-sun.md` on the project owner's machine.
+  lived in a Claude Code plan file that has since been overwritten -- the
+  current phase list is in the 2026-10-14 update above.
   Promote this entry to real numbered STATE.md entries once implementation
   actually starts, rather than duplicating the full plan text here now.
   - **Follow-up, same day (2026-09-22): new Phase D.5, "mark Programs with

@@ -688,6 +688,26 @@ choc::value::Value EditorBridge::resetSetlistEntries(const choc::value::ValueVie
     return value;
 }
 
+choc::value::Value EditorBridge::insertSetlistEntry(const choc::value::ValueView& args) {
+    const int datasetId = intArg(args, 0);
+    const int setlistIndex = intArg(args, 1);
+    const int at = intArg(args, 2);
+    const std::string name = stringArg(args, 3);
+
+    auto* file = fileOf(datasetId);
+    if (file == nullptr) return makeError("Dataset " + std::to_string(datasetId) + " has no file loaded");
+
+    const int moved = file->insertSetlistSlot(setlistIndex, at, name);
+    if (moved == -2) {
+        return makeError("No empty slot below this one -- every slot down to 127 is in use, so inserting would push a "
+                         "song out of the Set List. Reset or remove a slot further down first.");
+    }
+    if (moved < 0) return makeError("Couldn't insert into that Set List (index out of range)");
+    auto value = makeOk();
+    value.setMember("moved", moved);
+    return value;
+}
+
 choc::value::Value EditorBridge::sortSetlistEntries(const choc::value::ValueView& args) {
     const int datasetId = intArg(args, 0);
     const int setlistIndex = intArg(args, 1);

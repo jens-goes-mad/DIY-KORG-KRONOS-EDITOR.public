@@ -94,6 +94,57 @@ void collectChunks(const std::vector<uint8_t>& data, size_t start, size_t end, c
         data, start, end, [&wantedTag](const std::string& tag) { return tag == wantedTag; }, out, depth);
 }
 
+// DIV1's bank masks -- which Program/Combi banks this file contains (see
+// docs/content/format/index.md §2.1). Bit n of `programs` is Program bank n
+// (§5.2's index, INT-A..USER-GG), bit n of `combis` Combi bank n (§5.1).
+// Confirmed 2026-11-15 against all 17 real PCGs at hand (the set bits always
+// count exactly the bank chunks present) and against third-party ground
+// truth: Narf's "Ultimate Covers" pack documents its Combis in U-G (K1X
+// file, bit 13) / U-F (K2 file, bit 12) and leaves U-G/U-GG free (bits 12
+// and 19 clear in both).
+constexpr int kProgramBankCount = 20;
+constexpr int kCombiBankCount = 14;
+constexpr size_t kDiv1ProgramMaskLowOffset = 4;   // u16be, Program banks 0-15
+constexpr size_t kDiv1ProgramMaskHighOffset = 8;  // u16be, Program banks 16-19 in bits 0-3
+constexpr size_t kDiv1CombiMaskOffset = 12;       // u16be, Combi banks 0-13
+
+uint16_t readU16BE(const uint8_t* p) { return static_cast<uint16_t>((p[0] << 8) | p[1]); }
+
+struct BankMasks {
+    uint32_t programs = 0;
+    uint32_t combis = 0;
+};
+
+std::optional<BankMasks> readBankMasks(const std::vector<uint8_t>& data) {
+    std::vector<ChunkInfo> div1;
+    collectChunks(data, 16, data.size(), "DIV1", div1, 0);
+    if (div1.empty() || div1[0].contentStart + kDiv1CombiMaskOffset + 2 > div1[0].contentEnd) return std::nullopt;
+    const uint8_t* p = &data[div1[0].contentStart];
+    BankMasks masks;
+    masks.programs = (uint32_t(readU16BE(p + kDiv1ProgramMaskHighOffset)) << 16) | readU16BE(p + kDiv1ProgramMaskLowOffset);
+    masks.programs &= (1u << kProgramBankCount) - 1;
+    masks.combis = readU16BE(p + kDiv1CombiMaskOffset) & ((1u << kCombiBankCount) - 1);
+    return masks;
+}
+
+// The bank number of each bank chunk, in file order: the n-th chunk is the
+// n-th set bit of DIV1's mask. Falls back to file position (the only reading
+// this project had before DIV1 was decoded) when there's no mask or it
+// doesn't count exactly `chunkCount` banks.
+std::vector<int> bankNumbersOf(std::optional<uint32_t> mask, int bankCount, size_t chunkCount) {
+    std::vector<int> numbers;
+    if (mask) {
+        for (int bank = 0; bank < bankCount; ++bank) {
+            if (*mask & (1u << bank)) numbers.push_back(bank);
+        }
+    }
+    if (numbers.size() != chunkCount) {
+        numbers.clear();
+        for (size_t i = 0; i < chunkCount; ++i) numbers.push_back(static_cast<int>(i));
+    }
+    return numbers;
+}
+
 // A Set List record: 4-byte marker + 24-byte null-padded ASCII name.
 constexpr size_t kRecordSize = 28;
 constexpr size_t kMarkerSize = 4;
@@ -614,12 +665,20 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
     std::vector<ChunkInfo> cbkChunks;
     collectChunks(data, 16, data.size(), "CBK1", cbkChunks, 0);
 
+    // A file can leave banks out anywhere, not just at the end (Narf's
+    // "Ultimate Covers" pack: no USER-G between USER-F and USER-AA) -- each
+    // chunk's bank number comes from DIV1, see bankNumbersOf().
+    const auto bankMasks = readBankMasks(data);
+    const auto combiBankNumbers = bankNumbersOf(
+        bankMasks ? std::optional<uint32_t>(bankMasks->combis) : std::nullopt, kCombiBankCount, cbkChunks.size());
+
     combis_.clear();
     combiBankLocations_.clear();
     std::vector<std::vector<std::string>> combiBankNames;  // [bank][number]
 
-    for (size_t bankIdx = 0; bankIdx < cbkChunks.size(); ++bankIdx) {
-        const auto& chunk = cbkChunks[bankIdx];
+    for (size_t chunkIdx = 0; chunkIdx < cbkChunks.size(); ++chunkIdx) {
+        const auto& chunk = cbkChunks[chunkIdx];
+        const int bank = combiBankNumbers[chunkIdx];
         if (chunk.contentStart + 8 > chunk.contentEnd) continue;
 
         uint32_t numRecords = readU32BE(&data[chunk.contentStart]);
@@ -629,13 +688,14 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
         if (bytesPerRecord == 0) continue;
         if (recordsStart + static_cast<size_t>(bytesPerRecord) * numRecords > chunk.contentEnd) continue;
 
-        combiBankLocations_.push_back({recordsStart, numRecords, bytesPerRecord});
+        if (bank >= static_cast<int>(combiBankLocations_.size())) combiBankLocations_.resize(bank + 1);
+        combiBankLocations_[bank] = {recordsStart, numRecords, bytesPerRecord, /*present=*/true};
 
         for (uint32_t i = 0; i < numRecords; ++i) {
             size_t off = recordsStart + static_cast<size_t>(i) * bytesPerRecord;
             const uint8_t* record = &data[off];
             const CombiInfo& fields =
-                combis_.emplace_back(decodeCombiInfo(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i)));
+                combis_.emplace_back(decodeCombiInfo(record, bytesPerRecord, bank, static_cast<int>(i)));
 
             if (fields.bank >= static_cast<int>(combiBankNames.size())) combiBankNames.resize(fields.bank + 1);
             if (fields.number >= static_cast<int>(combiBankNames[fields.bank].size())) {
@@ -660,12 +720,17 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
         data, 16, data.size(), [](const std::string& tag) { return tag == "MBK1" || tag == "PBK1"; },
         programBankChunks, 0);
 
+    const auto programBankNumbers =
+        bankNumbersOf(bankMasks ? std::optional<uint32_t>(bankMasks->programs) : std::nullopt, kProgramBankCount,
+                      programBankChunks.size());
+
     programs_.clear();
     programBankLocations_.clear();
     std::vector<std::vector<std::string>> programBankNames;  // [bank][number]
 
-    for (size_t bankIdx = 0; bankIdx < programBankChunks.size(); ++bankIdx) {
-        const auto& chunk = programBankChunks[bankIdx];
+    for (size_t chunkIdx = 0; chunkIdx < programBankChunks.size(); ++chunkIdx) {
+        const auto& chunk = programBankChunks[chunkIdx];
+        const int bank = programBankNumbers[chunkIdx];
         if (chunk.contentStart + 8 > chunk.contentEnd) continue;
 
         uint32_t numRecords = readU32BE(&data[chunk.contentStart]);
@@ -680,13 +745,14 @@ bool PcgFile::loadFromMemory(std::vector<uint8_t> data, std::string& error) {
         // cross-checked against its declared stride), not looked up in a
         // fixed table.
         ProgramBankType bankType = classifyProgramBankType(chunk.tag, bytesPerRecord).type;
-        programBankLocations_.push_back({{recordsStart, numRecords, bytesPerRecord}, bankType});
+        if (bank >= static_cast<int>(programBankLocations_.size())) programBankLocations_.resize(bank + 1);
+        programBankLocations_[bank] = {{recordsStart, numRecords, bytesPerRecord, /*present=*/true}, bankType};
 
         for (uint32_t i = 0; i < numRecords; ++i) {
             size_t off = recordsStart + static_cast<size_t>(i) * bytesPerRecord;
             const uint8_t* record = &data[off];
             const ProgramInfo& fields =
-                programs_.emplace_back(decodeProgramInfo(record, bytesPerRecord, static_cast<int>(bankIdx), static_cast<int>(i), bankType));
+                programs_.emplace_back(decodeProgramInfo(record, bytesPerRecord, bank, static_cast<int>(i), bankType));
 
             if (fields.bank >= static_cast<int>(programBankNames.size())) programBankNames.resize(fields.bank + 1);
             if (fields.number >= static_cast<int>(programBankNames[fields.bank].size())) {
@@ -995,7 +1061,7 @@ PcgFile::ResetProgramResult PcgFile::resetProgram(int bank, int number,
                                                     const std::vector<uint8_t>& exiInitBytes) {
     ResetProgramResult result;
 
-    if (bank < 0 || static_cast<size_t>(bank) >= programBankLocations_.size()) {
+    if (bankLocation(/*isProgram=*/true, bank) == nullptr) {
         result.error = "No such Program bank";
         return result;
     }
@@ -1841,7 +1907,8 @@ PcgFile::CombiCrossDatasetAnalysis PcgFile::analyzeCombiCrossDatasetCopy(const P
         unresolved.name = srcProgram->name;
         unresolved.bankType = srcProgram->bankType;
         for (size_t bankIdx = 0; bankIdx < programBankLocations_.size(); ++bankIdx) {
-            if (programBankLocations_[bankIdx].bankType != srcProgram->bankType) continue;
+            const auto& loc = programBankLocations_[bankIdx];
+            if (!loc.present || loc.bankType != srcProgram->bankType) continue;
             const bool hasFreeSlot = std::any_of(programs_.begin(), programs_.end(), [&](const ProgramInfo& p) {
                 return p.bank == static_cast<int>(bankIdx) && looksLikeEmptyProgramName(p.name);
             });
@@ -2004,6 +2071,7 @@ std::vector<PcgFile::ProgramBankTypeEntry> PcgFile::programBankTypes() const {
     std::vector<ProgramBankTypeEntry> result;
     result.reserve(programBankLocations_.size());
     for (size_t bank = 0; bank < programBankLocations_.size(); ++bank) {
+        if (!programBankLocations_[bank].present) continue;
         result.push_back({static_cast<int>(bank), programBankLocations_[bank].bankType});
     }
     return result;
@@ -2042,6 +2110,7 @@ std::vector<PcgFile::ProgramBankInfo> PcgFile::programBankInfo() const {
     result.reserve(programBankLocations_.size());
     for (size_t i = 0; i < programBankLocations_.size(); ++i) {
         const auto& loc = programBankLocations_[i];
+        if (!loc.present) continue;
         result.push_back({static_cast<int>(i), loc.bankType, static_cast<int>(loc.numRecords),
                            static_cast<int>(loc.bytesPerRecord)});
     }
@@ -2053,6 +2122,7 @@ std::vector<PcgFile::CombiBankInfo> PcgFile::combiBankInfo() const {
     result.reserve(combiBankLocations_.size());
     for (size_t i = 0; i < combiBankLocations_.size(); ++i) {
         const auto& loc = combiBankLocations_[i];
+        if (!loc.present) continue;
         result.push_back({static_cast<int>(i), static_cast<int>(loc.numRecords), static_cast<int>(loc.bytesPerRecord)});
     }
     return result;
@@ -2516,8 +2586,13 @@ bool PcgFile::putSongRecordBytes(int setlistIndex, int songIndex, const std::vec
 const PcgFile::BankLocation* PcgFile::bankLocation(bool isProgram, int bank) const {
     if (bank < 0) return nullptr;
     const auto b = static_cast<size_t>(bank);
-    if (isProgram) return b < programBankLocations_.size() ? &programBankLocations_[b] : nullptr;
-    return b < combiBankLocations_.size() ? &combiBankLocations_[b] : nullptr;
+    const BankLocation* loc = nullptr;
+    if (isProgram) {
+        if (b < programBankLocations_.size()) loc = &programBankLocations_[b];
+    } else if (b < combiBankLocations_.size()) {
+        loc = &combiBankLocations_[b];
+    }
+    return loc != nullptr && loc->present ? loc : nullptr;
 }
 
 std::optional<size_t> PcgFile::recordOffset(bool isProgram, int bank, int number) const {
@@ -2684,6 +2759,22 @@ bool PcgFile::resetSetlistSlots(int setlistIndex, const std::vector<int>& slots,
         if (!putNameRecordBytes(setlistIndex, i, nameRecord)) return false;
     }
     return true;
+}
+
+int PcgFile::insertSetlistSlot(int setlistIndex, int at, const std::string& name) {
+    if (setlistIndex < 0 || static_cast<size_t>(setlistIndex) >= setlists_.size()) return -1;
+    const auto& songs = setlists_[static_cast<size_t>(setlistIndex)].songs;
+    const int count = static_cast<int>(songs.size());
+    if (at < 0 || at >= count) return -1;
+
+    int gap = at;
+    while (gap < count && !looksLikeEmptySetlistName(songs[static_cast<size_t>(gap)].name)) ++gap;
+    if (gap == count) return -2;
+
+    // Moving the empty slot up to `at` shifts [at..gap-1] down by one.
+    if (!reorderSong(setlistIndex, gap, at)) return -1;
+    if (!resetSetlistSlots(setlistIndex, {at}, name)) return -1;
+    return gap - at;
 }
 
 int PcgFile::compactSetlist(int setlistIndex) {
