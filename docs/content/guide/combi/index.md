@@ -14,7 +14,13 @@ This page covers what's specific to the Combi tab.
 
 ![Combi References](DIY-CombiOverview.png)
 
-Expanding a Combi row lists every Timbre that is **switched on** (Timbres switched off are
+Expanding a Combi row first lists its **KARMA modules** (A to D) that run or have a GE
+other than Korg's default, each with its GE name -- the same naming as on
+[Programs](/guide/prog#karma-ges), including the orange **User GE** marker. A module whose
+**Run** switch is off is muted on the Kronos; it's shown dimmed with "(not running)".
+Information only, like the rest of this list.
+
+Below that, it lists every Timbre that is **switched on** (Timbres switched off are
 left out), each with:
 
 - its **MIDI channel** -- `Ch 1` to `Ch 16`, or `Gbl` for the Global channel. Timbres that

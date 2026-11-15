@@ -178,10 +178,12 @@ the history, the same way a browser's forward button works.
 ## Internals
 
 A read-only diagnostics view: which top-level chunks and which Program/Combi banks the
-currently-loaded dataset actually contains. This exists because a real backup can
-apparently be saved with only a subset of data included, with nothing else in the app able
-to tell you so -- if a bank you expect is missing here, that's why a Program/Combi you're
-looking for isn't showing up anywhere in [Programs](/guide/prog) or [Combi](/guide/combi) either.
+currently-loaded dataset actually contains. Backups and sound packs often contain only some
+banks -- a pack may ship U-AA to U-FF but leave out U-G in between. The app reads from the
+file itself which banks are there, so every bank shows under its real name, and the banks
+that are missing are marked here. If a bank you expect is missing, that's why a
+Program/Combi you're looking for isn't showing up anywhere in [Programs](/guide/prog) or
+[Combi](/guide/combi) either.
 
 ## Saving your changes
 

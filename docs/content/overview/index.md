@@ -77,8 +77,12 @@ PolysixEX, MOD-7, SGX-2, EP-1) an individual EXi Program uses is confirmed too, 
 against real templates, and so is which sample bank each HD-1 oscillator zone plays --
 checked against a real `.KSC` sample library's own manifest -- so Programs that depend on a
 user sample bank (orange) or a Korg EXs library (light gray) are marked with a small waveform
-icon. The sample library files themselves (`.KSC` / `.KMP` / `.KSF`) are mapped out and
-checked against a real library, but the app doesn't read them yet. Full detail, including exactly
+icon, and each zone's multisample is listed by name for ROM and Korg's EXs libraries (names
+checked against a real Kronos's own sample list). Which KARMA GE a Program or each of a
+Combi's four KARMA modules uses is decoded too, including whether a module runs and whether a
+GE is one of Korg's built-in presets or a User GE loaded from a `.KGE` file. The sample
+library files themselves (`.KSC` / `.KMP` / `.KSF`) are mapped out and checked against a
+real library, but the app doesn't read them yet. Full detail, including exactly
 what's still open, is in [The file format](/format).
 
 ![Main View](DIY-MainPanels.png)
@@ -119,7 +123,26 @@ The editor side, briefly (see the [User Guide](/guide) for the real walkthrough)
   to the copy you kept -- or resolve every duplicate between two banks at once.
 - Combi Timbre lists show each switched-on Timbre's MIDI channel and flag Timbres at
   Volume 0.
+- Information lines on every Program and Combi: the KARMA GE(s) by name, and which sample
+  every Program zone plays -- with User GEs and user sample banks marked, since those only
+  sound right where the same files are loaded on the Kronos.
 - Save-to-file for a pane's edited dataset via a native Save dialog.
+
+## Beyond this repo
+
+Some of the work happens in places whose source isn't public (see
+[Experimental](/experimental) for more):
+
+- **Effects and engine editors** -- a private companion module of the app holds editors for
+  all 185 Kronos effect algorithms, the Insert Effect routing, and the SGX-2 piano engine, plus a
+  MIDI SysEx connection to a real Kronos (macOS only so far).
+- **How-to videos** -- the app can play back a scripted how-to and record its own window;
+  a separate tool then voices each step and renders a narrated video. The recording side is
+  private; the narration and rendering tool is public:
+  [DIY-AI-TOOLS](https://github.com/jens-goes-mad/DIY-AI-TOOLS.public). The first video,
+  a tour of the main window, is in the works.
+
+The public app builds and runs fully without any of it.
 
 ## Contributing
 

@@ -14,11 +14,19 @@ This page covers what's specific to the Programs tab, including Duplicates.
 
 ![Program references](DIY-ProgUsageOverview.png)
 
-Expanding a Program row shows two lists: every **Set List slot** that references it, and
-(where confirmed -- see [The file format](/format) for which banks that covers) every
-**Combi** that references it through one of its Timbres. Each entry is its own jump button
-(see the [User Guide](/guide)'s Jumping section), so you can go straight from a Program to
-everywhere it's actually used.
+Expanding a Program row shows, top to bottom:
+
+- its **KARMA GE** -- the Generated Effect its KARMA module is set to (see
+  [KARMA GEs](#karma-ges) below);
+- its **Samples** -- which multisample every velocity zone plays (see
+  [Sample-based Programs](#sample-based-programs));
+- every **Set List slot** that references it, and (where confirmed -- see
+  [The file format](/format) for which banks that covers) every **Combi** that references
+  it through one of its Timbres. Each entry is its own jump button (see the
+  [User Guide](/guide)'s Jumping section), so you can go straight from a Program to
+  everywhere it's actually used.
+
+The KARMA and Samples lines are information only -- nothing there can be edited.
 
 ## Sample-based Programs
 
@@ -37,11 +45,47 @@ If a Program uses both, the orange icon wins. Hover the icon for a short explana
 same icon appears wherever that Program is referenced: the Duplicates tab, a Set List slot's
 bank button, and a Combi's Timbre list.
 
+### Which samples, by name
+
+Expanding the row lists every zone that plays a multisample, with the oscillator mode
+(Single / Double) in the heading:
+
+```
+Samples (Double):
+  OSC1 Zone 1: ROM 076 Kalimba
+  OSC1 Zone 2: EXs7 007 Piano2.jp main8 (stereo)
+  OSC2 Zone 1: User bank 021cb7e1… 044
+```
+
+- **ROM** and **Korg EXs libraries** are shown with number and name. The names come from
+  Korg's own Voice Name List and were checked against real data -- every EXs name a real
+  Kronos wrote into its own sample list matches.
+- A **user sample bank** is shown by its ID (hover for the full ID) and the multisample
+  number. Its names live in the bank's own `.KSC` file, which the app doesn't read yet.
+- **Sampling RAM** (samples recorded on the Kronos itself) shows the number only.
+- A Program in **Drums** mode plays Drum Kits instead, which aren't decoded yet; an EXi
+  Program shows no sample list.
+
 It is read directly from the Program's own data (details in
 [The file format](/format), section 5.8), with a few known limits: only HD-1 Programs are
 checked; Programs in Drums mode (which play Drum Kits) and EXi MOD-7 Programs' own sample
 section are not covered yet; and a user bank can't be told apart from Korg's very newest
 EXs libraries (EXs127 and above) from the backup file alone.
+
+## KARMA GEs
+
+The **KARMA GE** line names the Generated Effect -- the phrase or pattern generator -- the
+Program's KARMA module is set to, e.g. `652 Analog Velvet 2`.
+
+- GEs **0 to 2047** are Korg's presets, built into every Kronos; their names come from
+  Korg's Voice Name List.
+- From **2048** on it's a **User GE**, shown as e.g. `User GE U-A 026` in orange. User GEs
+  are loaded onto the Kronos from a `.KGE` file (the factory set ships one) -- like a user
+  sample bank, the Program only plays its KARMA part as intended where that same file is
+  loaded. Hover it for a reminder.
+
+The line shows which GE is *set*, not whether KARMA is switched on for the Program -- that
+switch isn't decoded yet. Details: [The file format](/format), section 6.4.
 
 ## Copying a Program by drag-and-drop
 

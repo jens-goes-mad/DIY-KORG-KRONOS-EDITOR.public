@@ -17,6 +17,17 @@ in the repo for that level of detail).
 
 ## Next release (version number not assigned yet)
 
+- **Sound packs with missing banks show correctly**: a backup or sound pack can leave out
+  banks anywhere -- e.g. Narf's "Ultimate Covers" has U-AA to U-FF but no U-G. The app now
+  reads from the file which banks it contains. Before, every bank after such a gap showed
+  one bank too early (U-AA as U-G, U-FF as U-EE), its Combi bank showed as INT-A, and Combis
+  seemed to point at missing or empty Programs.
+- **KARMA GEs**: expanding a Program shows its KARMA GE by name; expanding a Combi shows its
+  KARMA modules A-D, a muted one dimmed. A User GE (from a `.KGE` file) is marked orange.
+  See [KARMA GEs](/guide/prog#karma-ges).
+- **Samples by name**: expanding a Program lists which multisample each zone plays -- ROM and
+  Korg EXs libraries by name, user sample banks by ID. See
+  [Which samples, by name](/guide/prog#which-samples-by-name).
 - **Print a Set List**: **Print Setlist** in the Setlist table's header menu opens a
   leadsheet in your browser -- song name, the slot's comment exactly as stored, and the
   Kronos slot number, two A4-landscape pages stacked on each A4 sheet with a cut line. A
