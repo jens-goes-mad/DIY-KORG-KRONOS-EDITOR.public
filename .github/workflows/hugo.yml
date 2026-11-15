@@ -31,10 +31,17 @@ jobs:
           # setup-go's cache looks by default ("Dependencies file is not found").
           cache-dependency-path: docs/go.sum
 
+      # Pinned to what the local build uses (docs/docker-compose.yml's
+      # hugomods/hugo:exts image: Hugo 0.154.5 + Dart Sass) -- "latest" broke
+      # the build when a new Hugo needed Dart Sass for the theme's SCSS
+      # ("no Dart Sass binary found in $PATH").
+      - name: Install Dart Sass
+        run: sudo snap install dart-sass
+
       - name: Setup Hugo
         uses: peaceiris/actions-hugo@v3
         with:
-          hugo-version: "latest"
+          hugo-version: "0.154.5"
           extended: true
 
       - name: Setup Pages
