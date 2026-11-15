@@ -163,6 +163,9 @@
           // ProgramInfo::usesUserSamples/usesExsSamples.
           usesUserSamples: mockBankType(bank) === 0 && number === 1,
           usesExsSamples: mockBankType(bank) === 0 && number === 4,
+          // ProgramInfo::karmaGe -- a preset GE, and on number 2 a User GE
+          // (2048+), so both looks of karmaGeSpan() show in mock mode.
+          karmaGe: number === 2 ? 2074 : 652,
           setlistReferenceCount: 0,
           combiReferenceCountAvailable: true,
           combiReferenceCount: 0,
@@ -250,6 +253,14 @@
           setlistReferenceCount: setlistUsages.length,
           setlistUsages,
           timbres: makeFakeTimbres(),
+          // CombiInfo::karmaModules -- A running a preset GE, B set but muted
+          // (Run off), C/D at Korg's default.
+          karmaModules: [
+            { ge: 652, run: true },
+            { ge: 2074, run: false },
+            { ge: 0, run: false },
+            { ge: 0, run: false },
+          ],
         });
       });
       // One genuinely blank "Init Combi" per bank -- gives moveCombiToBank()
@@ -624,7 +635,20 @@
             ),
           }))
       : [];
-    return ok({ setlistUsages, combiUsagesAvailable, combiUsages });
+    // EditorBridge::programSamplesToValue(): a ROM, a stereo EXs and a user-bank
+    // zone (the real SGC SAMPLES UUID) on HD-1 Programs; EXi -> mode -1.
+    const samples =
+      mockBankType(bank) === 0
+        ? {
+            oscillatorMode: 1,
+            zones: [
+              { oscillator: 0, zone: 0, kind: "rom", legacyBank: 0, uuid: "4b4f5247-0000-0000-0000-00004d530000", stereo: false, msNumber: 76 },
+              { oscillator: 0, zone: 1, kind: "exs", legacyBank: 4, uuid: "4b4f5247-0000-0000-0000-00004d530009", stereo: true, msNumber: 0 },
+              { oscillator: 1, zone: 0, kind: "user", legacyBank: -1, uuid: "021cb7e1-822b-4b50-955f-4288f163f8a8", stereo: false, msNumber: 44 },
+            ],
+          }
+        : { oscillatorMode: -1, zones: [] };
+    return ok({ setlistUsages, combiUsagesAvailable, combiUsages, samples });
   };
 
   // Mirrors EditorBridge::copyProgram()'s three rejection guards (see

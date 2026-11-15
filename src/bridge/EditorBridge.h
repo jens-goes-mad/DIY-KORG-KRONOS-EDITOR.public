@@ -500,6 +500,9 @@ public:
     // real bank number, from DIV1; banks the file leaves out aren't listed).
     choc::value::Value getDatasetInternals(const choc::value::ValueView& args);
 
+    // getProgramUsage()'s "samples" member -- see its doc comment in EditorBridge.cpp.
+    static choc::value::Value programSamplesToValue(const kronos::PcgFile& file, int bank, int number);
+
     // NOT bound to JS -- this is a native-side-only hook, called by main.cpp
     // once per open window, so every window's own frontend can learn when
     // the shared SET of open datasets changes (a dataset opened/closed --

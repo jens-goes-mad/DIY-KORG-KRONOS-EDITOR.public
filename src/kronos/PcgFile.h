@@ -116,6 +116,9 @@ struct ProgramInfo {
     // frontend's orange / light-gray sample icon.
     bool usesUserSamples = false;
     bool usesExsSamples = false;
+    // The Program's KARMA module's GE Number (KarmaDecoder.h, format doc
+    // §6.4): 0-2047 a Korg preset GE, 2048+ a User GE; -1 if unreadable.
+    int karmaGe = -1;
 };
 
 // A Timbre's on/off + source-engine status, read from the byte immediately
@@ -196,6 +199,13 @@ bool isConfirmedTimbreProgramBank(int programBank);
 // its own table (it used to, and that copy drifted twice, see STATE.md).
 int programBankForConfirmedTimbreCode(int rawBankCode);
 
+// One KARMA module of a Combi (KarmaDecoder.h, format doc §6.4): its GE
+// Number (-1 if unreadable) and "Run GE" (off = the module is muted).
+struct KarmaModule {
+    int ge = -1;
+    bool run = false;
+};
+
 // One Combi, from CMB1's CBK1 banks (see docs/content/format/index.md §5.1). No
 // contentHash -- duplicate detection was only requested for Programs.
 struct CombiInfo {
@@ -204,6 +214,7 @@ struct CombiInfo {
     std::string name;
     std::vector<TimbreRef> timbres;  // always 16 entries, Timbre 1..16 in order
     uint64_t contentHash = 0;        // see CombiDecoder.h's hashCombiRecord()
+    std::vector<KarmaModule> karmaModules;  // always 4 entries, KARMA Module A..D
 };
 
 // One Set List slot that directly references a given Program (as opposed

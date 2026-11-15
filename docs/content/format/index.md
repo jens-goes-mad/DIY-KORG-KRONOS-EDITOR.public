@@ -88,6 +88,11 @@ detail.
   generated ones (a user sample bank loaded from a `.KSC`, or EXs127+). Cross-verified
   against a real KSC's own manifest (its UUID, and 11 multisample names). Drives the
   app's sample (waveform) icon. See §5.8.
+- **KARMA GE / Drum Track pattern references**: a Combi's 4 KARMA modules and a
+  Program's one each name a GE by number (u16 little-endian): 0-2047 Korg's built-in
+  presets, from 2048 User GEs from a loaded `.KGE` file (factory: `PRELOAD.KGE`, bank
+  U-A) -- never data in the PCG. A Drum Track names a Preset
+  or User pattern; User patterns aren't in the PCG. See §6.4.
 - **Sample library files**: `.KSC` is a plain-text load script / name manifest, `.KMP` (one
   multisample) and `.KSF` (one sample, uncompressed 16-bit PCM) use the PCG's chunk framing;
   MS/DS numbering cross-checked against a real 514-sample library. Not read by the app yet.
@@ -95,10 +100,9 @@ detail.
 
 Deliberately **not** solved yet: a handful of reserved bytes whose purpose isn't known
 (byte +17 still has unexplained bits even after Font size/Transpose were found), Drum
-Kits/Wave Sequences/Global settings, and -- a real risk, not just a curiosity -- whether a Program's own KARMA-related fields
-(GE/Switch/Fader Name IDs, KARMA_GE_RTP's own Generated Effect module data) are safe to
-copy verbatim between Programs at all, since `copyProgramFrom()` currently does exactly
-that with no special handling. See §8 for the full, numbered list of open questions.
+Kits/Wave Sequences/Global settings, and whether a Program's KARMA Switch/Fader Name
+IDs and GE RTP data are safe to copy verbatim (the GE Number names a built-in or a
+`.KGE` User GE, §6.4) -- `copyProgramFrom()` copies them with no special handling. See §8 for the full, numbered list of open questions.
 
 ---
 
@@ -879,15 +883,34 @@ files: `Narf Ultimate Covers K2.PCG` 22 user / 184 EXs; `setlist_test_2.PCG` 14 
 UUIDs only -- Old RAM not yet counted then); `K1_20260418.PCG` 44 user (14 generated + 30 Old
 RAM) / 121 EXs; factory `INIT.PCG` 0 user / 166 EXs; never an EXi Program. Open points: §8 #16.
 
-**Stereo multisamples -- CONFIRMED 2026-10-14.** A stereo multisample is stored as an `-L`/`-R`
-pair of consecutive MS numbers, and a Program zone references it by the **`-L` number with UUID
-byte 15 bit 0 set**. Ground truth: the project owner's own sampled bank
+**Stereo multisamples -- CONFIRMED 2026-10-14 (user banks), 2026-11-15 (ROM/EXs).** A stereo
+multisample is stored as an `-L`/`-R` pair of consecutive MS numbers, and a Program zone
+references it with UUID byte 15 bit 0 set. **What its MS Number counts differs by bank kind:**
+in a **user bank** it is the **`-L` number**; in **ROM and the EXs libraries** it is the index
+among that library's **stereo pairs only** (mono entries not counted). The ROM/EXs rule is checked
+against Korg's factory `K1/PRELOAD.PCG`: read that way, all 270 stereo ROM/EXs references land on
+fitting names, none out of range ("Eleanor Rigby Strings" -> ROM stereo 10 "Strings Ensemble 1",
+"Brass Section Sfz EXs18" -> EXs18 stereo 30 "2Tp+2Tb-sfp<", "M/F Whisper EXs18" -> 12
+"Choir-Whisper-Male", "Rosanna Piano" -> EXs7 stereo 7 "Piano2.jp main8"); read as the -L
+number they don't ("Sforzando Brass" would play "Flute 2-Attack"). Mono references index the
+full list ("The Kalimba" -> ROM 076 Kalimba, "Orchestral Celesta" -> 090 Celesta, "Musette" ->
+155 Musette). The user-bank rule: Ground truth: the project owner's own sampled bank
 `JB_20210616_samples_UserBank.KSC` lists its bank as `9ff2d166-15a3-41d2-8e96-120b5196ff36`
 (bit 0 clear) with MS0/1, 2/3, 4/5, 6/7, 8/9 as `-L`/`-R` pairs; every backup that uses it (about
 60 real PCG files, including `setlist_test_2.PCG` and `K1_20260418.PCG`) stores `...ff37` with MS
 Numbers 0, 2, 4, 6, 8 only -- never `ff36`, never an odd number. So any lookup of a Program's bank
 UUID in a KSC (§5.9) must ignore bit 0, as `classifyMultisampleBankUuid()` already does for the
 legacy form.
+
+**Shown in the app (2026-11-15):** a Program's expanded row lists every playing zone ("OSC1
+Zone 1: ROM 076 Kalimba", "EXs7 007 Piano2.jp main8 (stereo)", "User bank 021cb7e1… 044", with
+the full UUID as tooltip). `hd1PlayedMultisamples()` (`ProgramDecoder.cpp`) is the one zone walk;
+`hd1PlayedSampleSources()` (the icon) now reads its result. ROM/EXs names are in
+`frontend/multisample-names.js`, copied from Korg's Voice Name List (pp. 187-197, extracted with
+each text run's position, since its multi-column pages mix libraries in plain text order) and
+checked: all 694 EXs names the owner's Kronos wrote into `JBS/K1/PRELOAD.KSC` match (`#>EXS<e>`
+there = EXs `e+1`). User-bank and Sampling-RAM names live in the bank's `.KSC` / the
+instrument and aren't shown; Drums modes play Drum Kits (not decoded); EXi Programs show nothing.
 
 ### 5.9 Sample library files (`.KSC` / `.KMP` / `.KSF`) -- structure CONFIRMED 2026-10-14
 
@@ -1206,6 +1229,93 @@ turned out to be bad ground truth, not a model gap -- consistent with
 this document's practice of recording what was *actually* resolved and
 how, not just the final answer.
 
+### 6.4 KARMA GE and Drum Track pattern references — GE byte order and User GE mapping CONFIRMED (2026-11-15)
+
+A KARMA module plays a **GE** (Generated Effect), named by number. Fields per Korg's
+own tables, file offset = Korg's SysEx offset + 4 (the same shift as the Timbres, §6.1):
+
+| Record | Field | Korg offset | File offset | Value |
+|---|---|---|---|---|
+| Combi (`CombiAndSongTimbreSet.txt`) | KARMA Module A/B/C/D GE Number | 1814 / 2558 / 3302 / 4046 | +4 | u16 **little-endian**, `0000~0DFF` |
+| Program (`Prog_HD-1.txt`, `Prog_EXi_Common.txt`) | KARMA Module GE Number (one module) | 1814 | 1818 | same |
+| Combi and Program | Drum Track Pattern Number / Pattern Bank | 1292 / 1294 | +4 | u16 LE `0~999` / byte, 0 Preset, 1 User |
+| Combi (Program: fixed On) | KARMA Module A/B/C/D "Run GE" | 2108 / 2852 / 3596 / 4340, bit 5 | +4 | 1 = runs, 0 = muted (Parameter Guide: "The Run settings are stored with the combination") |
+
+**Run GE checked against real bytes**: Korg's Program tables give it as fixed On,
+and it is set in all 6,656 Programs of `K1_20260418.PCG`, `K1/PRELOAD.PCG` and the
+Narf K2 file -- which also confirms the +4 shift this far into the KARMA block.
+(`KARMA Fx Switch`, byte 1306 bit 7, is *not* the front-panel KARMA ON/OFF state
+as one might guess: set in only 4 of `K1/PRELOAD.PCG`'s 1,792 Programs. What
+stores that switch is still open.)
+
+**Byte order checked against real bytes**: read little-endian, every GE Number in
+`K1_20260418.PCG`, `K1/PRELOAD.PCG` and both Narf files lies within Korg's
+`0000~0DFF` (max exactly 3583); read big-endian, 1,515 of `K1/PRELOAD.PCG`'s Combi
+module values fall outside it.
+
+**GE numbers 0-2047 are Korg's built-in preset GEs**, listed by number and name in
+the Voice Name List (`docs/external/KORG/KRONOS_VNL_EFGSJ3.pdf`, "KARMA GEs Preset",
+from p. 225: 0 "Arp Model 01 Up/Dn" -- also Korg's own label for value `0000` in
+the parameter tables -- up to 2047). They are in the instrument; the PCG holds no
+GE data of its own.
+
+**GE numbers from 2048 are User GEs: 2048 + k = slot k of User GE bank U-A**,
+whose data comes from a **`.KGE` file** loaded on the unit, not from the PCG.
+Korg's factory `PRELOAD.KGE` (`JBS/K1/`, `JBS/K2/`, byte-identical, 325,804
+bytes) is one such bank, listed in the Voice Name List as "KARMA GEs USER-A"
+(p. 255 on). Checked by name: Korg's factory Programs "Vel Expression Lead"
+2056 -> slot 8 "Vel Expression Lead", "Solar Winds" 2060 -> 12 "Solar Winds",
+"Knee-Deep Bass"/"Pure Power Bass" 2107 -> 59 "Electro Bass", "VJS SyncBlaster
+Lead" 2109 -> 61 "Blaster", "DONKADrums" 2117 -> 69 "Dumb Kut". `0x0DFF` (3583)
+is the top of the range, i.e. room for 12 User GE banks of 128 (U-A..?) -- only
+U-A has been seen; 3583 itself occurs in factory Combis, meaning unknown.
+
+KGE layout (seen in the three KGE files at hand), PCG-style chunks after a
+32-byte header starting `KORG`: `KGE1 > (GENM > GENB, GEDT)`. `GENB`: u32be 128
+(GEs), u32be 32 (name stride), 8 more bytes, then the bank name ("Bank U-A")
+and the 128 GE names, 32 bytes each, NUL-padded (the first at file offset
+0x6C; slot 127 of the factory bank is "Init GE U-A127"). `GEDT` (321,588 bytes)
+holds the GE data itself, not decoded.
+
+So copying a GE reference is safe for 0-2047 (identical on every unit, provided
+its OS has that GE). From 2048 on it is like a sample-bank reference (§5.8):
+the copy is only right where the same KGE is loaded. Not yet checked on real
+hardware: that the unit shows the PDF's name for a preset number (anchor below).
+
+**Narf "Ultimate Covers" (K2 file)**, as an example of a third-party pack:
+
+- Combis: only 6 of 128 set a GE, all in Module A, all presets: "Money For
+  Nothing" 652 "Analog Velvet 2", "Hungry Like A Wolf SW2" 4 "Arp Model 05 Rand",
+  "Pony" 186 "Mallet Repeats 1", "Rosanna" 2034 "Clav Snap RT", "Shooting Stars"
+  1758 "Techno 08 [Some Kits]". Modules B-D are always 0. Only 3 of the pack's
+  512 Combi modules have Run on; "Money For Nothing" and "Rosanna" have theirs
+  off, so as saved those GEs are muted. ("Money For Nothing"'s 652 is the GE of
+  its own Program "Money 4 Nothing High Pad"; a Program's KARMA doesn't run
+  inside a Combi -- Korg's manual, not checked here -- so whatever plays the
+  song's pattern isn't a GE.)
+- Programs: 817 distinct GEs; the 26 at 2048 or above (User GEs) are 24 Korg
+  factory Programs (same name and GE as in Korg's PRELOAD files) plus Narf's
+  "These Dreams Bell" (U-CC 069) and "Human Nature Bell" (U-FF 046), both 2074 =
+  factory U-A slot 26 "Glassica", like Korg's "Ensem-Bell". Narf ships no KGE:
+  these rely on the factory `PRELOAD.KGE` being loaded. No GE of Narf's own.
+- Drum Track: every Combi and Program uses a Preset pattern except Program
+  "Belly Intellesting" (U-FF 010): User pattern 12. User patterns are not in
+  this PCG (where the Kronos stores them is not investigated), so on another
+  unit that Program plays whatever that unit's User pattern 12 is.
+
+**Hardware anchor to check**: Combi "Money For Nothing" (Narf K2 file, loaded
+as shipped), KARMA Module A should show GE 652 "Analog Velvet 2".
+
+Shown in the app (2026-11-15): a Program's expanded row starts with its GE, a
+Combi's with its modules that run or have a GE other than 0 (a muted one
+dimmed, "not running"); a User GE is accent-coloured with a "needs the KGE"
+tooltip. Decoded in `src/kronos/KarmaDecoder.h`, named in
+`frontend/karma-ge-names.js` (the preset list copied from the Voice Name List).
+
+Still open (§8 #15): the Switch/Fader Name IDs (`0000~02FF`) -- very likely
+the Voice Name List's "KARMA RTC Name" list (p. 256), i.e. also built-in, but
+not checked -- and the module on/off and scene fields.
+
 ## 7. Notes from an external reference (not yet used by this parser)
 
 [`docs/references/PCG-Structure-Kronos-DaBlick.txt`](https://github.com/jens-goes-mad/DIY-KORG-KRONOS-EDITOR/blob/main/docs/references/PCG-Structure-Kronos-DaBlick.txt)
@@ -1382,7 +1492,13 @@ Recorded here for later, even though nothing below is wired into
     one bank's Init Program template into a different bank's slot (the
     planned Duplicates-panel feature) is safe given that value isn't
     identical across banks even for untouched factory content.
-15. **NOT YET INVESTIGATED (2026-08-14)** -- a real risk flagged directly,
+15. **PARTLY RESOLVED (2026-11-15), see §6.4**: the GE Number is a
+    number into Korg's built-in preset GEs (0-2047) or, from 2048, into the
+    User GE banks loaded from a `.KGE` file (2048 + k = U-A slot k) -- never
+    into data stored in the PCG. Copying it is safe for presets; a User GE is
+    only right where the same KGE is loaded (like a sample bank). Still open below: the Switch/Fader Name IDs and
+    the GE RTP data. Original question: **NOT YET INVESTIGATED (2026-08-14)**
+    -- a real risk flagged directly,
     not discovered by this project's own testing: a Program's raw record
     (Korg's own `Prog_HD-1.txt`/`Prog_EXi_Common.txt`) has a whole "KARMA
     Common" section -- Module Control, GE/Time Signature, and eight each

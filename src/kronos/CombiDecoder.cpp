@@ -1,5 +1,7 @@
 #include "CombiDecoder.h"
 
+#include "KarmaDecoder.h"
+
 #include <algorithm>
 
 namespace kronos {
@@ -161,7 +163,11 @@ uint64_t hashCombiRecord(const uint8_t* record, size_t recordSize) {
 
 CombiInfo decodeCombiInfo(const uint8_t* record, size_t recordSize, int bank, int number) {
     CombiFields fields = decodeCombiFields(record, recordSize, bank, number);
-    return CombiInfo{fields.bank, fields.number, fields.name, fields.timbres, hashCombiRecord(record, recordSize)};
+    CombiInfo info{fields.bank, fields.number, fields.name, fields.timbres, hashCombiRecord(record, recordSize)};
+    for (int m = 0; m < kKarmaCombiModuleCount; ++m) {
+        info.karmaModules.push_back({decodeKarmaGeNumber(record, recordSize, m), decodeKarmaRunGe(record, recordSize, m)});
+    }
+    return info;
 }
 
 size_t timbreByteOffset(int timbreIndex) {

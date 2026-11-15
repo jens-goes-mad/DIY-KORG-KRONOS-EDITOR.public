@@ -1,10 +1,12 @@
 #include "EditorBridge.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 
 #include "kronos/CombiDecoder.h"
+#include "kronos/ProgramDecoder.h"
 #include "platform/NativeFileDialog.h"
 #include "platform/OpenInBrowser.h"
 
@@ -263,6 +265,8 @@ choc::value::Value EditorBridge::programToValue(const kronos::ProgramInfo& progr
     // frontend's sample (waveform) icon.
     v.setMember("usesUserSamples", program.usesUserSamples);
     v.setMember("usesExsSamples", program.usesExsSamples);
+    // GE Number only -- pane.js's formatKarmaGe() names it.
+    v.setMember("karmaGe", program.karmaGe);
     return v;
 }
 
@@ -306,6 +310,15 @@ choc::value::Value EditorBridge::combiToValue(const kronos::CombiInfo& combi) {
         timbres.addArrayElement(tv);
     }
     v.setMember("timbres", timbres);
+    // KARMA Modules A-D: GE Number + Run -- pane.js's formatKarmaGe() names it.
+    auto karmaModules = choc::value::createEmptyArray();
+    for (const auto& m : combi.karmaModules) {
+        auto mv = choc::value::createObject("KarmaModule");
+        mv.setMember("ge", m.ge);
+        mv.setMember("run", m.run);
+        karmaModules.addArrayElement(mv);
+    }
+    v.setMember("karmaModules", karmaModules);
     return v;
 }
 
@@ -869,7 +882,48 @@ choc::value::Value EditorBridge::getProgramUsage(const choc::value::ValueView& a
     result.setMember("combiUsagesAvailable", combiAvailable);
     result.setMember("combiUsages", combiAvailable ? combiUsagesToValue(file->combiUsagesForProgram(bank, number))
                                                     : choc::value::createEmptyArray());
+    result.setMember("samples", programSamplesToValue(*file, bank, number));
     return result;
+}
+
+// The multisamples an HD-1 Program's zones play (kronos::hd1PlayedMultisamples(),
+// format doc §5.8): {oscillatorMode, zones:[{oscillator, zone, kind, legacyBank,
+// uuid, stereo, msNumber}]}, kind "rom"/"oldRam"/"exs"/"user"/"invalid". IDs only --
+// pane-program-editor.js names ROM/EXs multisamples itself. oscillatorMode -1 (no
+// zones) for an EXi Program, whose record holds other data there.
+choc::value::Value EditorBridge::programSamplesToValue(const kronos::PcgFile& file, int bank, int number) {
+    auto v = choc::value::createObject("ProgramSamples");
+    kronos::Hd1Multisamples played;
+    const auto bankType = file.programBankTypeAt(bank);
+    const auto bytes = file.programRecordBytes(bank, number);
+    if (bankType == kronos::ProgramBankType::Hd1 && bytes) played = kronos::hd1PlayedMultisamples(bytes->data(), bytes->size());
+    v.setMember("oscillatorMode", played.oscillatorMode);
+    auto zones = choc::value::createEmptyArray();
+    for (const auto& ms : played.zones) {
+        auto z = choc::value::createObject("PlayedMultisample");
+        z.setMember("oscillator", ms.oscillator);
+        z.setMember("zone", ms.zone);
+        const char* kind = "invalid";
+        switch (ms.kind) {
+            case kronos::MultisampleBankKind::Rom: kind = "rom"; break;
+            case kronos::MultisampleBankKind::OldRam: kind = "oldRam"; break;
+            case kronos::MultisampleBankKind::Exs: kind = "exs"; break;
+            case kronos::MultisampleBankKind::Generated: kind = "user"; break;
+            case kronos::MultisampleBankKind::Invalid: break;
+        }
+        z.setMember("kind", std::string(kind));
+        z.setMember("legacyBank", ms.legacyBank);
+        char uuid[37];
+        const uint8_t* u = ms.uuid;
+        std::snprintf(uuid, sizeof uuid, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", u[0], u[1],
+                      u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
+        z.setMember("uuid", std::string(uuid));
+        z.setMember("stereo", ms.stereo);
+        z.setMember("msNumber", ms.msNumber);
+        zones.addArrayElement(z);
+    }
+    v.setMember("zones", zones);
+    return v;
 }
 
 choc::value::Value EditorBridge::findDuplicatePrograms(const choc::value::ValueView& args) {

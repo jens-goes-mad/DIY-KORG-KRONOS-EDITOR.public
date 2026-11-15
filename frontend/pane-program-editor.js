@@ -167,6 +167,44 @@ function createProgramsPanel(
   // list item. Set List jumps go through onJumpToSetlist (switches this pane
   // to its Setlist category, selects that Set List, opens+scrolls to that
   // slot); Combi jumps reuse the existing onJumpToInstrument (isProgram: false).
+  // The multisamples an HD-1 Program's zones play, as information (format
+  // doc §5.8; names from multisample-names.js). Nothing for an EXi Program
+  // (oscillatorMode -1: its record holds other data there); Drums modes play
+  // Drum Kits, which aren't decoded.
+  const OSCILLATOR_MODE_NAMES = { 0: "Single", 1: "Double", 2: "Drums", 5: "Double Drums" };
+  function buildSampleList(samples) {
+    const wrap = document.createElement("div");
+    if (samples.oscillatorMode < 0) return wrap;
+    const mode = OSCILLATOR_MODE_NAMES[samples.oscillatorMode] || `mode ${samples.oscillatorMode}`;
+    const heading = document.createElement("div");
+    heading.className = "usage-heading";
+    wrap.appendChild(heading);
+    if (samples.zones.length === 0) {
+      heading.textContent =
+        samples.oscillatorMode === 2 || samples.oscillatorMode === 5
+          ? `Samples (${mode}): plays Drum Kits -- not decoded yet`
+          : `Samples (${mode}): none`;
+      return wrap;
+    }
+    heading.textContent = `Samples (${mode}):`;
+    const list = document.createElement("ul");
+    list.className = "usage-list timbre-list";
+    for (const z of samples.zones) {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.className = "timbre-label";
+      label.textContent = `OSC${z.oscillator + 1} Zone ${z.zone + 1}:`;
+      const { text, title } = formatPlayedMultisample(z);
+      const ref = document.createElement("span");
+      ref.textContent = text;
+      if (title) ref.title = title;
+      li.append(label, ref);
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+    return wrap;
+  }
+
   function buildUsageRow(program) {
     const tr = document.createElement("tr");
     tr.className = "editor-row";  // reuses the shared expand-row look from pane.js/style.css
@@ -185,6 +223,17 @@ function createProgramsPanel(
         box.textContent = `Error: ${usage.error}`;
         return;
       }
+
+      // The Program's KARMA GE, as information (format doc §6.4) -- not
+      // whether KARMA is switched on for it, which isn't decoded.
+      if (formatKarmaGe(program.karmaGe)) {
+        const karma = document.createElement("div");
+        karma.className = "usage-heading";
+        karma.append("KARMA GE: ", karmaGeSpan(program.karmaGe));
+        box.appendChild(karma);
+      }
+
+      if (usage.samples) box.appendChild(buildSampleList(usage.samples));
 
       const heading = document.createElement("div");
       heading.className = "usage-heading";

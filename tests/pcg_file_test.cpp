@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "kronos/CombiDecoder.h"
+#include "kronos/KarmaDecoder.h"
 #include "kronos/KscFile.h"
 #include "kronos/PcgFile.h"
 #include "kronos/ProgramDecoder.h"
@@ -394,6 +395,35 @@ void testMultisampleBankReferences() {
     }
     const auto truncated = kronos::hd1PlayedSampleSources(init.data(), 3000);
     CHECK_EQ(truncated.user || truncated.exs, false, "a truncated record never counts");
+
+    // hd1PlayedMultisamples(): the same zones, as a list (the Program row's sample info).
+    const auto initZones = kronos::hd1PlayedMultisamples(init.data(), init.size());
+    CHECK_EQ(initZones.oscillatorMode, 0, "Init: Single");
+    CHECK_EQ(initZones.zones.size(), size_t{1}, "Init: one playing zone");
+    if (!initZones.zones.empty()) {
+        CHECK(initZones.zones[0].kind == MultisampleBankKind::Rom);
+        CHECK_EQ(initZones.zones[0].legacyBank, 0, "ROM = legacy bank 0");
+    }
+    {
+        std::vector<uint8_t> r = init;  // Double: OSC1 Zone1 EXs126 stereo MS 300, OSC2 Zone3 SGC MS 44
+        r[kMode] = static_cast<uint8_t>((r[kMode] & ~0x07) | 1);
+        std::copy(exs126Stereo, exs126Stereo + 16, r.begin() + static_cast<long>(kOsc1) + 1);
+        r[kOsc1 + 18] = 0x2c;  // 300 little-endian, zone bytes 18-19
+        r[kOsc1 + 19] = 0x01;
+        const size_t z3 = kOsc2 + 2 * kStride;
+        r[z3] = static_cast<uint8_t>((r[z3] & ~0x03) | 1);
+        std::copy(sgc, sgc + 16, r.begin() + static_cast<long>(z3) + 1);
+        r[z3 + 18] = 44;
+        r[z3 + 19] = 0;
+        const auto zones = kronos::hd1PlayedMultisamples(r.data(), r.size()).zones;
+        CHECK(!zones.empty() && zones.back().oscillator == 1 && zones.back().zone == 2);
+        if (zones.size() >= 2) {
+            CHECK(zones[0].kind == MultisampleBankKind::Exs && zones[0].legacyBank == 127 && zones[0].stereo);
+            CHECK_EQ(zones[0].msNumber, 300, "MS Number little-endian");
+            CHECK(zones.back().kind == MultisampleBankKind::Generated && zones.back().legacyBank == -1);
+            CHECK_EQ(zones.back().msNumber, 44, "SGC MS 44");
+        }
+    }
 }
 
 // parseKsc() against verbatim excerpts of the three real KSC kinds (format
@@ -541,6 +571,48 @@ void testExiAlgorithmTypeRealTemplates() {
         auto fields = kronos::decodeProgramFields(exi.data(), exi.size(), 0, 0);
         CHECK_EQ(fields.exiAlgorithmType, 2, "the factory Init EXi Program defaults to AL-1 (2)");
     }
+}
+
+// KARMA GE Number / Run GE (KarmaDecoder.h, format doc §6.4). Program side:
+// Korg's real Init Program templates -- GE 0 ("Arp Model 01 Up/Dn", Korg's
+// default) and Run GE set (fixed On for Programs). Combi side: the real
+// module bytes of Narf's "Money For Nothing" (K2 file, Combi U-F 068): Module
+// A = 8c 02 (GE 652 little-endian), Run byte 0x05 (bit 5 clear: muted), B-D =
+// 00 00 / 0x01.
+void testDecodeKarma() {
+    std::ifstream file(std::string(EDITOR_RESOURCES_DIR) + "/Init-Program-HD1.raw", std::ios::binary);
+    std::vector<uint8_t> hd1((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    CHECK_EQ(static_cast<int>(hd1.size()), 4960, "Init-Program-HD1.raw present");
+    if (hd1.size() == 4960) {
+        CHECK_EQ(kronos::decodeKarmaGeNumber(hd1.data(), hd1.size(), 0), 0, "Init Program GE 0");
+        CHECK(kronos::decodeKarmaRunGe(hd1.data(), hd1.size(), 0));
+        const auto info = kronos::decodeProgramInfo(hd1.data(), hd1.size(), 0, 0, kronos::ProgramBankType::Hd1);
+        CHECK_EQ(info.karmaGe, 0, "ProgramInfo::karmaGe");
+    }
+
+    const size_t kCombiRecordSize = kTimbreBaseOffset + kTimbreStride * 16;
+    auto combi = makeCbkCombiRecord("Money For Nothing", kCombiRecordSize);
+    const uint8_t moduleBytes[4][3] = {{0x8c, 0x02, 0x05}, {0x00, 0x00, 0x01}, {0x00, 0x00, 0x01}, {0x00, 0x00, 0x01}};
+    for (int m = 0; m < 4; ++m) {
+        const size_t off = kronos::kKarmaGeNumberOffset + m * kronos::kKarmaModuleStride;
+        combi[off] = moduleBytes[m][0];
+        combi[off + 1] = moduleBytes[m][1];
+        combi[off + kronos::kKarmaRunGeRelativeOffset] = moduleBytes[m][2];
+    }
+    auto info = kronos::decodeCombiInfo(combi.data(), combi.size(), 0, 0);
+    CHECK_EQ(info.karmaModules.size(), size_t{4}, "four KARMA modules");
+    CHECK_EQ(info.karmaModules[0].ge, 652, "Module A GE 652 (Analog Velvet 2)");
+    CHECK(!info.karmaModules[0].run);
+    CHECK_EQ(info.karmaModules[3].ge, 0, "Module D GE 0");
+
+    combi[kronos::kKarmaGeNumberOffset + kronos::kKarmaModuleStride + kronos::kKarmaRunGeRelativeOffset] |= 0x20;
+    combi[kronos::kKarmaGeNumberOffset + kronos::kKarmaModuleStride] = 0x01;  // Module B -> 2049, User GE U-A 001
+    combi[kronos::kKarmaGeNumberOffset + kronos::kKarmaModuleStride + 1] = 0x08;
+    info = kronos::decodeCombiInfo(combi.data(), combi.size(), 0, 0);
+    CHECK(info.karmaModules[1].run);
+    CHECK_EQ(info.karmaModules[1].ge, 2049, "Module B GE 2049");
+
+    CHECK_EQ(kronos::decodeKarmaGeNumber(combi.data(), 100, 0), -1, "short record: no GE");
 }
 
 void testDecodeCombiFields() {
@@ -4273,6 +4345,7 @@ int main() {
     testMultisampleBankReferences();
     testParseKsc();
     testDecodeCombiFields();
+    testDecodeKarma();
     testHashProgramRecord();
     testPcgFileEndToEnd();
     testPcgFileNoSetlists();

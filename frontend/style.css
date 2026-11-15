@@ -648,6 +648,12 @@ td.has-comment {
   color: lightgray;
 }
 
+/* A User GE (karma-ge-names.js's karmaGeSpan()): same accent as the user-
+   sample icon, since both depend on a file loaded on the Kronos. */
+.karma-ge.is-user {
+  color: var(--editor-accent);
+}
+
 /* Still used by library.js's refCell() -- Combi usage counts aren't
    confirmed correct for every bank yet (see docs/README.md), shown
    dimmed/italic rather than hidden. */

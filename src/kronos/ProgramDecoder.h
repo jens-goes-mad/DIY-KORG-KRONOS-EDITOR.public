@@ -129,6 +129,28 @@ struct Hd1SampleSources {
 };
 Hd1SampleSources hd1PlayedSampleSources(const uint8_t* record, size_t recordSize);
 
+// The zones behind hd1PlayedSampleSources(), one entry per zone that plays a
+// multisample (same rules: HD-1 layout, OSC1 + OSC2 only in Double mode, MS
+// Type = Multisample) -- what the Program's expanded row lists as "ID and
+// name" information. `uuid` is the zone's raw bank UUID (byte 15 bit 0 =
+// stereo, see above); `legacyBank` is the legacy bank number (0 ROM, 1 Old
+// RAM, 2 = EXs1 ...) for a legacy UUID, -1 otherwise; `msNumber` names the
+// multisample within that bank (a stereo one by its -L number).
+struct PlayedMultisample {
+    int oscillator = 0;  // 0 = OSC1, 1 = OSC2
+    int zone = 0;        // 0-7
+    MultisampleBankKind kind = MultisampleBankKind::Invalid;
+    int legacyBank = -1;
+    uint8_t uuid[16] = {};
+    bool stereo = false;
+    int msNumber = 0;
+};
+struct Hd1Multisamples {
+    int oscillatorMode = -1;  // raw: 0 Single, 1 Double, 2 Drums, 5 Double Drums; -1 if unreadable
+    std::vector<PlayedMultisample> zones;
+};
+Hd1Multisamples hd1PlayedMultisamples(const uint8_t* record, size_t recordSize);
+
 // The one place a ProgramInfo (PcgFile.h) is built from a record's bytes --
 // decodeProgramFields() + hashProgramRecord() + hd1PlayedSampleSources()
 // (HD-1 banks only, see its doc comment). Used by PcgFile's load pass,

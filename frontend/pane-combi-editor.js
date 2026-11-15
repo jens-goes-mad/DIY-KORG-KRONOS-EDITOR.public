@@ -275,11 +275,42 @@ function createCombisPanel(
     return { ref, refSuffix, name, programBank, bankPresent, sampleKind };
   }
 
+  // KARMA Modules A-D, as information (format doc §6.4): each module that
+  // runs or has a GE other than 0 (Korg's default), one per line like the
+  // Timbres below. A module whose Run is off is muted -- shown dimmed.
+  function buildKarmaModules(combi) {
+    const wrap = document.createElement("div");
+    const modules = (combi.karmaModules || [])
+      .map((m, i) => ({ ...m, letter: "ABCD"[i] }))
+      .filter((m) => m.run || m.ge > 0);
+    const heading = document.createElement("div");
+    heading.className = "usage-heading";
+    heading.textContent = modules.length ? "KARMA modules:" : "KARMA modules: none set";
+    wrap.appendChild(heading);
+    if (!modules.length) return wrap;
+    const list = document.createElement("ul");
+    list.className = "usage-list timbre-list";
+    for (const m of modules) {
+      const li = document.createElement("li");
+      li.className = m.run ? "" : "timbre-inactive-ref";
+      const label = document.createElement("span");
+      label.className = "timbre-label";
+      label.textContent = `Module ${m.letter}:`;
+      li.append(label, karmaGeSpan(m.ge));
+      if (!m.run) li.append(" (not running)");
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+    return wrap;
+  }
+
   function buildTimbreRow(combi) {
     const tr = document.createElement("tr");
     tr.className = "editor-row";  // reuses the shared expand-row look from pane.js/style.css
     const td = document.createElement("td");
     td.colSpan = 5;  // Bank, Name, Set Lists, #STL, menu -- a real <table> again
+
+    td.appendChild(buildKarmaModules(combi));
 
     const heading = document.createElement("div");
     heading.className = "usage-heading";

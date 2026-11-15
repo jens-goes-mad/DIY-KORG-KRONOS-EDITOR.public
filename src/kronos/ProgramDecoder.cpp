@@ -1,5 +1,9 @@
 #include "ProgramDecoder.h"
 
+#include "KarmaDecoder.h"
+
+#include <algorithm>
+
 namespace kronos {
 
 namespace {
@@ -92,7 +96,7 @@ MultisampleBankKind classifyMultisampleBankUuid(const uint8_t* uuid16) {
 }
 
 // See the header's doc comment for where every offset/value comes from.
-Hd1SampleSources hd1PlayedSampleSources(const uint8_t* record, size_t recordSize) {
+Hd1Multisamples hd1PlayedMultisamples(const uint8_t* record, size_t recordSize) {
     constexpr size_t kOscillatorModeOffset = 2562;
     constexpr size_t kZoneOffsets[2] = {2778, 3244};  // OSC1, OSC2
     constexpr size_t kZoneStride = 22;
@@ -100,20 +104,39 @@ Hd1SampleSources hd1PlayedSampleSources(const uint8_t* record, size_t recordSize
     constexpr int kModeSingle = 0, kModeDouble = 1;
     constexpr int kMsTypeMultisample = 1;
 
-    Hd1SampleSources sources;
-    if (kZoneOffsets[1] + kZonesPerOscillator * kZoneStride > recordSize) return sources;
-    int mode = record[kOscillatorModeOffset] & 0x07;
-    int oscillators = mode == kModeSingle ? 1 : mode == kModeDouble ? 2 : 0;
+    Hd1Multisamples result;
+    if (kZoneOffsets[1] + kZonesPerOscillator * kZoneStride > recordSize) return result;
+    result.oscillatorMode = record[kOscillatorModeOffset] & 0x07;
+    int oscillators = result.oscillatorMode == kModeSingle ? 1 : result.oscillatorMode == kModeDouble ? 2 : 0;
     for (int osc = 0; osc < oscillators; ++osc) {
         for (int z = 0; z < kZonesPerOscillator; ++z) {
             const uint8_t* zone = record + kZoneOffsets[osc] + z * kZoneStride;
             if ((zone[0] & 0x03) != kMsTypeMultisample) continue;
-            switch (classifyMultisampleBankUuid(zone + 1)) {
-                case MultisampleBankKind::Generated:
-                case MultisampleBankKind::OldRam: sources.user = true; break;
-                case MultisampleBankKind::Exs: sources.exs = true; break;
-                default: break;
+            PlayedMultisample ms;
+            ms.oscillator = osc;
+            ms.zone = z;
+            ms.kind = classifyMultisampleBankUuid(zone + 1);
+            std::copy(zone + 1, zone + 17, ms.uuid);
+            ms.stereo = (zone[16] & 0x01) != 0;
+            if (ms.kind == MultisampleBankKind::Rom || ms.kind == MultisampleBankKind::OldRam ||
+                ms.kind == MultisampleBankKind::Exs) {
+                ms.legacyBank = zone[16] >> 1;
             }
+            ms.msNumber = zone[18] | (zone[19] << 8);
+            result.zones.push_back(ms);
+        }
+    }
+    return result;
+}
+
+Hd1SampleSources hd1PlayedSampleSources(const uint8_t* record, size_t recordSize) {
+    Hd1SampleSources sources;
+    for (const auto& ms : hd1PlayedMultisamples(record, recordSize).zones) {
+        switch (ms.kind) {
+            case MultisampleBankKind::Generated:
+            case MultisampleBankKind::OldRam: sources.user = true; break;
+            case MultisampleBankKind::Exs: sources.exs = true; break;
+            default: break;
         }
     }
     return sources;
@@ -133,6 +156,7 @@ ProgramInfo decodeProgramInfo(const uint8_t* record, size_t recordSize, int bank
         info.usesUserSamples = sources.user;
         info.usesExsSamples = sources.exs;
     }
+    info.karmaGe = decodeKarmaGeNumber(record, recordSize, 0);
     return info;
 }
 
