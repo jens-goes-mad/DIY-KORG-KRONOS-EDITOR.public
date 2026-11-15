@@ -726,10 +726,34 @@ function formatPlayedMultisample(z) {
     return { text: `${bank} ${number}${name ? " " + name : ""}${stereo}`, title };
   }
   if (z.kind === "user") {
+    const bankId = sampleBankId(z.uuid);
     return {
-      text: `User bank ${z.uuid.slice(0, 8)}… ${number}${stereo}`,
-      title: `Sample bank ${z.uuid}, multisample ${z.msNumber}. Its name is in that bank's .KSC file, which the editor doesn't read yet.`,
+      text: `User bank ${bankId} ${number}${stereo}`,
+      title: `Multisample ${z.msNumber} of the user sample bank ${bankId}. Its name is in that bank's .KSC file.`,
+      status: sampleBankStatus(bankId),
     };
   }
   return { text: `Invalid bank ${number}`, title: z.uuid };
 }
+
+// A user sample bank's ID as its .KSC writes it (`#uuid:...`): a zone that
+// plays a stereo multisample stores the ID with byte 15 bit 0 set (format
+// doc §5.8 -- `...ff37` for the KSC's `...ff36`), so that bit is cleared here.
+function sampleBankId(uuid) {
+  const last = parseInt(uuid.slice(-2), 16);
+  return uuid.slice(0, -2) + (last & 0xfe).toString(16).padStart(2, "0");
+}
+
+// "attached" when a .KSC with this bank ID is attached to the dataset,
+// otherwise "unreferenced". The editor doesn't load or attach KSC files yet
+// (STATE.md's KSC plan), so every user bank is "unreferenced" for now.
+function sampleBankStatus(bankId) {
+  return "unreferenced";
+}
+
+const SAMPLE_BANK_STATUS_TITLES = {
+  attached: "A .KSC file with this sample bank ID is attached.",
+  unreferenced:
+    "No .KSC file with this sample bank ID is attached -- the editor doesn't load sample files yet. " +
+    "On the Kronos, this Program needs that sample bank loaded.",
+};

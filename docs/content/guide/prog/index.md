@@ -16,15 +16,15 @@ This page covers what's specific to the Programs tab, including Duplicates.
 
 Expanding a Program row shows, top to bottom:
 
-- its **KARMA GE** -- the Generated Effect its KARMA module is set to (see
-  [KARMA GEs](#karma-ges) below);
-- its **Samples** -- which multisample every velocity zone plays (see
-  [Sample-based Programs](#sample-based-programs));
 - every **Set List slot** that references it, and (where confirmed -- see
   [The file format](/format) for which banks that covers) every **Combi** that references
   it through one of its Timbres. Each entry is its own jump button (see the
   [User Guide](/guide)'s Jumping section), so you can go straight from a Program to
-  everywhere it's actually used.
+  everywhere it's actually used;
+- its **KARMA GE** -- the Generated Effect its KARMA module is set to (see
+  [KARMA GEs](#karma-ges) below);
+- its **Samples** -- which multisample every velocity zone plays (see
+  [Sample-based Programs](#sample-based-programs)).
 
 The KARMA and Samples lines are information only -- nothing there can be edited.
 
@@ -54,14 +54,18 @@ Expanding the row lists every zone that plays a multisample, with the oscillator
 Samples (Double):
   OSC1 Zone 1: ROM 076 Kalimba
   OSC1 Zone 2: EXs7 007 Piano2.jp main8 (stereo)
-  OSC2 Zone 1: User bank 021cb7e1… 044
+  OSC2 Zone 1: User bank 021cb7e1-822b-4b50-955f-4288f163f8a8 044  unreferenced
 ```
 
 - **ROM** and **Korg EXs libraries** are shown with number and name. The names come from
   Korg's own Voice Name List and were checked against real data -- every EXs name a real
   Kronos wrote into its own sample list matches.
-- A **user sample bank** is shown by its ID (hover for the full ID) and the multisample
-  number. Its names live in the bank's own `.KSC` file, which the app doesn't read yet.
+- A **user sample bank** is shown by its ID -- exactly as the bank's own `.KSC` file writes
+  it, so you can find the matching file -- and the multisample number, plus a mark:
+  **attached** when a `.KSC` with that ID is attached, **unreferenced** (orange) when not.
+  The app doesn't load sample files yet, so for now every user bank shows
+  **unreferenced** -- a reminder that the Kronos needs that bank loaded. The multisample
+  names live in that `.KSC` too.
 - **Sampling RAM** (samples recorded on the Kronos itself) shows the number only.
 - A Program in **Drums** mode plays Drum Kits instead, which aren't decoded yet; an EXi
   Program shows no sample list.

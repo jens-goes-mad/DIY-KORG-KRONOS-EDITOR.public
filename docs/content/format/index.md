@@ -903,8 +903,10 @@ UUID in a KSC (§5.9) must ignore bit 0, as `classifyMultisampleBankUuid()` alre
 legacy form.
 
 **Shown in the app (2026-11-15):** a Program's expanded row lists every playing zone ("OSC1
-Zone 1: ROM 076 Kalimba", "EXs7 007 Piano2.jp main8 (stereo)", "User bank 021cb7e1… 044", with
-the full UUID as tooltip). `hd1PlayedMultisamples()` (`ProgramDecoder.cpp`) is the one zone walk;
+Zone 1: ROM 076 Kalimba", "EXs7 007 Piano2.jp main8 (stereo)", "User bank
+021cb7e1-822b-4b50-955f-4288f163f8a8 044" -- the bank ID with the stereo bit cleared, i.e. as its
+KSC writes it -- marked "unreferenced" until a KSC with that ID is attached, which the app can't
+do yet). `hd1PlayedMultisamples()` (`ProgramDecoder.cpp`) is the one zone walk;
 `hd1PlayedSampleSources()` (the icon) now reads its result. ROM/EXs names are in
 `frontend/multisample-names.js`, copied from Korg's Voice Name List (pp. 187-197, extracted with
 each text run's position, since its multi-column pages mix libraries in plain text order) and

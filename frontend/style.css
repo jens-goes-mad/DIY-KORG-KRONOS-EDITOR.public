@@ -1120,6 +1120,29 @@ td.has-comment {
   color: var(--text-dim);
 }
 
+/* The Program row's sample list: "OSC1 Zone 1:" needs a wider label than
+   "Timbre 16:" -- at .timbre-label's width it wrapped, leaving a lone "1:"
+   line under each entry. */
+.sample-zone-label {
+  flex-basis: 7.5em;
+  white-space: nowrap;
+}
+
+/* A user sample bank's status (multisample-names.js's sampleBankStatus()):
+   "unreferenced" in the user-sample orange, "attached" plain. */
+.sample-bank-status {
+  font-size: 0.85em;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+.sample-bank-status.is-unreferenced {
+  color: var(--editor-accent);
+}
+.sample-bank-status.is-attached {
+  color: var(--text-dim);
+}
+
 .timbre-name {
   flex: 1;
   min-width: 0;

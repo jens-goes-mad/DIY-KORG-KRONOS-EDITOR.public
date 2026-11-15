@@ -192,13 +192,20 @@ function createProgramsPanel(
     for (const z of samples.zones) {
       const li = document.createElement("li");
       const label = document.createElement("span");
-      label.className = "timbre-label";
+      label.className = "timbre-label sample-zone-label";
       label.textContent = `OSC${z.oscillator + 1} Zone ${z.zone + 1}:`;
-      const { text, title } = formatPlayedMultisample(z);
+      const { text, title, status } = formatPlayedMultisample(z);
       const ref = document.createElement("span");
       ref.textContent = text;
       if (title) ref.title = title;
       li.append(label, ref);
+      if (status) {
+        const mark = document.createElement("span");
+        mark.className = `sample-bank-status is-${status}`;
+        mark.textContent = status;
+        mark.title = SAMPLE_BANK_STATUS_TITLES[status];
+        li.append(mark);
+      }
       list.appendChild(li);
     }
     wrap.appendChild(list);
@@ -223,17 +230,6 @@ function createProgramsPanel(
         box.textContent = `Error: ${usage.error}`;
         return;
       }
-
-      // The Program's KARMA GE, as information (format doc §6.4) -- not
-      // whether KARMA is switched on for it, which isn't decoded.
-      if (formatKarmaGe(program.karmaGe)) {
-        const karma = document.createElement("div");
-        karma.className = "usage-heading";
-        karma.append("KARMA GE: ", karmaGeSpan(program.karmaGe));
-        box.appendChild(karma);
-      }
-
-      if (usage.samples) box.appendChild(buildSampleList(usage.samples));
 
       const heading = document.createElement("div");
       heading.className = "usage-heading";
@@ -326,6 +322,18 @@ function createProgramsPanel(
           box.appendChild(list);
         }
       }
+
+      // Information below the usages: the Program's KARMA GE (format doc
+      // §6.4) -- not whether KARMA is switched on for it, which isn't
+      // decoded -- and the multisamples its zones play (§5.8).
+      if (formatKarmaGe(program.karmaGe)) {
+        const karma = document.createElement("div");
+        karma.className = "usage-heading";
+        karma.append("KARMA GE: ", karmaGeSpan(program.karmaGe));
+        box.appendChild(karma);
+      }
+
+      if (usage.samples) box.appendChild(buildSampleList(usage.samples));
     })();
 
     return tr;
